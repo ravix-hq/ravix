@@ -4,10 +4,12 @@
 // "• S" or "Own m". A label that is cut short puts the header in
 // `data-compact`, where every status chip drops to its dot, icon or count;
 // it leaves again only once the spacer has room for all of them and the
-// branch is whole, so the two states cannot chase each other. Layout is the
-// browser's to measure, which is why this is a hook and not a template.
+// branch is whole, so the two states cannot chase each other. A header whose
+// contents run past its end (the share button, its viewer count, the close
+// button) is compact too, whatever its labels say. Layout is the browser's
+// to measure, which is why this is a hook and not a template.
 
-// The grid gap a label brings back with it (`.track-status .chip`).
+// The grid gap a label brings back with it (`.track-header-status .chip`).
 export const LABEL_GAP = 5
 
 const cut = el => el.scrollWidth > el.clientWidth + 1
@@ -15,6 +17,7 @@ const cut = el => el.scrollWidth > el.clientWidth + 1
 export function compact(header) {
   const labels = [...header.querySelectorAll("[data-fit-label]")]
   if (labels.length === 0) return false
+  if (cut(header)) return true
   if (!header.hasAttribute("data-compact")) return labels.some(cut)
   const branch = header.querySelector(".track-branch")
   if (branch && cut(branch)) return true

@@ -85,6 +85,18 @@ test("a patch is measured again, and a header without labels is never compact", 
   expect(observers[1].targets).toEqual([$("#bare")])
 })
 
+test("a header whose controls run past its end is compact, and stays so", () => {
+  whole()
+  const header = $("#h")
+  dimensions(header, {scrollWidth: 900, clientWidth: 800})
+  expect(compact(header)).toBe(true)
+  header.setAttribute("data-compact", "")
+  dimensions($(".spacer"), {clientWidth: 1000})
+  expect(compact(header)).toBe(true)
+  dimensions(header, {scrollWidth: 800, clientWidth: 800})
+  expect(compact(header)).toBe(false)
+})
+
 test("with no spacer there is no room to give back", () => {
   document.body.innerHTML = `<header id="h" data-compact><span data-fit-label id="l">Own machine</span></header>`
   widths("#l", 80, 0)

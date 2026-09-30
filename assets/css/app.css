@@ -763,8 +763,8 @@ html[data-yard="closed"] .yard .workspace-gear { display: none; }
    at about sixteen characters and the project at twelve. A crumb shorter
    than its floor is marked by the server as not `.long` and never shrinks. */
 .track-crumbs { flex-wrap: nowrap; }
-.track-path, .track-status { display: contents; }
-.track-crumbs > *, .track-path > *, .track-status > *, .track-plan-items > * { flex: none; }
+.track-header-path, .track-header-status { display: contents; }
+.track-crumbs > *, .track-header-path > *, .track-header-status > *, .track-plan-items > * { flex: none; }
 .track-crumbs > .spacer { flex: 1 1 0; min-width: 0; }
 .track-crumbs .project-crumb { max-width: 16rem; }
 .track-crumbs .project-crumb.long { flex: 0 1 auto; min-width: calc(25px + 12ch); }
@@ -774,18 +774,18 @@ html[data-yard="closed"] .yard .workspace-gear { display: none; }
 /* Label columns are `minmax(0, max-content)`: a grid's smallest width
    counts a column's minimum rather than its text, which is what lets a chip
    give way to its icon while a flex chip would stop at its longest word. */
-.track-status .chip, .track-crumbs .track-plan-chip {
+.track-header-status .chip, .track-crumbs .track-plan-chip {
   display: inline-grid; grid-auto-flow: column; grid-template-columns: auto minmax(0, max-content);
   align-items: center; --label-gap: 5px; gap: var(--label-gap); flex: 0 1000000 auto; min-width: min-content; max-width: 18rem;
 }
 .track-crumbs .track-plan-toggle { grid-template-columns: auto minmax(0, max-content) auto auto; --label-gap: 4px; }
-.track-status .chip-label, .track-crumbs .track-plan-chip .truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.track-header-status .chip-label, .track-crumbs .track-plan-chip .truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* HeaderFit's compact state: a label that would be cut is not drawn at
    all, so each chip is its icon, dot or count. Width, not `display`, so the
    hook can still read how wide each label would be. */
 .track-crumbs[data-compact] [data-fit-label] { max-width: 0; margin-left: calc(-1 * var(--label-gap)); }
 .track-crumbs[data-compact] .track-plan-sep { display: none; }
-.track-status .status-note { flex: 0 1000000 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.track-header-status .status-note { flex: 0 1000000 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* Header icons are named by aria-label and tooltip; closing confirms first. */
 .crumbs .icon-button { justify-content: center; width: 30px; height: 30px; padding: 0; }
 

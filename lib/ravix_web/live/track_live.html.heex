@@ -32,7 +32,7 @@
       last; see "the track's own header" in app.css, and HeaderFit for
       why a chip's words show whole or not at all. --%>
     <header id="track-header" class="crumbs track-crumbs" phx-hook="HeaderFit">
-      <div class="track-path">
+      <div class="track-header-path">
         <.link
           navigate={"/p/#{@project.id}"}
           class={["project-crumb", !fits?(@project.display_name, 12) && "long"]}
@@ -67,7 +67,7 @@
         >{@track.branch}</span>
       </div>
       <span class="spacer"></span>
-      <div class="track-status">
+      <div class="track-header-status">
         <.live_component
           module={RavixWeb.Live.TrackPlanItems}
           id={"track-plan-items-#{@track.id}"}

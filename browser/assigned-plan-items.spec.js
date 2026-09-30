@@ -3,6 +3,7 @@ import AxeBuilder from '@axe-core/playwright';
 import { readFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { signIn, connectClaude } from './sign-in.js';
+import { expectHeaderUnobstructed } from './header-layout.js';
 
 test('assigned plan items stay compact across widths and themes', async ({ page }) => {
   await signIn(page, 'eli', '/home');
@@ -44,6 +45,7 @@ test('assigned plan items stay compact across widths and themes', async ({ page 
       await expect(chip).toBeVisible();
       expect(await page.locator('header.track-crumbs').evaluate(el => el.getBoundingClientRect().height)).toBeLessThan(60);
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+      await expectHeaderUnobstructed(page);
       await page.screenshot({ path: `tmp/assigned-after-${theme}-${width}.png` });
       await chip.click();
       await expect(chip).toHaveAttribute('aria-expanded', 'true');

@@ -2,6 +2,7 @@ import { test, expect } from '@playwright/test';
 import { readFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { signIn, connectClaude } from './sign-in.js';
+import { expectHeaderUnobstructed } from './header-layout.js';
 
 // RAV-63: at a laptop width the plan chip, which lands after the track does,
 // used to take all of its room from the project name ("r…") and clip the
@@ -76,6 +77,7 @@ test('the track header keeps the project and title readable and still as late pa
   expect(before.overflow).toBe(false);
   expect(before.page).toBe(false);
   expect(before.fragments).toEqual([]);
+  await expectHeaderUnobstructed(page);
 
   sql(`
     INSERT INTO ravix.plans (id, project_id, title, summary, version, created_by_login, archived, inserted_at, updated_at)
@@ -98,6 +100,7 @@ test('the track header keeps the project and title readable and still as late pa
   expect(after.overflow).toBe(false);
   expect(after.page).toBe(false);
   expect(after.fragments).toEqual([]);
+  await expectHeaderUnobstructed(page);
   // At this width the chips are down to their icons, and the plan chip
   // to its icon and count.
   await expect(header).toHaveAttribute('data-compact', '');
