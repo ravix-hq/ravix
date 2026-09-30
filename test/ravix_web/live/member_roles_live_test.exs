@@ -10,7 +10,8 @@ defmodule RavixWeb.Live.MemberRolesLiveTest do
   import Mimic
   import Phoenix.LiveViewTest
 
-  alias Ravix.Accounts.Access
+  alias Ravix.Accounts.{Access, Session}
+  alias Ravix.Hub.Event
   alias Ravix.{People, PromptQueue, Repo, Tracks}
   alias Ravix.Tracks.{Track, Transcript}
 
@@ -278,7 +279,7 @@ defmodule RavixWeb.Live.MemberRolesLiveTest do
     end
 
     defp refreshed(view, ctx) do
-      send(view.pid, {:hub, Ravix.Hub.Event.new(:queue, ctx.project.id, track_id: ctx.track.id)})
+      send(view.pid, {:hub, Event.new(:queue, ctx.project.id, track_id: ctx.track.id)})
       render_async(view)
       view
     end
@@ -292,7 +293,7 @@ defmodule RavixWeb.Live.MemberRolesLiveTest do
 
       assert has_element?(
                view,
-               "li.queue-item [phx-value-action=edit][phx-value-id=#{id}]",
+               "li.queue-item [phx-value-action=edit][phx-value-id='#{id}']",
                "Edit"
              )
 
@@ -301,7 +302,7 @@ defmodule RavixWeb.Live.MemberRolesLiveTest do
       assert_push_event(view, "composer:insert", %{text: "Tidy the scheduler"})
       assert status(id) == :cancelled
       render_async(view)
-      refute has_element?(view, "li.queue-item [phx-value-id=#{id}]")
+      refute has_element?(view, "li.queue-item [phx-value-id='#{id}']")
     end
 
     test "a draft in the box is not overwritten, and the prompt stays queued", ctx do
@@ -353,7 +354,7 @@ defmodule RavixWeb.Live.MemberRolesLiveTest do
       refreshed(view, ctx)
 
       token = Plug.Conn.get_session(conn, :session_token)
-      Repo.delete!(Repo.get_by!(Ravix.Accounts.Session, token_hash: Ravix.Crypto.sha256(token)))
+      Repo.delete!(Repo.get_by!(Session, token_hash: Ravix.Crypto.sha256(token)))
 
       :sys.replace_state(view.pid, fn state ->
         update_in(state.socket.assigns.session_guard, &%{&1 | stale?: true})
