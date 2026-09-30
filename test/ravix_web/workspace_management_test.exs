@@ -956,14 +956,14 @@ defmodule RavixWeb.WorkspaceManagementTest do
       end)
 
       ctx.view |> form("##{@form_id}", settings: @params) |> render_submit()
-      assert render_async(ctx.view, 1000) =~ "Settings saved."
+      assert settled(ctx.view) =~ "Settings saved."
     end
 
     test "#{form_id} retains inputs on provider failure", ctx do
       settings(ctx, [], @section)
       expect(Projects, :update_settings, fn _, _, _ -> {:error, {:unavailable, "Try later"}} end)
       ctx.view |> form("##{@form_id}", settings: @params) |> render_submit()
-      assert render_async(ctx.view, 1000) =~ "Try later"
+      assert settled(ctx.view) =~ "Try later"
       refute render(ctx.view) =~ "Settings saved."
     end
   end
@@ -1368,7 +1368,7 @@ defmodule RavixWeb.WorkspaceManagementTest do
     # The second form keeps what was typed, so nothing is lost by waiting.
     assert has_element?(ctx.view, "#settings-instructions", "Second")
     send(saving, :finish)
-    assert render_async(ctx.view, 1000) =~ "Settings saved."
+    assert settled(ctx.view) =~ "Settings saved."
   end
 
   test "preview defaults that cannot be read open on the usual starting values", ctx do
@@ -1471,6 +1471,14 @@ defmodule RavixWeb.WorkspaceManagementTest do
     settings(%{ctx | view: view}, [], section)
     Repo.delete!(session)
     view
+  end
+
+  # A settings save's answer, and the flash it hands the page one message
+  # later: `:sys.get_state/1` returns once the page has taken that message.
+  defp settled(view) do
+    render_async(view, 1000)
+    :sys.get_state(view.pid)
+    render(view)
   end
 
   defp add_secret(view), do: view |> element("button", "Add secret") |> render_click()
