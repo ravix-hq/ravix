@@ -360,14 +360,14 @@ defmodule RavixWeb.WorkspaceSettingsLiveTest do
       refute has_element?(view, "#workspace-github")
     end
 
-    test "the footer's Repository access opens the current workspace's Repositories", ctx do
-      {:ok, view, _html} = live(log_in_user(build_conn(), ctx.owner), "/home")
-      assert render(view) =~ "open-repository-access"
-
+    test "Settings › Profile › Repository access links the current workspace's Repositories",
+         ctx do
+      {:ok, view, _html} = live(log_in_user(build_conn(), ctx.owner), "/settings/profile")
       current = Ravix.Repo.reload!(ctx.owner).current_workspace_id || ctx.personal.id
 
-      assert view |> element("#open-repository-access") |> render() =~
-               "/w/#{current}/settings/repositories"
+      view |> element("#profile-workspace-repositories") |> render_click()
+      assert_patch(view, "/w/#{current}/settings/repositories")
+      assert has_element?(view, "#settings-title", "Repositories")
     end
   end
 

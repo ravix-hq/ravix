@@ -1237,6 +1237,8 @@ defmodule RavixWeb.WorkspaceLive do
 
   def handle_info({:agent_panel, id, tick}, socket) do
     if (id == "agent-panel" and socket.assigns.dialog == :account) or
+         (id == "settings-agent-panel" and
+            match?(%{kind: :personal, section: "agents"}, socket.assigns.settings)) or
          (socket.assigns.dialog == :new_project and NewProject.active_panel?(socket, id)),
        do: send_update(RavixWeb.Live.AgentPanel, id: id, tick: tick)
 
@@ -2528,12 +2530,7 @@ defmodule RavixWeb.WorkspaceLive do
     """
   end
 
-  defp ago_words(at) do
-    case ago(at) do
-      {"now", _words} -> "just now"
-      {short, _words} -> short <> " ago"
-    end
-  end
+  defp ago_words(at), do: RavixWeb.LocalTime.ago_words(at)
 
   # The link's accessible name, with the age the hook keeps current in words.
   defp row_label(track, label) do
@@ -2543,27 +2540,7 @@ defmodule RavixWeb.WorkspaceLive do
     end
   end
 
-  @ages [
-    {365 * 86_400, "y", "year"},
-    {30 * 86_400, "mo", "month"},
-    {86_400, "d", "day"},
-    {3_600, "h", "hour"},
-    {60, "m", "minute"}
-  ]
-
-  # `{short, words}`, as assets/js/hooks/relative_time.js's `age` answers it.
-  defp ago(at, now \\ DateTime.utc_now()) do
-    seconds = max(DateTime.diff(now, at), 0)
-
-    case Enum.find(@ages, fn {size, _, _} -> seconds >= size end) do
-      nil ->
-        {"now", "just now"}
-
-      {size, short, word} ->
-        n = div(seconds, size)
-        {"#{n}#{short}", "#{n} #{word}#{if n == 1, do: "", else: "s"} ago"}
-    end
-  end
+  defp ago(at), do: RavixWeb.LocalTime.ago(at)
 
   defp initials(login) do
     case String.split(login || "", ~r/[-_.]+/, trim: true) do

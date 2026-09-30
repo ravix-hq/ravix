@@ -38,6 +38,9 @@
 // `<html>` on an attribute that matches nothing.
 
 export const THEME_KEY = "ravix.theme"
+// A choice in one picker, told to the others: the You menu's and the
+// Appearance page's (RAV-77) can both be on the page at once.
+const CHANGED = "ravix:theme-changed"
 export const DEFAULT_THEME = "ravix"
 
 function readSaved() {
@@ -101,6 +104,12 @@ export const Theme = {
       this.close()
       if (refocus) this.trigger()?.focus()
     }
+    this.onChanged = e => {
+      if (e.detail?.source === this || !this.ids.includes(e.detail?.id)) return
+      this.theme = e.detail.id
+      this.reflect()
+    }
+    window.addEventListener(CHANGED, this.onChanged)
     this.el.addEventListener("click", this.onClick)
     this.el.addEventListener("mouseover", this.onOver)
     this.el.addEventListener("focusin", this.onOver)
@@ -116,6 +125,7 @@ export const Theme = {
   },
 
   destroyed() {
+    window.removeEventListener(CHANGED, this.onChanged)
     document.removeEventListener("mousedown", this.onAway)
     document.removeEventListener("keydown", this.onKey)
   },
@@ -134,6 +144,7 @@ export const Theme = {
     remember(id)
     this.reflect()
     this.close()
+    window.dispatchEvent(new CustomEvent(CHANGED, {detail: {id, source: this}}))
   },
 
   toggle() {
