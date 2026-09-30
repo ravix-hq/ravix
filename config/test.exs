@@ -41,6 +41,10 @@ config :phoenix,
 # Req.Test stub name serves both suites; stubs are per process, so async is fine.
 config :ravix, :req_options, plug: {Req.Test, Ravix.ReqFake}
 
+# Automatic titles are worked out in the caller, which owns the sandbox;
+# `Ravix.Tracks.TitlingTest` stubs this back on to test the background path.
+config :ravix, :background_titling, false
+
 # Background sweeps stay off under test; tests drive `tick/0` themselves.
 config :ravix, Ravix.PromptQueue.Server, interval: false, wake: false
 

@@ -649,9 +649,65 @@ defmodule Ravix.Tracks.Store do
     List.first(rows)
   end
 
-  @doc "Rename the label, and only the label."
+  @doc "Rename the label, and only the label. A person chose it, so nothing automatic replaces it."
   @spec rename_track(String.t(), String.t()) :: :ok
-  def rename_track(track_id, title), do: update_track(track_id, title: title)
+  def rename_track(track_id, title),
+    do: update_track(track_id, title: title, title_source: :manual)
+
+  @doc "The thread on this track that `conversation_id` belongs to."
+  @spec thread_by_conversation(String.t(), String.t()) :: Thread.t() | nil
+  def thread_by_conversation(track_id, conversation_id)
+      when is_binary(track_id) and is_binary(conversation_id),
+      do: Repo.get_by(Thread, track_id: track_id, conversation_id: conversation_id)
+
+  @doc """
+  Give `thread` an automatic title, and its track the same one when this is
+  the track's default thread and the track still has the name it opened with
+  or an earlier automatic one.
+
+  A compare-and-set against the rows as the caller read them: the thread's
+  title must be unchanged and not a person's, and so must the track's. A
+  rename in between wins, including one by a release that does not write
+  `title_source`, whose rename still changes the title. Answers `:stale`
+  and writes nothing when the thread moved; the track is skipped alone
+  when only it did.
+  """
+  @spec auto_title(Thread.t(), Track.t(), String.t()) :: :ok | :stale
+  def auto_title(%Thread{track_id: track_id} = thread, %Track{id: track_id} = track, title) do
+    {:ok, result} =
+      Repo.transaction(fn ->
+        {count, _} =
+          Repo.update_all(
+            from(t in Thread,
+              where:
+                t.id == ^thread.id and t.title == ^thread.title and
+                  (is_nil(t.title_source) or t.title_source == :auto)
+            ),
+            set: [title: title, title_source: :auto]
+          )
+
+        cond do
+          count == 0 -> :stale
+          thread.id == track.id -> auto_title_track(track, title)
+          true -> :ok
+        end
+      end)
+
+    result
+  end
+
+  defp auto_title_track(track, title) do
+    Repo.update_all(
+      from(t in Track,
+        where:
+          t.id == ^track.id and t.title == ^track.title and
+            (t.title_source == :auto or (is_nil(t.title_source) and t.title == t.branch))
+      ),
+      set: [title: title, title_source: :auto]
+    )
+
+    :ok
+  end
 
   @doc "Close the row. Waiting prompts are cancelled by the caller through `Ravix.PromptQueue.Store.cancel_track/1`."
   @spec close_track(String.t()) :: :ok

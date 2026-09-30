@@ -81,6 +81,8 @@ defmodule Ravix.Tracks do
     Sleep,
     Store,
     Thread,
+    Title,
+    Titling,
     Track,
     Transcript,
     View
@@ -769,7 +771,9 @@ defmodule Ravix.Tracks do
   defp launch_selected_thread(user, track, project, client, sandbox_id, selection, first) do
     {request_id, body} = first
     id = Ecto.UUID.generate()
-    title = Thread.title_from(body.prompt)
+    # The same title the background titling would give, so the new tab never
+    # shows a cut-off prompt first; `Titling` then marks it automatic.
+    title = Title.from_prompt(body.prompt) || Thread.title_from(body.prompt)
 
     launch = %Launch{
       agent_id: selection.agent_id,
@@ -818,6 +822,7 @@ defmodule Ravix.Tracks do
           QueueServer.wake()
           MachineCache.forget_project(project.id)
           publish_tracks(project.id, track.id)
+          Titling.after_prompt(track.id, thread.id, request_id, body.prompt)
           {:ok, thread}
 
         {:error, {:conflict, "request_id_used", _}} = refused ->
@@ -1424,16 +1429,26 @@ defmodule Ravix.Tracks do
 
       # ownership: `prompt/3` opened with `Access.track_access/2` on this
       # track, and the row records who is sending on it.
-      Ravix.PromptQueue.Store.enqueue(
-        track.id,
+      track.id
+      |> Ravix.PromptQueue.Store.enqueue(
         user.id,
         user.login,
         payload["request_id"],
         %Body{prompt: text, images: images},
         thread.id
       )
+      |> title_first(track, thread, text)
     end
   end
+
+  # A thread still wearing the name it opened with may be hearing its first
+  # prompt; `Ravix.Tracks.Titling` checks, off the request.
+  defp title_first({:ok, item} = accepted, track, %Thread{title_source: nil} = thread, text) do
+    Titling.after_prompt(track.id, thread.id, item.id, text)
+    accepted
+  end
+
+  defp title_first(result, _track, _thread, _text), do: result
 
   @doc """
   This person has seen it up to now.

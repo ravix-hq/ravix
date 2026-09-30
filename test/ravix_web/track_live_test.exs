@@ -1004,7 +1004,7 @@ defmodule RavixWeb.TrackLiveTest do
 
     expect(Ravix.Fountain, :create_conversation, fn _, launch ->
       assert launch.sandbox_id == "sandbox"
-      assert launch.title == "Explain the prompt queue and its retries…"
+      assert launch.title == "Explain Prompt Queue"
       {:ok, Shapes.conversation(%{"id" => "added"})}
     end)
 
@@ -1045,7 +1045,7 @@ defmodule RavixWeb.TrackLiveTest do
 
     [_, thread] = Tracks.Store.threads_of(ctx.track.id)
     assert thread.conversation_id == "added"
-    assert thread.title == "Explain the prompt queue and its retries…"
+    assert thread.title == "Explain Prompt Queue"
 
     assert [%{thread_id: thread_id, id: request_id}] =
              PromptQueue.Store.queued_prompts(ctx.track.id)
@@ -2821,6 +2821,53 @@ defmodule RavixWeb.TrackLiveTest do
     refute has_element?(ctx.view, "#rename-dialog")
     render_async(ctx.view)
     assert has_element?(ctx.view, "header button", "A useful title")
+  end
+
+  test "a first prompt's title reaches the header, the thread tab and the rail live", ctx do
+    # A track still carrying its branch as its name, with a second thread so
+    # the tabs are drawn.
+    Repo.update!(Ecto.Changeset.change(ctx.track, title: ctx.track.branch))
+
+    {:ok, _} =
+      Tracks.Store.create_thread(%{
+        track_id: ctx.track.id,
+        conversation_id: "live-second",
+        title: "Second"
+      })
+
+    {:ok, parent, _} = live(ctx.conn, "/p/#{ctx.project.id}/t/#{ctx.track.id}")
+    view = find_live_child(parent, "track-host")
+    settle(view)
+    render_async(parent)
+    assert has_element?(view, "#thread-tab-#{ctx.track.id}", "Default")
+
+    request_id = "first-prompt-#{System.unique_integer([:positive])}"
+
+    {:ok, _} =
+      PromptQueue.Store.enqueue(
+        ctx.track.id,
+        ctx.user.id,
+        ctx.user.login,
+        request_id,
+        %PromptQueue.Body{prompt: "Could you pull the latest main?", images: []}
+      )
+
+    # What the background task runs, here in the test's process; the page
+    # hears it on the project's hub, as every other page on the project does.
+    assert :ok =
+             Tracks.Titling.from_prompt(
+               ctx.track.id,
+               ctx.track.id,
+               request_id,
+               "Could you pull the latest main?"
+             )
+
+    settle(view)
+    assert has_element?(view, "header button", "Pull Latest Main")
+    assert has_element?(view, "#thread-tab-#{ctx.track.id}", "Pull Latest Main")
+    # The branch is still shown beside the new name.
+    assert render(view) =~ ctx.track.branch
+    assert render_async(parent) =~ "Pull Latest Main"
   end
 
   test "a refusal about the title lands on the title, not in a toast", ctx do
