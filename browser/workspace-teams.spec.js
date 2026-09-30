@@ -50,7 +50,9 @@ test('create a team workspace, invite by login, and switch', async ({ page, brow
     await signIn(mate, 'teammate', '/home');
     await mate.locator('#workspace-switcher-trigger').click();
     await mate.locator('#workspace-menu').getByRole('button', { name: /Acme Team/ }).click();
-    await mate.getByRole('link', { name: 'Workspace settings', exact: true }).click();
+    // Straight after the pick, as a person would: the gear is answered after
+    // the switch it followed, never with the workspace being left (RAV-104).
+    await mate.locator('#workspace-switcher').getByRole('button', { name: 'Workspace settings', exact: true }).click();
     await expect(mate).toHaveURL(new RegExp(`${teamPath}$`));
     await expect(breadcrumb(mate)).toContainText('Acme Team');
     await expect(mate.locator('#workspace-members')).toContainText('@teammate');

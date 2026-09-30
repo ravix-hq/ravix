@@ -512,6 +512,9 @@ defmodule RavixWeb.WorkspaceLive do
   def handle_event("workspace-create", %{"name" => name}, socket),
     do: {:noreply, WorkspaceSwitcher.create(socket, name)}
 
+  def handle_event("workspace-settings", _, socket),
+    do: {:noreply, WorkspaceSwitcher.settings(socket)}
+
   # The switcher makes a workspace current and the page shows it: the rail
   # already holds every workspace's projects and tracks, so it is scoped
   # again from those, with membership and visibility re-read and no provider
