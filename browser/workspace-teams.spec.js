@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { signIn } from './sign-in.js';
+import { createWorkspace, breadcrumb } from './settings.js';
 
 // ADR 0009 phase 4a: create a team workspace from the sidebar switcher,
 // invite somebody who has not signed in yet by GitHub login, switch between
@@ -18,12 +19,10 @@ test('create a team workspace, invite by login, and switch', async ({ page, brow
   await expect(page.locator('#workspace-menu')).toContainText('teamowner');
   const menu = page.locator('#workspace-menu');
   await expect(menu).toBeVisible();
-  await menu.getByLabel('New workspace', { exact: true }).fill('Acme Team');
-  await menu.getByRole('button', { name: 'Create workspace', exact: true }).click();
-
-  await expect(page).toHaveURL(/\/w\/[^/]+$/);
+  await createWorkspace(page, 'Acme Team');
   const teamPath = new URL(page.url()).pathname;
-  await expect(page.getByRole('heading', { level: 1 })).toHaveText('Acme Team');
+  await expect(page.getByRole('heading', { level: 1 })).toHaveText('Members');
+  await expect(breadcrumb(page)).toContainText('Acme Team');
   await expect(page.locator('#workspace-members')).toContainText('@teamowner');
 
   await page.getByLabel('GitHub username', { exact: true }).fill('teammate');
@@ -31,21 +30,18 @@ test('create a team workspace, invite by login, and switch', async ({ page, brow
   await expect(page.locator('#workspace-invites')).toContainText('@teammate');
   await expect(page.locator('#workspace-invites')).toContainText('waiting to sign in');
 
-  // Switch to the personal workspace, whose settings its menu opens, and back.
+  // Switching workspace on a settings page keeps the section, in the
+  // personal workspace, and back (RAV-72).
   await page.locator('#workspace-switcher-trigger').click();
   await page.locator('#workspace-menu').getByRole('button', { name: /teamowner/ }).click();
-  await expect(page).toHaveURL(/\/home$/);
-  await page.locator('#workspace-switcher-trigger').click();
-  await page.getByRole('link', { name: 'Settings and members of teamowner', exact: true }).click();
-  await expect(page.getByRole('heading', { level: 1 })).toHaveText('teamowner');
+  await expect(page).toHaveURL(/\/w\/[^/]+\/settings\/members$/);
+  await expect(page).not.toHaveURL(new RegExp(`${teamPath}$`));
+  await expect(breadcrumb(page)).toContainText('teamowner');
   await expect(page.locator('#workspace-invite-form')).toHaveCount(0);
   await page.locator('#workspace-switcher-trigger').click();
   await page.locator('#workspace-menu').getByRole('button', { name: /Acme Team/ }).click();
-  await expect(page).toHaveURL(/\/home$/);
-  await page.locator('#workspace-switcher-trigger').click();
-  await page.getByRole('link', { name: 'Settings and members of Acme Team', exact: true }).click();
   await expect(page).toHaveURL(new RegExp(`${teamPath}$`));
-  await expect(page.getByRole('heading', { level: 1 })).toHaveText('Acme Team');
+  await expect(breadcrumb(page)).toContainText('Acme Team');
 
   // The invitee's first sign-in accepts the invitation.
   const context = await browser.newContext();
@@ -54,9 +50,9 @@ test('create a team workspace, invite by login, and switch', async ({ page, brow
     await signIn(mate, 'teammate', '/home');
     await mate.locator('#workspace-switcher-trigger').click();
     await mate.locator('#workspace-menu').getByRole('button', { name: /Acme Team/ }).click();
-    await mate.locator('#workspace-switcher-trigger').click();
-    await mate.getByRole('link', { name: 'Settings and members of Acme Team', exact: true }).click();
-    await expect(mate.getByRole('heading', { level: 1 })).toHaveText('Acme Team');
+    await mate.getByRole('link', { name: 'Workspace settings', exact: true }).click();
+    await expect(mate).toHaveURL(new RegExp(`${teamPath}$`));
+    await expect(breadcrumb(mate)).toContainText('Acme Team');
     await expect(mate.locator('#workspace-members')).toContainText('@teammate');
     await expect(mate.locator('#workspace-invite-form')).toHaveCount(0);
   } finally {

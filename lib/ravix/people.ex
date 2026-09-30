@@ -599,7 +599,7 @@ defmodule Ravix.People do
         id: notice.id,
         project_id: track.project_id,
         track_id: track.id,
-        track_title: track.title,
+        track_title: Track.label(track),
         workspace_id: notice.workspace_id,
         revoked: notice.revoked_logins,
         withdrawn: notice.withdrawn_logins,

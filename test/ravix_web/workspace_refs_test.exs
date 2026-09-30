@@ -94,7 +94,7 @@ defmodule RavixWeb.WorkspaceRefsTest do
         assert has_element?(ctx.view, "#new-track-form")
       else
         assert html =~ "Refs denied"
-        assert has_element?(ctx.view, "#new-track-form button[disabled]", "Create track")
+        assert has_element?(ctx.view, "#new-track-create[form=new-track-form][disabled]")
       end
     end
   end

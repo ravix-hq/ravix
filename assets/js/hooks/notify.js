@@ -20,7 +20,15 @@
 // Clicking a notification does not navigate from here. It focuses the
 // window and asks the server to open the track (`open-notice`), which
 // checks the track against what this person can see before patching the
-// URL, the same as any link in the rail. What the hook expects:
+// URL, the same as any link in the rail.
+//
+// Two hooks, because the switch is in two places (RAV-77). `Notify` is the
+// You menu's quick toggle, in the app shell, so it also hears every
+// `notify` event whichever page is open; `NotifyToggle` is the same switch
+// on the Notifications settings page, without the news. They share
+// localStorage and the browser's permission, both read fresh each time,
+// and a change in one is announced on the window (`CHANGED`) so the other
+// redraws at once. What each expects:
 //
 //   <div id="notify" phx-hook="Notify" class="notify">
 //     <button data-notify-toggle aria-pressed="false">
@@ -35,6 +43,7 @@
 // says so rather than asking again to no effect.
 
 export const NOTIFY_KEY = "ravix.notify"
+const CHANGED = "ravix:notify-changed"
 
 const LABELS = {
   on: "On",
@@ -79,14 +88,58 @@ function body(track) {
   return `The agent finished${where}.`
 }
 
-export const Notify = {
+// What the switch is showing. "On" needs both the person's yes and the
+// browser's: a saved preference outlives a permission the browser reset.
+export function notifyState() {
+  if (!supported()) return "unsupported"
+  if (Notification.permission === "denied") return "blocked"
+  return readSaved() === "on" && Notification.permission === "granted" ? "on" : "off"
+}
+
+// Returns the promise so a test can wait for the browser's answer; the
+// click handlers do not need it.
+export function toggleNotify() {
+  const state = notifyState()
+  if (state === "unsupported" || state === "blocked") return Promise.resolve()
+  if (state === "on") {
+    remember("off")
+    announce()
+    return Promise.resolve()
+  }
+  // Asked from a click, which is the only place a browser will listen.
+  return Promise.resolve(Notification.requestPermission()).then(permission => {
+    remember(permission === "granted" ? "on" : "off")
+    announce()
+  })
+}
+
+function announce() {
+  window.dispatchEvent(new CustomEvent(CHANGED))
+}
+
+function reflect(el) {
+  const state = notifyState()
+  const label = el.querySelector("[data-notify-state]")
+  if (label) label.textContent = LABELS[state]
+  const button = el.querySelector("[data-notify-toggle]")
+  if (button) {
+    button.setAttribute("aria-pressed", state === "on" ? "true" : "false")
+    button.disabled = state === "unsupported" || state === "blocked"
+  }
+  el.classList.toggle("on", state === "on")
+  el.classList.toggle("blocked", state === "blocked")
+}
+
+// The switch's half, shared by both hooks: a click on it asks, and the
+// markup says the answer.
+const Switch = {
   mounted() {
-    this.wanted = readSaved() === "on"
     this.onClick = e => {
       if (e.target.closest("[data-notify-toggle]")) this.toggle()
     }
+    this.onChanged = () => this.reflect()
     this.el.addEventListener("click", this.onClick)
-    this.handleEvent("notify", ({tracks}) => this.show(tracks || []))
+    window.addEventListener(CHANGED, this.onChanged)
     this.reflect()
   },
 
@@ -98,33 +151,31 @@ export const Notify = {
 
   destroyed() {
     this.el.removeEventListener("click", this.onClick)
+    window.removeEventListener(CHANGED, this.onChanged)
   },
 
-  // What the button is showing. "On" needs both the person's yes and the
-  // browser's: a saved preference outlives a permission the browser reset.
   state() {
-    if (!supported()) return "unsupported"
-    if (Notification.permission === "denied") return "blocked"
-    return this.wanted && Notification.permission === "granted" ? "on" : "off"
+    return notifyState()
   },
 
-  // Returns the promise so a test can wait for the browser's answer; the
-  // click handler does not need it.
+  // Redrawn by the announcement, this switch included.
   toggle() {
-    const state = this.state()
-    if (state === "unsupported" || state === "blocked") return Promise.resolve()
-    if (state === "on") {
-      this.wanted = false
-      remember("off")
-      this.reflect()
-      return Promise.resolve()
-    }
-    // Asked from a click, which is the only place a browser will listen.
-    return Promise.resolve(Notification.requestPermission()).then(permission => {
-      this.wanted = permission === "granted"
-      remember(this.wanted ? "on" : "off")
-      this.reflect()
-    })
+    return toggleNotify()
+  },
+
+  reflect() {
+    reflect(this.el)
+  },
+}
+
+export const NotifyToggle = Switch
+
+export const Notify = {
+  ...Switch,
+
+  mounted() {
+    Switch.mounted.call(this)
+    this.handleEvent("notify", ({tracks}) => this.show(tracks || []))
   },
 
   show(tracks) {
@@ -146,18 +197,5 @@ export const Notify = {
         notification.close()
       }
     }
-  },
-
-  reflect() {
-    const state = this.state()
-    const label = this.el.querySelector("[data-notify-state]")
-    if (label) label.textContent = LABELS[state]
-    const button = this.el.querySelector("[data-notify-toggle]")
-    if (button) {
-      button.setAttribute("aria-pressed", state === "on" ? "true" : "false")
-      button.disabled = state === "unsupported" || state === "blocked"
-    }
-    this.el.classList.toggle("on", state === "on")
-    this.el.classList.toggle("blocked", state === "blocked")
   },
 }

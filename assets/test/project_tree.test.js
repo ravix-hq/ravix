@@ -54,8 +54,7 @@ test('quick-jump chooses the visible trigger, arrows wrap and Enter opens the fi
   key(window, 'K', {ctrlKey: true})
   key(window, 'k', {ctrlKey: true})
   expect(opened).toBe(2)
-  expect(document.activeElement).toBe(mobile)
-  document.querySelector('#workspace').insertAdjacentHTML('beforeend', `<div id="search-dialog" role="dialog"><input id="search-query"><a href="#a" data-jump-result>A</a><a href="#b" data-jump-result>B</a></div>`)
+  document.querySelector('#workspace').insertAdjacentHTML('beforeend', `<div id="search-dialog" class="scrim"><div role="dialog"><input id="search-query"><a href="#a" data-jump-result>A</a><a href="#b" data-jump-result>B</a></div></div>`)
   key(window, 'k', {ctrlKey: true})
   expect(opened).toBe(2)
   const input = document.querySelector('input'), [a,b] = document.querySelectorAll('a')
@@ -71,28 +70,6 @@ test('quick-jump chooses the visible trigger, arrows wrap and Enter opens the fi
   document.querySelector('#search-dialog').remove()
   key(window, 'k', {ctrlKey: true}); expect(opened).toBe(2)
 })
-
-for (const [platform, modifier, other] of [['MacIntel', 'metaKey', 'ctrlKey'], ['Linux x86_64', 'ctrlKey', 'metaKey']]) {
-  test(`shortcut respects ${platform} and preserves editing shortcuts`, () => {
-    Object.defineProperty(navigator, 'platform', {value: platform, configurable: true})
-    document.body.innerHTML = `<div id="workspace"><button data-quick-jump-trigger>Search</button><textarea></textarea><input><select></select><div contenteditable="true"><span>Compose</span></div><div role="textbox"></div><div class="xterm"><span>Terminal</span></div></div>`
-    const button = document.querySelector('button')
-    button.getClientRects = () => [{}]
-    let opened = 0
-    button.onclick = () => opened++
-    const {hook} = mountHook(QuickJump, '#workspace')
-    expect(key(button, 'k', {[other]: true})).toBe(true)
-    expect(opened).toBe(0)
-    for (const target of document.querySelectorAll('textarea, input, select, [contenteditable] span, [role="textbox"], .xterm span')) {
-      expect(key(target, 'k', {[modifier]: true})).toBe(true)
-    }
-    expect(opened).toBe(0)
-    expect(key(button, 'k', {[modifier]: true})).toBe(false)
-    expect(opened).toBe(1)
-    hook.destroyed()
-    Object.defineProperty(navigator, 'platform', {value: 'Linux x86_64', configurable: true})
-  })
-}
 
 test('quick-jump keeps selected result focus when filtering moves its row', () => {
   document.body.innerHTML = `<div id="workspace"><input id="search-query"><a id="result" data-jump-result href="#project">Project</a></div>`

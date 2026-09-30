@@ -1,7 +1,9 @@
 defmodule RavixWeb.Live.RepoPicker do
   @moduledoc """
   The New track repository list (RAV-10, ADR 0009 phase 4c), inside
-  `WorkspaceLive`'s New track dialog while `RAVIX_WORKSPACE_ACCESS` is on.
+  `WorkspaceLive`'s New track dialog while `RAVIX_WORKSPACE_ACCESS` is on,
+  as the repository chip's popover (RAV-60): a pick marks itself
+  `data-chip-close`, so choosing closes the popover.
 
   A type-ahead over the current workspace's repositories, matching
   `owner/repo`, most recently used first, then alphabetical; "Add a
@@ -50,7 +52,8 @@ defmodule RavixWeb.Live.RepoPicker do
           disabled={@busy}
         />
       </form>
-      <p id="repo-picker-selected" class="hint" aria-live="polite">
+      <%!-- The chip shows the selection; this line announces it. --%>
+      <p id="repo-picker-selected" class="sr-only" aria-live="polite">
         Selected: <strong :if={!@scratch?}>{@selected.repo}</strong>
         <strong :if={@scratch?}>No repository (scratch) · {@selected.display_name}</strong>
       </p>
@@ -67,6 +70,7 @@ defmodule RavixWeb.Live.RepoPicker do
             id={"repo-option-#{entry.project.id}"}
             class={["repo-option", entry.project.id == @selected.id && "on"]}
             data-jump-result
+            data-chip-close
             aria-pressed={to_string(entry.project.id == @selected.id)}
             phx-click="picker-pick"
             phx-value-project={entry.project.id}
@@ -121,6 +125,7 @@ defmodule RavixWeb.Live.RepoPicker do
         id="repo-option-scratch"
         class={["repo-option repo-scratch", @scratch? && "on"]}
         aria-pressed={to_string(@scratch?)}
+        data-chip-close
         phx-click="picker-scratch"
         disabled={@busy}
       >

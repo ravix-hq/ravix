@@ -500,7 +500,7 @@ defmodule RavixWeb.ShareDialogTest do
 
       assert has_element?(
                view,
-               ~s(a[href="/w/#{ctx.workspace.id}"]),
+               ~s(a[href="/w/#{ctx.workspace.id}/settings/members"]),
                "Invite them to the workspace"
              )
 

@@ -2,6 +2,7 @@ import { test, expect } from '@playwright/test';
 import { readFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { signIn, connectClaude } from './sign-in.js';
+import { openProjectSettings } from './settings.js';
 
 const mock = `http://localhost:${process.env.MOCK_PORT || 8893}`;
 
@@ -82,12 +83,13 @@ test('a flagged track copies secrets, becomes ready, and deletes its own machine
   const rebuiltBox = rebuiltBoxes.find(b => b.vault_id === rebuiltVault.id);
   expect(rebuiltBox.id).not.toBe(box.id);
 
-  await page.locator('#yard .workspace-project.current button[title="Project settings"]').click();
-  const settings = page.getByRole('dialog', { name: 'Project settings', exact: true });
-  await settings.getByRole('button', { name: 'Agent', exact: true }).click();
+  const trackUrl = page.url();
+  const settings = await openProjectSettings(page, 'agent');
   await expect(settings).toContainText('Changes the default agent for new threads. Existing threads keep their agent.');
   await expect(settings.locator('#project-rebuild-form')).toHaveCount(0);
-  await settings.getByRole('button', { name: 'Close', exact: true }).click();
+  await page.goBack();
+  await page.goBack();
+  await expect(page).toHaveURL(trackUrl);
   await page.getByRole('button', { name: 'Close track', exact: true }).click();
   const close = page.getByRole('dialog', { name: 'Close track', exact: true });
   await expect(close).toContainText('uncommitted changes and unpushed commits will be deleted');
@@ -118,9 +120,7 @@ test('an owner confirms an uncertain secret change and can save again', async ({
   const sql = query => execFileSync('psql', [`${server}/${database}`, '-XAtq', '-v', 'ON_ERROR_STOP=1', '-c', query], { encoding: 'utf8' }).trim();
   // Persisted state after a provider timeout or worker loss. Only this harness's database.
   sql(`UPDATE ravix.projects SET secrets_pending = true, secrets_generation = 1 WHERE id = '${projectId}'`);
-  await page.locator('#yard .workspace-project.current button[title="Project settings"]').click();
-  const settings = page.getByRole('dialog', { name: 'Project settings', exact: true });
-  await settings.getByRole('button', { name: 'Secrets', exact: true }).click();
+  const settings = await openProjectSettings(page, 'secrets');
   const confirmation = page.locator('#secret-confirmation-form');
   await expect(confirmation).toContainText('Values cannot be checked here');
   await confirmation.getByLabel('I confirmed the previous secret change has finished in Fountain.', { exact: true }).check();

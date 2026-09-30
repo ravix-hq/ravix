@@ -28,9 +28,10 @@
       where anything that arrives late (the plan chip) or changes length
       (the machine's state) lives, so it grows into the spacer and never
       moves the title. When the strip is short the status chips give way
-      first, down to their icon or count, then the branch, and the title
-      last; see "the track's own header" in app.css, and HeaderFit for
-      why a chip's words show whole or not at all. --%>
+      first, down to their icon or count, and the title last; see "the
+      track's own header" in app.css, and HeaderFit for why a chip's words
+      show whole or not at all. The track is named by `Track.label/1` alone:
+      its branch is in the ribbon below, not repeated here (RAV-83). --%>
     <header id="track-header" class="crumbs track-crumbs" phx-hook="HeaderFit">
       <div class="track-header-path">
         <.link
@@ -45,26 +46,19 @@
         <span class="dimmer" aria-hidden="true">›</span>
         <button
           :if={owner_or_creator?(@current_user, @track)}
-          class={["ghost track-title-crumb", !fits?(@track.title, 16) && "long"]}
+          class={["ghost track-title-crumb", !fits?(Track.label(@track), 16) && "long"]}
           phx-click={JS.push_focus() |> JS.push("dialog")}
           phx-value-name="rename"
           title="Rename track"
-          aria-label={"Rename track: #{@track.title}"}
+          aria-label={"Rename track: #{Track.label(@track)}"}
         >
-          {@track.title}
+          {Track.label(@track)}
         </button>
         <strong
           :if={!owner_or_creator?(@current_user, @track)}
-          class={["track-title-crumb", !fits?(@track.title, 16) && "long"]}
-          title={@track.title}
-        >{@track.title}</strong>
-        <%!-- A new track is titled with its branch, so the chip appears only
-          once the two say different things: after a rename, say. --%>
-        <span
-          :if={@track.branch != @track.title}
-          class="chip mono track-branch"
-          title={@track.branch}
-        >{@track.branch}</span>
+          class={["track-title-crumb", !fits?(Track.label(@track), 16) && "long"]}
+          title={Track.label(@track)}
+        >{Track.label(@track)}</strong>
       </div>
       <span class="spacer"></span>
       <div class="track-header-status">

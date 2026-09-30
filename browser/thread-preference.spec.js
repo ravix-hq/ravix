@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { signIn, connectClaude } from './sign-in.js';
+import { openAgentSettings } from './settings.js';
 
 // The chip is "<agent> · <model>", then the runtime's effort and Fast once a
 // turn has reported them (RAV-52); this spec is about the model part.
@@ -21,8 +22,10 @@ test('an account default selects the model for a new thread and leaves the exist
   const tabs = page.getByRole('navigation', { name: 'Threads', exact: true });
   const original = await tabs.locator('[aria-selected="true"]').getAttribute('data-thread-id');
   const originalModel = modelOf(await page.locator('#model-trigger').getAttribute('title'));
-  await page.locator('#account-trigger').click();
-  await page.locator('#open-account').click();
+  const trackURL = page.url();
+  // The default model for new threads is Settings › Agents' disclosure (RAV-77).
+  const panel = await openAgentSettings(page);
+  await panel.locator('#agent-manage-toggle').click();
   const choice = page.locator('#thread-default-choice');
   await expect(choice).toBeVisible();
   const options = await choice.locator('option').evaluateAll(nodes => nodes.map(n => ({ value: n.value, label: n.textContent.trim() })));
@@ -31,7 +34,10 @@ test('an account default selects the model for a new thread and leaves the exist
   await choice.selectOption(selected.value);
   await page.getByRole('button', { name: 'Save thread default', exact: true }).click();
   await expect(page.getByText('Thread default saved.', { exact: true })).toBeVisible();
-  await page.getByRole('dialog', { name: 'Your account', exact: true }).getByRole('button', { name: 'Close', exact: true }).click();
+  // Back to the track, through the browser's history as a person would.
+  await page.goBack();
+  await page.goBack();
+  await expect(page).toHaveURL(trackURL);
   await tabs.getByRole('button', { name: 'Add thread', exact: true }).click();
   const draft = page.locator('#draft-runtime');
   await expect(draft.locator('.thread-default-source')).toContainText('Your default:');

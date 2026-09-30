@@ -17,9 +17,13 @@ defmodule RavixWeb.Live.AgentPanelTest do
 
   defp open_account(conn, user) do
     {:ok, view, _} = live(log_in_user(conn, user), "/home")
-    view |> element("#open-account") |> render_click()
+    open_account_dialog(view)
     view
   end
+
+  # The account dialog is what an agent's reconnect opens; the You menu
+  # links to Settings › Agents instead (RAV-77).
+  defp open_account_dialog(view), do: render_click(view, "dialog", %{"name" => "account"})
 
   test "the thread default round trips and offers only connected runtimes", %{conn: conn} do
     user = insert_user()
@@ -356,7 +360,7 @@ defmodule RavixWeb.Live.AgentPanelTest do
     {token, session} = insert_session(user)
     conn = Plug.Test.init_test_session(conn, session_token: token)
     {:ok, view, _} = live(conn, "/home")
-    view |> element("#open-account") |> render_click()
+    open_account_dialog(view)
     render_async(view)
     assert has_element?(view, "#remove-claude-api_key")
 
@@ -371,7 +375,7 @@ defmodule RavixWeb.Live.AgentPanelTest do
     {token, session} = insert_session(insert_user())
     conn = Plug.Test.init_test_session(conn, session_token: token)
     {:ok, view, _} = live(conn, "/home")
-    view |> element("#open-account") |> render_click()
+    open_account_dialog(view)
     view |> element("#agent-claude") |> render_click()
 
     Repo.delete!(session)
@@ -394,7 +398,7 @@ defmodule RavixWeb.Live.AgentPanelTest do
 
       reject(&Ravix.Fountain.update_agent/3)
       {:ok, view, _} = live(log_in_user(conn, user), @path)
-      if @path == "/home", do: view |> element("#open-account") |> render_click()
+      if @path == "/home", do: open_account_dialog(view)
       render_async(view)
       assert has_element?(view, "#agent-claude-status", "Connected")
       assert has_element?(view, "#agent-codex-status", "Connected")
@@ -413,7 +417,7 @@ defmodule RavixWeb.Live.AgentPanelTest do
       reject(&Inference.make_default/2)
       {token, session} = insert_session(user)
       {:ok, view, _} = live(Plug.Test.init_test_session(conn, session_token: token), @path)
-      if @path == "/home", do: view |> element("#open-account") |> render_click()
+      if @path == "/home", do: open_account_dialog(view)
       render_async(view)
       Repo.delete!(session)
       view |> element("#make-default-codex") |> render_click()

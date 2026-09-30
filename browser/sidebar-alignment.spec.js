@@ -66,7 +66,7 @@ test('the sidebar tree steps in per level and its chevrons follow their state', 
   await expect(newProject).not.toBeVisible();
   await page.locator('#yard .workspace-project.current .project-add').click();
   const newTrack = page.getByRole('dialog', { name: 'New track', exact: true });
-  await newTrack.getByRole('button', { name: 'Advanced', exact: true }).click();
+  await newTrack.getByRole('button', { name: 'Options', exact: true }).click();
   await newTrack.getByLabel('Branch name').fill('tree-work');
   await newTrack.getByRole('button', { name: 'Create track', exact: true }).click();
   await expect(newTrack).not.toBeVisible();

@@ -5,7 +5,7 @@ import { signIn, connectClaude } from './sign-in.js';
 async function newTrack(page, name) {
   await page.locator('#yard .workspace-project.current .project-add').click();
   const dialog = page.getByRole('dialog', { name: 'New track', exact: true });
-  await dialog.getByRole('button', { name: 'Advanced', exact: true }).click();
+  await dialog.getByRole('button', { name: 'Options', exact: true }).click();
   await dialog.getByLabel('Branch name', { exact: true }).fill(name);
   await dialog.getByRole('button', { name: 'Create track', exact: true }).click();
   await expect(page.locator('.track-crumbs')).toContainText(name);
@@ -65,7 +65,7 @@ test('Mine/Everyone filters the rail by creator, and Show closed lists closed tr
   await search.fill('member-work');
   await expect(page.locator('#search-dialog [data-jump-result]', { hasText: 'member-work' })).toHaveCount(1);
   await search.fill('mine: member-work');
-  await expect(page.locator('#search-dialog')).toContainText('No projects, tracks or plans match');
+  await expect(page.locator('#search-dialog')).toContainText('No tracks match');
   await page.keyboard.press('Escape');
 
   await scope.getByRole('button', { name: 'Everyone', exact: true }).click();

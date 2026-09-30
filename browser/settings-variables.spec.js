@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { signIn, connectClaude } from './sign-in.js';
+import { openProjectSettings } from './settings.js';
 
 const mock = `http://localhost:${process.env.MOCK_PORT || 8893}`;
 
@@ -11,9 +12,7 @@ test('readable project variables add, edit, reject auth names and remove through
   await create.getByLabel('Project name', { exact: true }).fill('Readable variables browser');
   await create.getByRole('button', { name: 'Create project', exact: true }).click();
   await expect(create).not.toBeVisible();
-  await page.locator('#yard .workspace-project.current button[title="Project settings"]').click();
-  const dialog = page.getByRole('dialog', { name: 'Project settings', exact: true });
-  await dialog.getByRole('button', { name: 'Environment variables', exact: true }).click();
+  const dialog = await openProjectSettings(page, 'variables');
   await expect(dialog).toContainText('Running conversations keep the old values');
   await dialog.getByRole('button', { name: 'Add variable', exact: true }).click();
   await dialog.getByLabel('Variable name', { exact: true }).fill('PORT');
