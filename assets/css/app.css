@@ -1175,10 +1175,11 @@ html[data-yard="closed"] .workspace-trigger-skeleton { flex: none; width: 28px; 
   padding: 4px; color: var(--ink); background: var(--panel);
   border: 1px solid var(--line); border-radius: var(--radius-lg); box-shadow: 0 8px 28px var(--shadow);
 }
+/* Each chip names its own anchor inline (`ModelMenu.chip/1`), so the
+   composer's menu and the New track dialog's never find each other's. */
 @supports (position-anchor: --a) {
-  .model-trigger { anchor-name: --model; }
   .model-menu {
-    position-anchor: --model; translate: none;
+    translate: none;
     bottom: calc(anchor(top) + 4px); left: anchor(left);
     position-try-fallbacks: flip-inline;
   }
@@ -1717,11 +1718,66 @@ section.first-prompt#project-start { align-self: center; padding: 32px 24px; }
 .pick-row .ico { flex: none; color: var(--dimmer); }
 .pick-row .meta { margin-left: auto; display: flex; align-items: center; gap: 8px; color: var(--dimmer); font-size: 11.5px; }
 
-/* The new-track form: the primary action floats to the right of the row and
-   the advanced options unfold beneath it. */
-#new-track-form > button.primary { float: right; }
-#new-track-form::after { content: ""; display: block; clear: both; }
-#track-advanced { margin-top: 14px; }
+/* The New track dialog (RAV-60): the prompt leads, the choices are chips
+   around it, and Create stays in the footer. A chip's menu is a native
+   popover (`ModelMenu.chip/1`), in the top layer, so the scrolling body
+   never clips it; its wrapper takes no box of its own. */
+.chip-menu { display: contents; }
+.pick-chip {
+  display: inline-flex; align-items: center; gap: 6px; min-width: 0; max-width: 100%;
+  height: 28px; padding: 0 10px; font-size: 12.5px; color: var(--dim);
+  background: var(--surface); border: 1px solid var(--line); border-radius: 999px;
+}
+.pick-chip svg { flex: none; color: var(--dimmer); }
+.pick-chip .truncate { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
+.pick-chip:hover:not(:disabled), .pick-chip:focus-visible,
+.pick-chip[aria-expanded="true"] { color: var(--ink); background: var(--surface-hover); border-color: var(--line-strong); }
+.pick-chip-static { cursor: default; }
+.new-track-chips { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; min-width: 0; }
+.new-track-chips > .pick-chip, .new-track-chips > .chip-menu > .pick-chip { max-width: 60%; }
+#new-track-form .field { margin-bottom: 0; }
+.new-track-prompt { min-height: 116px; font-size: 14px; line-height: 1.5; }
+#new-track-dialog .dialog-foot { flex-wrap: nowrap; }
+#new-track-dialog .dialog-foot .chip-menu > .pick-chip { max-width: min(280px, 50vw); }
+.chip-options { display: inline-flex; align-items: center; gap: 5px; height: 28px; padding: 0 8px; font-size: 12.5px; }
+.chip-options[aria-expanded="true"] { color: var(--ink); background: var(--surface-hover); }
+#new-track-create { display: inline-flex; align-items: center; gap: 8px; }
+#new-track-create kbd { background: transparent; border-color: currentColor; color: inherit; opacity: 0.75; }
+
+/* The look is the model menu's; `.model-menu` opens above its chip, and
+   `.chip-popover-below` below it. */
+.chip-popover-below {
+  position: fixed; inset: auto; top: 18vh; left: 50%; translate: -50% 0; margin: 0;
+  width: min(300px, calc(100vw - 32px)); max-height: min(50vh, 360px); overflow-y: auto;
+  padding: 4px; color: var(--ink); background: var(--panel);
+  border: 1px solid var(--line); border-radius: var(--radius-lg); box-shadow: 0 8px 28px var(--shadow);
+}
+.repo-popover { width: min(380px, calc(100vw - 32px)); padding: 10px; }
+.repo-popover .repo-picker { margin-bottom: 0; }
+.repo-popover form + form, .repo-popover .field { margin-bottom: 0; }
+@supports (position-anchor: --a) {
+  .chip-popover-below {
+    translate: none; top: calc(anchor(bottom) + 4px); left: anchor(left);
+    position-try-fallbacks: flip-block;
+  }
+  .chip-popover-end { left: auto; right: anchor(right); }
+}
+.chip-group { margin: 0; padding: 0; border: 0; min-width: 0; }
+/* A rule, not a fieldset border, so the legend does not cut a notch in it. */
+.chip-group + .chip-group { margin-top: 4px; padding-top: 4px; box-shadow: inset 0 1px var(--line); }
+.chip-group legend { float: left; width: 100%; padding: 6px 8px 2px; color: var(--dimmer); font-size: 11px; }
+.chip-group legend + * { clear: both; }
+.model-option:has(input) { cursor: pointer; }
+.model-option:has(input:checked) { color: var(--ink); }
+.model-option:has(input:focus-visible) { background: var(--surface-hover); color: var(--ink); outline: 2px solid var(--accent); outline-offset: -2px; }
+.model-option:has(input:disabled) { cursor: default; opacity: 0.6; }
+/* An agent that cannot be chosen keeps its name; the reason wraps beside it. */
+.model-option:has(input:disabled) .truncate { flex: none; }
+.model-option:has(input:disabled) small { flex: 1 1 auto; min-width: 0; white-space: normal; text-align: right; }
+.chip-choice { display: grid; gap: 1px; min-width: 0; }
+.chip-choice small { color: var(--dimmer); font-size: 11px; }
+
+#track-advanced { margin-top: 12px; }
 .origin-options { padding: 6px 0; }
 .track-branch-input { display: flex; align-items: baseline; gap: 8px; }
 .track-branch-input > .field { flex: 1; min-width: 0; margin-bottom: 0; }

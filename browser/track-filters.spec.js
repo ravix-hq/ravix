@@ -5,7 +5,7 @@ import { signIn, connectClaude } from './sign-in.js';
 async function newTrack(page, name) {
   await page.locator('#yard .workspace-project.current .project-add').click();
   const dialog = page.getByRole('dialog', { name: 'New track', exact: true });
-  await dialog.getByRole('button', { name: 'Advanced', exact: true }).click();
+  await dialog.getByRole('button', { name: 'Options', exact: true }).click();
   await dialog.getByLabel('Branch name', { exact: true }).fill(name);
   await dialog.getByRole('button', { name: 'Create track', exact: true }).click();
   await expect(page.locator('.track-crumbs')).toContainText(name);

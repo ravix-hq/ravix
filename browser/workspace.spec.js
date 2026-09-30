@@ -510,7 +510,7 @@ test('project, track, streaming, image upload, reconnect, and revocation', async
   await page.locator('#yard .workspace-project.current .project-add').click();
   const newTrack = page.getByRole('dialog', { name: 'New track', exact: true });
   await expect(newTrack.getByLabel('Branch name')).toHaveValue('');
-  await newTrack.getByRole('button', { name: 'Advanced', exact: true }).click();
+  await newTrack.getByRole('button', { name: 'Options', exact: true }).click();
   await expect(newTrack.getByRole('button', { name: 'Branch', exact: true })).toBeVisible();
   for (const [kind, value, label] of [
     ['Branch', 'release/2026-08', 'release/2026-08'],
@@ -525,7 +525,7 @@ test('project, track, streaming, image upload, reconnect, and revocation', async
     if (kind === 'Branch') {
       for (const width of [390, 1280]) {
         await page.setViewportSize({ width, height: 844 });
-        const toggle = await newTrack.getByRole('button', { name: 'Hide advanced', exact: true }).boundingBox();
+        const toggle = await newTrack.getByRole('textbox', { name: 'What do you want to work on?', exact: true }).boundingBox();
         const source = await newTrack.locator('.origin-options').boundingBox();
         const start = await refs.boundingBox();
         const branch = await newTrack.getByLabel('Branch name', { exact: true }).boundingBox();
@@ -541,7 +541,7 @@ test('project, track, streaming, image upload, reconnect, and revocation', async
     await expect(newTrack).toBeVisible();
     await expect(newTrack.getByRole('button', { name: 'Create track', exact: true })).toBeEnabled();
   }
-  await newTrack.getByRole('button', { name: 'Hide advanced', exact: true }).click();
+  await newTrack.getByRole('button', { name: 'Options', exact: true }).click();
   await expect(newTrack.getByRole('button', { name: 'Branch', exact: true })).not.toBeVisible();
   await capture(page, 'new-track');
   await expect(newTrack.getByLabel('Branch name')).not.toBeVisible();
@@ -803,7 +803,7 @@ test('project, track, streaming, image upload, reconnect, and revocation', async
   const firstLane = await page.locator('#transcript-scroll').getAttribute('data-track');
   await page.locator('#yard .workspace-project.current .project-add').click();
   await expect(newTrack).toBeVisible();
-  await newTrack.getByRole('button', { name: 'Advanced', exact: true }).click();
+  await newTrack.getByRole('button', { name: 'Options', exact: true }).click();
   await page.getByLabel('Branch name').fill('second-lane');
   await page.getByRole('button', { name: 'Create track', exact: true }).click();
   await expect(page.locator('.track-crumbs')).toContainText('second-lane');
@@ -991,7 +991,7 @@ test('composer Send stays compact and keeps its arrow after repeated submissions
   await page.locator('#yard .workspace-project.current .project-add').click();
   // New tracks are named after their reserved ravix/ branch (#154).
   const newTrack = page.getByRole('dialog', { name: 'New track', exact: true });
-  await newTrack.getByRole('button', { name: 'Advanced', exact: true }).click();
+  await newTrack.getByRole('button', { name: 'Options', exact: true }).click();
   await newTrack.getByLabel('Branch name', { exact: true }).fill('compact-send');
   await newTrack.getByRole('button', { name: 'Create track', exact: true }).click();
   await expect(page.locator('.track-crumbs')).toContainText('compact-send');

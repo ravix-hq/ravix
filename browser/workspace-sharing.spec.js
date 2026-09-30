@@ -4,6 +4,7 @@ import { test, expect } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
 import { signIn, connectClaude } from './sign-in.js';
 import { expectInlineChoice } from './controls.js';
+import { chooseSharing } from './new-track.js';
 
 // ADR 0009 phase 5, with RAVIX_WORKSPACE_ACCESS on (`bun run
 // test:browser:workspace-access`): the track header's Share dialog shares a
@@ -28,8 +29,8 @@ const idOf = path => {
 async function openTrack(page, visibility, branch) {
   await page.locator('#yard .workspace-project.current .project-add').click();
   const track = page.getByRole('dialog', { name: 'New track', exact: true });
-  await track.getByLabel('Sharing', { exact: true }).selectOption(visibility);
-  await track.getByRole('button', { name: 'Advanced', exact: true }).click();
+  await chooseSharing(track, visibility);
+  await track.getByRole('button', { name: 'Options', exact: true }).click();
   await track.getByLabel('Branch name', { exact: true }).fill(branch);
   await track.getByRole('button', { name: 'Create track', exact: true }).click();
   await expect(page.locator('.track-crumbs')).toContainText(branch);

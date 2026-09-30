@@ -206,7 +206,9 @@ defmodule Ravix.TraceSpanTest do
     test "a span inside it is never exported" do
       Trace.untraced(fn -> Trace.span("prompt_queue.sweep", %{}, fn -> :ok end) end)
 
-      refute_receive {:span, _}
+      # Only this span: the exporter is global, so whatever else in the suite
+      # finishes a span meanwhile (a repo query) is not what this is about.
+      refute_receive {:span, span(name: "prompt_queue.sweep")}
     end
 
     test "it returns the value, and tracing resumes after it" do

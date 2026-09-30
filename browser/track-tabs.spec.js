@@ -18,7 +18,7 @@ test('project track links scroll vertically and preserve the mobile drawer', asy
   for (let index = 0; index < 12; index++) {
     await page.locator('#yard .workspace-project.current .project-add').click();
     const dialog = page.getByRole('dialog', { name: 'New track', exact: true });
-    await dialog.getByRole('button', { name: 'Advanced', exact: true }).click();
+    await dialog.getByRole('button', { name: 'Options', exact: true }).click();
     await dialog.getByLabel('Branch name').fill(`scrolling-track-${index}`);
     await dialog.getByRole('button', { name: 'Create track', exact: true }).click();
     await expect(dialog).not.toBeVisible();

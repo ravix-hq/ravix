@@ -1,5 +1,5 @@
-// Cmd/Ctrl-K uses the visible dialog trigger, preserving the shared dialog's
-// push/pop focus stack. Arrow keys move through native navigation links, in
+// Cmd/Ctrl-K uses the visible dialog trigger, as Cmd/Ctrl-N does New track's,
+// preserving the shared dialog's push/pop focus stack. Arrow keys move through native navigation links, in
 // search and in any `data-jump-scope` list; Enter in its query takes the first.
 export const QuickJump = {
   mounted() {
@@ -11,6 +11,24 @@ export const QuickJump = {
         if (this.el.querySelector('[role="dialog"]')) return
         const trigger = [...this.el.querySelectorAll('[data-quick-jump-trigger]')]
           .find(button => button.getClientRects().length > 0)
+        if (trigger) {
+          event.preventDefault()
+          trigger.focus()
+          trigger.click()
+        }
+        return
+      }
+      // Cmd/Ctrl-N opens New track the way Cmd/Ctrl-K opens search, from a
+      // field too. It gives way to the browser's own new window wherever it
+      // cannot help: Chrome and Edge keep the key in an ordinary tab and never
+      // deliver it (an installed app window does), a terminal keeps it for
+      // its shell, an open dialog keeps it, and with no visible New track
+      // button it is not taken. Shift and Alt variants are never taken.
+      if (modifier && !event.altKey && !event.shiftKey && event.key.toLowerCase() === 'n') {
+        if (event.target.closest?.('.xterm')) return
+        if (this.el.querySelector('[role="dialog"]')) return
+        const trigger = [...this.el.querySelectorAll('[data-new-track-trigger]')]
+          .find(button => button.getClientRects().length > 0 && !button.disabled)
         if (trigger) {
           event.preventDefault()
           trigger.focus()

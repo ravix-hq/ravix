@@ -954,7 +954,12 @@ defmodule RavixWeb.WorkspaceLiveTest do
       project = insert_project(user: user)
       {:ok, view, _} = live(log_in_user(conn, user), "/p/#{project.id}?new=track")
       render_async(view)
-      assert has_element?(view, "#new-track-form option[value='private']") == unquote(dedicated)
+      # RAV-60: without a second choice the sharing chip is a plain label.
+      assert has_element?(view, "#new-track-sharing-menu input[value=private]") ==
+               unquote(dedicated)
+
+      assert has_element?(view, ".new-track-chips .pick-chip-static", "Everyone") ==
+               not unquote(dedicated)
     end
   end
 
@@ -972,9 +977,9 @@ defmodule RavixWeb.WorkspaceLiveTest do
     assert has_element?(view, "#new-track-form")
     assert has_element?(view, ".project-tree-tracks .workspace-track")
     view |> form("#new-track-form", new_track: [title: "Keep this name"]) |> render_change()
-    view |> element("button", "Advanced") |> render_click()
+    view |> element("#new-track-options[aria-expanded=false]", "Options") |> render_click()
     refute has_element?(view, "#track-advanced[hidden]")
-    view |> element("button", "Hide advanced") |> render_click()
+    view |> element("#new-track-options[aria-expanded=true]", "Options") |> render_click()
     assert has_element?(view, "#track-advanced[hidden]")
     assert has_element?(view, "#track-title[value='Keep this name']")
     # The close patches from the client, so a link clicked meanwhile keeps
@@ -1205,13 +1210,13 @@ defmodule RavixWeb.WorkspaceLiveTest do
     {:ok, view, _} = live(log_in_user(conn, user), "/p/#{project.id}?new=track")
     render_async(view)
 
-    view |> element("button", "Advanced") |> render_click()
+    view |> element("#new-track-options", "Options") |> render_click()
     render_click(view, "origin", %{"kind" => "branch"})
     refute render(view) =~ "New worktree from"
 
     # `hidden` does not disable an input: without a reset the ref select would
     # still submit and open the track from a ref the form no longer shows.
-    view |> element("button", "Hide advanced") |> render_click()
+    view |> element("#new-track-options", "Options") |> render_click()
     assert has_element?(view, "#track-advanced[hidden]")
     assert render(view) =~ "New worktree from"
     assert has_element?(view, "button.primary", "Blank")
