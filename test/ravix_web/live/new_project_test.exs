@@ -217,7 +217,13 @@ defmodule RavixWeb.Live.NewProjectTest do
     # RAV-37: its own flow, named for what it does, apart from New track.
     assert has_element?(view, "#new-project-dialog h2", "Add repository")
     assert has_element?(view, "#new-project-dialog .lede", "Start work in it from New track")
-    assert has_element?(view, "#configure-github[href='/api/auth/install']", "Configure on GitHub")
+
+    assert has_element?(
+             view,
+             "#configure-github[href='/api/auth/install']",
+             "Configure on GitHub"
+           )
+
     assert listed(view) == ["acme/web", "zebra/api"]
 
     # Nothing chosen is the scratch choice, and the button says so.
