@@ -44,6 +44,7 @@ defmodule RavixWeb.Live.ProjectSettings do
   alias Ravix.Projects.Machine.Rebuild
   alias Ravix.Tracks
   alias Ravix.Workspaces
+  alias Ravix.Workspaces.Picker
   alias RavixWeb.Live.Form
   alias RavixWeb.Live.Hooks
   alias RavixWeb.Live.MachineChanges
@@ -73,6 +74,9 @@ defmodule RavixWeb.Live.ProjectSettings do
          secret_seq: 0,
          machine_review: nil,
          change_repository: change_repository_params(%{}),
+         change_dialog: false,
+         change_query: "",
+         change_count: nil,
          repository_choices: nil
        )}
 
@@ -104,7 +108,7 @@ defmodule RavixWeb.Live.ProjectSettings do
         true -> socket
       end
 
-    {:ok, suggest_repositories(socket)}
+    {:ok, socket}
   end
 
   @impl true
@@ -380,25 +384,74 @@ defmodule RavixWeb.Live.ProjectSettings do
   defp settings_event("project-danger", %{"action" => "delete", "confirm" => name}, socket),
     do: {:noreply, danger(socket, name, &Projects.destroy/2)}
 
-  # RAV-76. What is typed is kept, so a refusal leaves the form as it was.
-  defp settings_event("edit-change-repository", params, socket),
-    do: {:noreply, assign(socket, change_repository: change_repository_params(params))}
+  # RAV-76: Change repository, a dialog in three steps: pick one of the
+  # repositories the App reads, read what happens (how many open tracks
+  # close), type the project's name. What was picked and typed is kept, so
+  # a refusal leaves the dialog as it was.
+  defp settings_event("open-change-repository", _, socket) do
+    user = user(socket)
+    id = project_id(socket)
+    shared_only? = Map.get(socket.assigns.settings, :shared_tracks) != nil
+
+    {:noreply,
+     socket
+     |> assign(
+       change_dialog: true,
+       change_query: "",
+       change_count: nil,
+       change_repository: change_repository_params(%{})
+     )
+     |> load_repository_choices()
+     |> traced_async(:change_count, fn -> closing(user, id, shared_only?) end)}
+  end
+
+  defp settings_event("cancel-change-repository", _, socket) do
+    if MapSet.member?(socket.assigns.pending, :change_repository),
+      do: {:noreply, socket},
+      else: {:noreply, assign(socket, change_dialog: false)}
+  end
+
+  defp settings_event("filter-change-repository", %{"q" => query}, socket)
+       when is_binary(query),
+       do: {:noreply, assign(socket, change_query: String.slice(query, 0, 200))}
+
+  # Only a repository the dialog offered can be picked; a forged one is
+  # ignored (and `change_repository/3` would ask GitHub again regardless).
+  defp settings_event("pick-change-repository", %{"repo" => repo}, socket) do
+    if offered?(socket, repo),
+      do: {:noreply, update(socket, :change_repository, &Map.put(&1, "repo", repo))},
+      else: {:noreply, socket}
+  end
+
+  defp settings_event("edit-change-repository", params, socket) do
+    {:noreply,
+     update(
+       socket,
+       :change_repository,
+       &Map.put(&1, "confirm", change_repository_params(params)["confirm"])
+     )}
+  end
 
   defp settings_event("change-repository", params, socket) do
-    %{"repo" => repo, "confirm" => name} = change = change_repository_params(params)
-    socket = assign(socket, change_repository: change)
+    confirm = change_repository_params(params)["confirm"]
+    socket = update(socket, :change_repository, &Map.put(&1, "confirm", confirm))
+    repo = socket.assigns.change_repository["repo"]
 
-    if name == socket.assigns.project.name do
-      user = user(socket)
-      id = project_id(socket)
-      repo = String.trim(repo)
+    cond do
+      not socket.assigns.change_dialog or not offered?(socket, repo) ->
+        {:noreply, socket}
 
-      {:noreply,
-       begin(socket, :change_repository, fn ->
-         {repo, Projects.change_repository(user, id, repo)}
-       end)}
-    else
-      {:noreply, flash(socket, :error, "Type the project name to confirm.")}
+      confirm != socket.assigns.project.name ->
+        {:noreply, flash(socket, :error, "Type the project name to confirm.")}
+
+      true ->
+        user = user(socket)
+        id = project_id(socket)
+
+        {:noreply,
+         begin(socket, :change_repository, fn ->
+           {repo, Projects.change_repository(user, id, repo)}
+         end)}
     end
   end
 
@@ -533,15 +586,23 @@ defmodule RavixWeb.Live.ProjectSettings do
      end)}
   end
 
-  defp async_result(:repository_choices, {:ok, {:ok, names}}, socket),
-    do: {:noreply, assign(socket, repository_choices: names)}
+  defp async_result(:repository_choices, {:ok, {:ok, repos}}, socket),
+    do: {:noreply, assign(socket, repository_choices: repos)}
 
-  # Suggestions only: the field still takes a name typed out.
-  defp async_result(:repository_choices, {:ok, {:error, _reason}}, socket),
-    do: {:noreply, assign(socket, repository_choices: [])}
+  # Nothing to offer is what the dialog says; the reason is flashed.
+  defp async_result(:repository_choices, {:ok, {:error, reason}}, socket),
+    do: {:noreply, socket |> assign(repository_choices: []) |> error(reason)}
+
+  defp async_result(:change_count, {:ok, {:ok, count}}, socket),
+    do: {:noreply, assign(socket, change_count: count)}
+
+  # Uncounted, the review says "every open track" instead of a number.
+  defp async_result(:change_count, {:ok, {:error, _reason}}, socket),
+    do: {:noreply, socket}
 
   defp async_result(:change_repository, {:ok, {repo, response}}, socket) do
     socket = settle(socket, :change_repository)
+    name = socket.assigns.project.name
 
     case response do
       {:ok, outcome} ->
@@ -550,12 +611,10 @@ defmodule RavixWeb.Live.ProjectSettings do
 
         {:noreply,
          socket
-         |> assign(change_repository: change_repository_params(%{}), repository_choices: nil)
-         |> load()
-         |> suggest_repositories()
+         |> changed_repository()
          |> flash(
            :info,
-           "#{socket.assigns.project.name} now uses #{repo}. Its tracks were closed and the machine is being rebuilt."
+           "#{name} now uses #{repo}. Its tracks were closed and the machine is being rebuilt."
          )
          |> report(outcome)}
 
@@ -564,12 +623,10 @@ defmodule RavixWeb.Live.ProjectSettings do
 
         {:noreply,
          socket
-         |> assign(change_repository: change_repository_params(%{}), repository_choices: nil)
-         |> load()
-         |> suggest_repositories()
+         |> changed_repository()
          |> flash(
            :error,
-           "#{socket.assigns.project.name} now uses #{repo}, but the machine was not rebuilt: #{RavixWeb.Error.from(reason).message} Rebuild it from this page."
+           "#{name} now uses #{repo}, but the machine was not rebuilt: #{RavixWeb.Error.from(reason).message} Rebuild it from this page."
          )}
 
       {:error, reason} ->
@@ -908,7 +965,8 @@ defmodule RavixWeb.Live.ProjectSettings do
       switch_confirmation: nil,
       confirmations: %{},
       move_confirmation: nil,
-      change_repository: change_repository_params(%{})
+      change_repository: change_repository_params(%{}),
+      change_dialog: false
     )
     |> reset_machine()
   end
@@ -968,31 +1026,40 @@ defmodule RavixWeb.Live.ProjectSettings do
     })
   end
 
-  defp change_repository_params(params) do
-    %{
-      "repo" => str_param(params["repo"], 200),
-      "confirm" => str_param(params["confirm"], 200)
-    }
-  end
+  # What the dialog holds: the repository picked from its list (nil until
+  # one is) and the name typed.
+  defp change_repository_params(params),
+    do: %{"repo" => nil, "confirm" => str_param(params["confirm"], 200)}
 
   defp str_param(value, max) when is_binary(value), do: String.slice(value, 0, max)
   defp str_param(_value, _max), do: ""
 
-  # The Danger zone's suggestions for a new repository, read once it is the
-  # page drawn. Nil until asked; `[]` when there are none or they could not
-  # be read.
-  defp suggest_repositories(socket) do
-    if socket.assigns.section == "danger" and socket.assigns.settings != nil and
-         is_nil(socket.assigns.repository_choices) do
-      user = user(socket)
-      id = project_id(socket)
+  defp load_repository_choices(%{assigns: %{repository_choices: nil}} = socket) do
+    user = user(socket)
+    id = project_id(socket)
 
-      socket
-      |> assign(repository_choices: [])
-      |> traced_async(:repository_choices, fn -> Projects.repository_choices(user, id) end)
-    else
-      socket
-    end
+    socket
+    |> assign(repository_choices: :loading)
+    |> traced_async(:repository_choices, fn -> Projects.repository_choices(user, id) end)
+  end
+
+  defp load_repository_choices(socket), do: socket
+
+  defp offered?(socket, repo) do
+    is_binary(repo) and is_list(socket.assigns.repository_choices) and
+      Enum.any?(socket.assigns.repository_choices, &(&1.repo == repo))
+  end
+
+  # After a change, whichever way it went: the dialog closes, and the next
+  # one reads the choices again, which now include the old repository.
+  defp changed_repository(socket) do
+    socket
+    |> assign(
+      change_dialog: false,
+      change_repository: change_repository_params(%{}),
+      repository_choices: nil
+    )
+    |> load()
   end
 
   defp danger(socket, confirmation, call) do
@@ -1737,6 +1804,144 @@ defmodule RavixWeb.Live.ProjectSettings do
     """
   end
 
+  attr :project, :map, required: true
+  attr :choices, :any, required: true
+  attr :query, :string, required: true
+  attr :change, :map, required: true
+  attr :count, :any, required: true
+  attr :pending, :any, required: true
+  attr :myself, :any, required: true
+
+  # RAV-76's dialog: 1. the repository, from the same list New track's
+  # "Add a repository…" draws; 2. what happens; 3. the typed name.
+  defp change_repository_dialog(assigns) do
+    assigns =
+      assign(assigns,
+        repos:
+          if(is_list(assigns.choices),
+            do: Picker.filter_repos(assigns.choices, assigns.query),
+            else: []
+          ),
+        picked: assigns.change["repo"],
+        busy: MapSet.member?(assigns.pending, :change_repository),
+        closing:
+          if(is_integer(assigns.count),
+            do: "#{plural(assigns.count, "open track")} will close",
+            else: "Every open track will close"
+          )
+      )
+
+    ~H"""
+    <div
+      id="change-repository-dialog"
+      class="scrim"
+      phx-remove={JS.focus(to: "#open-change-repository")}
+      phx-window-keydown="cancel-change-repository"
+      phx-key="Escape"
+      phx-target={@myself}
+    >
+      <div
+        class="dialog change-repository"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="change-repository-dialog-title"
+        aria-describedby="change-repository-review"
+      >
+        <div class="dialog-head">
+          <h2 id="change-repository-dialog-title">Change the repository of {@project.name}</h2>
+        </div>
+        <div class="dialog-body">
+          <h3>1. Choose the repository</h3>
+          <div id="change-repository-picker" class="repo-picker" data-jump-scope>
+            <form
+              id="change-repository-query-form"
+              phx-change="filter-change-repository"
+              phx-submit="filter-change-repository"
+              phx-target={@myself}
+            >
+              <label for="change-repository-query">Filter repositories</label>
+              <input
+                id="change-repository-query"
+                name="q"
+                type="search"
+                value={@query}
+                placeholder="owner/repo"
+                autocomplete="off"
+                phx-debounce="100"
+                phx-mounted={JS.focus()}
+                data-jump-query
+                aria-controls="change-repository-list"
+                aria-describedby="change-repository-offer"
+                disabled={@busy}
+              />
+            </form>
+            <p id="change-repository-offer" class="settings-help">
+              Only repositories the Ravix GitHub App can read are offered. To offer another, install the App on it first.
+            </p>
+            <p :if={@choices == :loading} class="hint" role="status">Loading repositories…</p>
+            <RavixWeb.Live.RepoPicker.repositories
+              :if={is_list(@choices)}
+              id="change-repository-list"
+              label="Repositories"
+              repos={@repos}
+              selected={@picked || ""}
+              pick="pick-change-repository"
+              target={@myself}
+              busy={@busy}
+              empty={
+                if @choices == [],
+                  do: "The Ravix GitHub App cannot read any other repository here.",
+                  else: "No repository here matches."
+              }
+            />
+          </div>
+          <h3>2. What happens</h3>
+          <p id="change-repository-review">
+            The machine is rebuilt from {if @picked, do: @picked, else: "the new repository"}. <strong id="change-repository-closing">{@closing}</strong>, including private tracks you cannot see; their branches stay on GitHub, and unpushed work on the machine is lost. Settings, secrets, environment variables, members and history are kept.
+          </p>
+          <h3>3. Confirm</h3>
+          <form
+            id="change-repository-form"
+            phx-change="edit-change-repository"
+            phx-submit="change-repository"
+            phx-target={@myself}
+          >
+            <.input
+              name="confirm"
+              id="change-repository-confirm"
+              label={"Type #{@project.name} to confirm changing the repository"}
+              value={@change["confirm"]}
+              autocomplete="off"
+              required
+            />
+            <div class="dialog-foot">
+              <button
+                type="button"
+                class="ghost"
+                phx-click="cancel-change-repository"
+                phx-target={@myself}
+                disabled={@busy}
+              >
+                Cancel
+              </button>
+              <button
+                id="change-repository-submit"
+                class="danger"
+                disabled={
+                  is_nil(@picked) or @change["confirm"] != @project.name or MapSet.size(@pending) > 0
+                }
+                phx-disable-with="Changing…"
+              >
+                Change repository
+              </button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>
+    """
+  end
+
   defp danger_zone(assigns) do
     ~H"""
     <section id="danger-zone" class="settings-danger" data-unsaved-ignore>
@@ -1771,13 +1976,8 @@ defmodule RavixWeb.Live.ProjectSettings do
       <p :if={Map.get(@settings, :shared_tracks) == nil}>
         These actions also affect private tracks you cannot see. Rebuilding discards the machine’s disk and closes every track, keeping project settings and secrets for the next machine. Unpushed work on that disk is lost. Deleting also removes the project settings and secrets. These actions cannot be undone.
       </p>
-      <form
-        id="change-repository-form"
-        phx-target={@myself}
-        phx-change="edit-change-repository"
-        phx-submit="change-repository"
-      >
-        <h3>Change repository</h3>
+      <section id="change-repository" aria-labelledby="change-repository-title">
+        <h3 id="change-repository-title">Change repository</h3>
         <p id="change-repository-current">
           <%= if @project.repo do %>
             This project uses <code>{@project.repo}</code>.
@@ -1785,42 +1985,30 @@ defmodule RavixWeb.Live.ProjectSettings do
             This project has no repository yet.
           <% end %>
         </p>
-        <p id="change-repository-help">
-          Changing it rebuilds the machine from the new repository and closes every open track, including private tracks you cannot see. Unpushed work on the old machine is lost. The project's settings, secrets, members and thread history stay. The Ravix GitHub App must already be able to read the new repository.
+        <p>
+          Point the project at another repository the Ravix GitHub App can read. The machine is rebuilt from it and every open track closes; settings, secrets, members and history stay.
         </p>
-        <.input
-          name="repo"
-          id="change-repository-repo"
-          label="New repository"
-          value={@change_repository["repo"]}
-          placeholder="owner/name"
-          list="change-repository-choices"
-          autocomplete="off"
-          spellcheck="false"
-          aria-describedby="change-repository-help"
-          required
-        />
-        <datalist id="change-repository-choices">
-          <option :for={name <- @repository_choices || []} value={name} />
-        </datalist>
-        <.input
-          name="confirm"
-          id="change-repository-confirm"
-          label={"Type #{@project.name} to confirm changing the repository"}
-          value={@change_repository["confirm"]}
-          autocomplete="off"
-          required
-        />
         <button
-          id="change-repository-submit"
-          class="danger"
-          disabled={
-            @change_repository["confirm"] != @project.name or
-              String.trim(@change_repository["repo"]) == "" or MapSet.size(@pending) > 0
-          }
-          phx-disable-with="Changing…"
-        >Change repository</button>
-      </form>
+          type="button"
+          id="open-change-repository"
+          class="ghost"
+          phx-click="open-change-repository"
+          phx-target={@myself}
+          disabled={MapSet.size(@pending) > 0}
+        >
+          Change repository…
+        </button>
+        <.change_repository_dialog
+          :if={@change_dialog}
+          project={@project}
+          choices={@repository_choices}
+          query={@change_query}
+          change={@change_repository}
+          count={@change_count}
+          pending={@pending}
+          myself={@myself}
+        />
+      </section>
       <form
         :for={
           {action, label} <- [

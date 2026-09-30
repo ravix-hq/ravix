@@ -55,13 +55,15 @@ defmodule RavixWeb.CoreComponents do
   A moment in the viewer's own time zone. The server writes it in `zone`
   (see `RavixWeb.LocalTime`); the `LocalTime` hook rewrites the text and
   the `title` in the browser's zone and locale. `title_prefix` goes before
-  the full date in the tooltip.
+  the full date in the tooltip. `weekday` names the six days before today
+  by weekday ("Sat 9:49 PM").
   """
   attr :id, :string, required: true
   attr :at, DateTime, required: true
   attr :zone, :string, default: nil
   attr :title_prefix, :string, default: ""
   attr :class, :any, default: nil
+  attr :weekday, :boolean, default: false
 
   def local_time(assigns) do
     ~H"""
@@ -71,8 +73,9 @@ defmodule RavixWeb.CoreComponents do
       phx-hook="LocalTime"
       datetime={DateTime.to_iso8601(@at)}
       data-title-prefix={@title_prefix}
+      data-weekday={@weekday}
       title={@title_prefix <> RavixWeb.LocalTime.full(@at, @zone)}
-    >{RavixWeb.LocalTime.short(@at, @zone)}</time>
+    >{RavixWeb.LocalTime.short(@at, @zone, DateTime.utc_now(), weekday: @weekday)}</time>
     """
   end
 

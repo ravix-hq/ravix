@@ -409,32 +409,54 @@ defmodule Ravix.Projects.Store do
   it had. `fields` are the repository columns: `repo_full_name`,
   `repo_private`, `default_branch`, `installation_id`, and for a workspace
   project `workspace_installation_id` and `github_repo_id`. The comparison
-  name is derived here. `{:error, :taken}` when the workspace already has a
-  project for it (`projects_workspace_repo`). Unscoped, as `rename/2`.
-  """
-  @spec change_repository(String.t(), map()) :: {:ok, Project.t()} | {:error, :taken | :not_found}
-  def change_repository(id, fields) do
-    case Repo.get(Project, id) do
-      nil ->
-        {:error, :not_found}
+  name is derived here.
 
-      project ->
-        project
-        |> Ecto.Changeset.change(
-          Map.put(
-            fields,
-            :normalized_repo_full_name,
-            Project.normalize_repo(fields.repo_full_name)
-          )
-        )
-        |> Ecto.Changeset.unique_constraint(:repo_full_name, name: :projects_workspace_repo)
-        |> Repo.update()
-        |> case do
-          {:ok, project} -> {:ok, project}
-          {:error, _changeset} -> {:error, :taken}
-        end
+  In the same transaction, every track of the project that does not yet
+  name a repository is stamped with the one it was cut from, so its branch,
+  pull request and checks are still looked up there. A track stamped
+  before keeps its stamp. `{:error, :taken}` when the workspace already has
+  a project for the new one (`projects_workspace_repo`). `stamp: false`
+  puts a refused change back without stamping. Unscoped, as `rename/2`.
+  """
+  @spec change_repository(String.t(), map(), keyword()) ::
+          {:ok, Project.t()} | {:error, :taken | :not_found}
+  def change_repository(id, fields, opts \\ []) do
+    Repo.transaction(fn ->
+      case Repo.one(from p in Project, where: p.id == ^id, lock: "FOR UPDATE") do
+        nil -> Repo.rollback(:not_found)
+        project -> repoint(project, fields, Keyword.get(opts, :stamp, true))
+      end
+    end)
+  end
+
+  defp repoint(project, fields, stamp?) do
+    if stamp?, do: stamp_tracks(project)
+
+    project
+    |> Ecto.Changeset.change(
+      Map.put(fields, :normalized_repo_full_name, Project.normalize_repo(fields.repo_full_name))
+    )
+    |> Ecto.Changeset.unique_constraint(:repo_full_name, name: :projects_workspace_repo)
+    |> Repo.update()
+    |> case do
+      {:ok, project} -> project
+      {:error, _changeset} -> Repo.rollback(:taken)
     end
   end
+
+  defp stamp_tracks(%Project{repo_full_name: repo, installation_id: installation} = project)
+       when is_binary(repo) and repo != "" do
+    # ownership: `Projects.change_repository/3` admitted the owner through
+    # `Access.project_of/2`; these are that project's own tracks, told which
+    # repository their branches are on before the project moves off it.
+    Repo.update_all(
+      from(t in Track, where: t.project_id == ^project.id and is_nil(t.repo_full_name)),
+      set: [repo_full_name: repo, repo_installation_id: installation]
+    )
+  end
+
+  # A scratch project's tracks have no branch on GitHub to keep.
+  defp stamp_tracks(_project), do: :ok
 
   defp update_fields(id, fields) do
     from(p in Project, where: p.id == ^id) |> Repo.update_all(set: fields)

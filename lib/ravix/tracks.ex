@@ -2263,6 +2263,8 @@ defmodule Ravix.Tracks do
   # a close that did not ask about merging.
   defp pull_summary(%Track{branch: branch} = track, project, freshness)
        when is_binary(branch) and branch != "" do
+    project = branch_repository(track, project)
+
     with :ok <- require_repo(project, ""),
          {:ok, app} <- github(),
          {:ok, pull} <-
@@ -2791,6 +2793,7 @@ defmodule Ravix.Tracks do
   def checks(%User{} = user, track_id) do
     with {:ok, app} <- github(),
          {:ok, %{track: track, project: project}} <- Access.track_access(user, track_id),
+         project = branch_repository(track, project),
          :ok <- require_repo(project, "This project has no repository.") do
       Ravix.GitHub.checks(app, project.installation_id, project.repo_full_name, track.branch, %{
         created_at: track.created_at,
@@ -2820,6 +2823,7 @@ defmodule Ravix.Tracks do
 
     with {:ok, app} <- github(),
          {:ok, %{track: track, project: project}} <- Access.track_access(user, track_id, :write),
+         project = branch_repository(track, project),
          :ok <- require_repo(project, "This project has no repository.") do
       body =
         text(attrs["body"], 20_000) |> non_empty() || "Opened from Ravix track `#{track.slug}`."
@@ -2944,7 +2948,7 @@ defmodule Ravix.Tracks do
       sandbox_stage: row.sandbox_stage,
       sandbox_action: row.sandbox_action,
       sandbox_suspended_at: row.sandbox_suspended_at,
-      repo_full_name: project && project.repo_full_name,
+      repo_full_name: row.repo_full_name || (project && project.repo_full_name),
       setup_state: row.setup_state,
       setup_attempts: row.setup_attempts,
       setup_error: row.setup_error && Fountain.Error.reason_message(row.setup_error),
@@ -3226,6 +3230,15 @@ defmodule Ravix.Tracks do
   # sentence about a missing provider.
   defp fountain, do: Ravix.Providers.fountain()
   defp github, do: Ravix.Providers.github()
+
+  # The repository a track's branch is on: its own, once its project has
+  # moved to another (RAV-76), else the project's. Everything GitHub is
+  # asked about one track's branch goes through this.
+  defp branch_repository(%Track{repo_full_name: repo, repo_installation_id: id}, project)
+       when is_binary(repo) and repo != "",
+       do: %{project | repo_full_name: repo, installation_id: id}
+
+  defp branch_repository(_track, project), do: project
 
   defp require_repo(%Project{repo_full_name: repo, installation_id: installation}, _message)
        when is_binary(repo) and repo != "" and is_integer(installation),

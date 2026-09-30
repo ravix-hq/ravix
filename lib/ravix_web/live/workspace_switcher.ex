@@ -16,8 +16,9 @@ defmodule RavixWeb.Live.WorkspaceSwitcher do
   A host page assigns `list/1`'s answer and the current workspace's id,
   renders `switcher/1`, opens the dialog on a `"dialog"` event named
   `"new-workspace"`, routes the dialog form's `"workspace-create"` event to
-  `create/2`, and routes `"workspace-select"` to `select/2`, then shows
-  whatever the new choice means for it.
+  `create/2`, routes `"workspace-select"` to `select/2`, then shows
+  whatever the new choice means for it, and routes `"workspace-settings"`
+  to `settings/1`.
   """
   use RavixWeb, :html
 
@@ -112,15 +113,18 @@ defmodule RavixWeb.Live.WorkspaceSwitcher do
         <%!-- Down, and quiet: the menu drops below the trigger (RAV-96). --%>
         <.icon name="chevron" size={12} open={true} class="workspace-chevron" />
       </button>
-      <.link
+      <%!-- Buttons, not links to a path drawn here: see `settings/1`. --%>
+      <button
+        type="button"
         id="workspace-settings-gear"
-        patch={settings_path(@current)}
         class="ghost workspace-gear"
         aria-label="Workspace settings"
         data-tip="Workspace settings"
+        phx-click="workspace-settings"
+        data-leaves-page
       >
         <.icon name="settings" size={14} />
-      </.link>
+      </button>
       <div id="workspace-menu" class="workspace-menu" popover>
         <button
           type="button"
@@ -128,7 +132,8 @@ defmodule RavixWeb.Live.WorkspaceSwitcher do
           class="account-item"
           popovertarget="workspace-menu"
           popovertargetaction="hide"
-          phx-click={JS.patch(settings_path(@current))}
+          phx-click="workspace-settings"
+          data-leaves-page
         >
           <.icon name="settings" size={14} />Workspace settings
         </button>
@@ -201,8 +206,26 @@ defmodule RavixWeb.Live.WorkspaceSwitcher do
     """
   end
 
-  defp settings_path(workspace),
-    do: Settings.section_path(:workspace, workspace.id, "members")
+  @doc """
+  Open the current workspace's settings, as the server has it when the click
+  arrives (RAV-104).
+
+  A path drawn into the page names whichever workspace was current at the
+  last render, and picking another is a round trip: a click on the gear
+  inside it followed the old path, and a settings URL makes its workspace
+  current, so the switch the person had just made was quietly undone. An
+  event is answered in the order it was sent, after the pick.
+  """
+  @spec settings(Phoenix.LiveView.Socket.t()) :: Phoenix.LiveView.Socket.t()
+  def settings(socket) do
+    case Workspaces.current(socket.assigns.current_user, socket.assigns.workspaces) do
+      {:ok, %{workspace: workspace}} ->
+        push_patch(socket, to: Settings.section_path(:workspace, workspace.id, "members"))
+
+      {:error, :not_found} ->
+        socket
+    end
+  end
 
   defp initial(name),
     do: name |> String.trim() |> String.first() |> Kernel.||("?") |> String.upcase()

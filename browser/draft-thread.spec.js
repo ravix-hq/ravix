@@ -9,10 +9,10 @@ test('a draft thread becomes a real thread with its first message running, wide 
   test.setTimeout(120_000);
   await signIn(page, 'threadruntime', '/home');
   await connectClaude(page);
-  await page.getByRole('button', { name: 'Add a project', exact: true }).first().click();
-  const project = page.getByRole('dialog', { name: 'New project', exact: true });
+  await page.getByRole('button', { name: 'Add a repository', exact: true }).first().click();
+  const project = page.getByRole('dialog', { name: 'Add a repository', exact: true });
   await project.getByLabel('Project name', { exact: true }).fill('Draft threads');
-  await project.getByRole('button', { name: 'Create project', exact: true }).click();
+  await project.getByRole('button', { name: 'Create scratch project', exact: true }).click();
   await expect(project).toHaveCount(0);
   await page.locator('#yard .workspace-project.current .project-add').click();
   await page.getByRole('button', { name: 'Create track', exact: true }).click();

@@ -20,9 +20,9 @@ test('project tree and quick-jump navigate with keyboard and fit desktop and pho
   for (const name of ['Tree Alpha', 'Tree Beta with a long project name to fit a phone']) {
     await page.goto('/home');
     await expect(page.locator('[data-phx-main]')).toHaveClass(/phx-connected/);
-    await page.getByRole('button', { name: 'Add a project', exact: true }).first().click();
+    await page.getByRole('button', { name: 'Add a repository', exact: true }).first().click();
     await page.getByLabel('Project name', { exact: true }).fill(name);
-    await page.getByRole('button', { name: 'Create project', exact: true }).click();
+    await page.getByRole('button', { name: 'Create scratch project', exact: true }).click();
     await expect(page.locator('#crumb-plans')).toBeVisible();
     const path = new URL(page.url()).pathname;
     await page.locator('#yard .workspace-project.current .project-add').click();

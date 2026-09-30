@@ -16,12 +16,12 @@ test('Changes lists an untracked file as new beside the tracked diff', async ({ 
   test.setTimeout(150_000);
   await signIn(page, 'untracked');
   await connectClaude(page);
-  await page.getByRole('button', { name: 'Add a project', exact: true }).first().click();
-  const project = page.getByRole('dialog', { name: 'New project' });
+  await page.getByRole('button', { name: 'Add a repository', exact: true }).first().click();
+  const project = page.getByRole('dialog', { name: 'Add a repository' });
   await project.getByLabel('Project name', { exact: true }).fill('Atlas API');
-  await expect(project.locator('#project-repositories option')).not.toHaveCount(0);
-  await project.getByLabel('Repository', { exact: true }).fill('mockuser/atlas-api');
-  await project.getByRole('button', { name: 'Create project' }).click();
+  await expect(project.locator('#project-repositories input[type=radio]')).not.toHaveCount(0);
+  await project.getByRole('radio', { name: 'mockuser/atlas-api', exact: true }).check();
+  await project.getByRole('button', { name: 'Add repository' }).click();
   await expect(project).not.toBeVisible();
 
   await page.locator('#yard .workspace-project.current .project-add').click();

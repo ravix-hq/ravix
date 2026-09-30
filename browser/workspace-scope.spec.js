@@ -35,10 +35,10 @@ async function axeClean(page, selector) {
 }
 
 async function addProject(page, name) {
-  await page.getByRole('button', { name: 'Add a project', exact: true }).first().click();
-  const dialog = page.getByRole('dialog', { name: 'New project', exact: true });
+  await page.getByRole('button', { name: 'Add a repository', exact: true }).first().click();
+  const dialog = page.getByRole('dialog', { name: 'Add a repository', exact: true });
   await dialog.getByLabel('Project name', { exact: true }).fill(name);
-  await dialog.getByRole('button', { name: 'Create project', exact: true }).click();
+  await dialog.getByRole('button', { name: 'Create scratch project', exact: true }).click();
   await expect(dialog).toHaveCount(0);
   return idOf(new URL(page.url()).pathname);
 }
@@ -85,7 +85,7 @@ test('the switcher scopes the app to the current workspace, and remembers it', a
 
   // The workspace menu opens its settings, at Members, in the shell.
   await page.locator('#workspace-switcher-trigger').click();
-  await page.getByRole('button', { name: 'Workspace settings', exact: true }).click();
+  await page.locator('#workspace-menu').getByRole('button', { name: 'Workspace settings', exact: true }).click();
   await expect(page).toHaveURL(new RegExp(`/w/${teamId}/settings/members$`));
   await expect(page.getByRole('heading', { level: 1 })).toHaveText('Members');
   await expect(page.getByRole('navigation', { name: 'Breadcrumb' })).toContainText('Scope Team');

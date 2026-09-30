@@ -2126,6 +2126,25 @@ defmodule Ravix.TracksTest do
       assert {:ok, %{pushed: false}} = Tracks.checks(ctx.owner, ctx.track.id)
     end
 
+    # RAV-76: a track cut before its project changed repository is a branch
+    # of the old one, and is asked about there, with the old installation.
+    test "a track stamped with its own repository is asked about there", ctx do
+      ctx.track
+      |> Ecto.Changeset.change(repo_full_name: "acme/old-ledger", repo_installation_id: 3)
+      |> Repo.update!()
+
+      expect(Ravix.GitHub, :checks, fn _app, 3, "acme/old-ledger", "ana/kyoto-1", _narrow ->
+        {:ok, %{ref: "ana/kyoto-1", sha: nil, pushed: true, runs: [], pull: nil}}
+      end)
+
+      expect(Ravix.GitHub, :open_pull, fn _app, 3, "acme/old-ledger", %{head: "ana/kyoto-1"} ->
+        {:ok, %{number: 5, url: "https://github.com/acme/old-ledger/pull/5"}}
+      end)
+
+      assert {:ok, %{pushed: true}} = Tracks.checks(ctx.owner, ctx.track.id)
+      assert {:ok, %{number: 5}} = Tracks.open_pull(ctx.owner, ctx.track.id, %{})
+    end
+
     test "a pull request is opened by the App with the track's defaults", ctx do
       expect(Ravix.GitHub, :open_pull, fn _app, 7, "acme/ledger", input ->
         assert input == %{

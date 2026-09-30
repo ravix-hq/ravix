@@ -8,9 +8,9 @@ test('a project plan assigns coordinated tracks and works at phone width', async
   // tooling.spec.js's, so plans get @eli.
   await signIn(page, 'eli', '/home');
   await connectClaude(page);
-  await page.getByRole('button', { name: 'Add a project', exact: true }).first().click();
+  await page.getByRole('button', { name: 'Add a repository', exact: true }).first().click();
   await page.getByLabel('Project name', { exact: true }).fill('Planned release');
-  await page.getByRole('button', { name: 'Create project', exact: true }).click();
+  await page.getByRole('button', { name: 'Create scratch project', exact: true }).click();
   const panel = page.locator('#plans-panel');
   // Plans are not on the project's home; the project row opens them.
   await expect(page.locator('#project-tabpanel .crumbs')).toBeVisible();

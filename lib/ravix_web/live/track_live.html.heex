@@ -23,15 +23,19 @@
     <button class="primary" phx-click="retry-load">Try again</button>
   </div>
   <div :if={@track} class="track-workspace-body" data-narrow-view={@narrow_view}>
-    <%!-- Two groups either side of the spacer: what the track is on the
-      left, how it is on the right beside the actions. The status half is
-      where anything that arrives late (the plan chip) or changes length
-      (the machine's state) lives, so it grows into the spacer and never
-      moves the title. When the strip is short the status chips give way
-      first, down to their icon or count, and the title last; see "the
+    <%!-- The track's title and Share, and little else (RAV-82). The plan
+      chip shows only when the track carries plan items. The machine's state
+      is a labelled chip only while it is not the normal Idle or Working;
+      then it is visually hidden but kept, because it is the page's one live
+      region for the machine (RAV-79). Share shows who is here as stacked
+      avatars. Everything else is in the ⋯ popover after Share: whose
+      machine it is, who pays, Rebuild and Close. A private track has a lock
+      after its title, as its row in the rail does. The plan chip arrives
+      late, so it grows into the spacer and never moves the title; when the
+      strip is short it gives way to its count, and the title last. See "the
       track's own header" in app.css, and HeaderFit for why a chip's words
       show whole or not at all. The track is named by `Track.label/1` alone:
-      its branch is in the ribbon below, not repeated here (RAV-83). --%>
+      its branch is in the ribbon below (RAV-83). --%>
     <header id="track-header" class="crumbs track-crumbs" phx-hook="HeaderFit">
       <div class="track-header-path">
         <.link
@@ -59,6 +63,15 @@
           class={["track-title-crumb", !fits?(Track.label(@track), 16) && "long"]}
           title={Track.tooltip(@track)}
         >{Track.label(@track)}</strong>
+        <%!-- As on the track's row in the rail: a lock, not a chip. --%>
+        <span
+          :if={@track.visibility == :private}
+          id="track-private"
+          class="track-private"
+          title="Private: only its creator and the people they invite"
+        >
+          <.icon name="lock" size={12} /><span class="sr-only">Private</span>
+        </span>
       </div>
       <span class="spacer"></span>
       <div class="track-header-status">
@@ -70,75 +83,92 @@
           track_id={@track.id}
           summary={@assigned_plan}
         />
-        <span :if={@track.visibility == :private} class="chip" title="Private">
-          <.icon name="lock" /><span class="chip-label" data-fit-label>Private</span>
-        </span>
         <.machine_chip machine={
           probed(machine(@track, @turn, @setup_now), @machine_probe, @track)
         } />
-        <span class="chip" id="track-machine-scope" title={machine_scope_title(@track)}><.icon
-          name="machine"
-          size={12}
-        /><span class="chip-label" data-fit-label>{machine_scope(@track)}</span></span>
-        <span
-          :if={@track.billing == :creator}
-          id="track-payer"
-          class="dim status-note"
-          title={payer_label(@track)}
-        >
-          {payer_label(@track)}
-        </span>
-        <span
-          :if={@track.billing != :creator && @project.role != :owner}
-          id="track-agent-owner"
-          class="dim status-note"
-          title={agent_owner_label(@project, @track)}
-        >
-          {agent_owner_label(@project, @track)}
-        </span>
       </div>
       <button
         :if={
           Ravix.People.workspace_sharing?(@project) && owner_or_creator?(@current_user, @track)
         }
         id="track-share-button"
-        class="ghost"
+        class="ghost track-share"
         phx-click={JS.push_focus() |> JS.push("dialog")}
         phx-value-name="people"
         aria-haspopup="dialog"
         aria-expanded={to_string(@dialog == :people)}
         title={"Share track (#{length(@present)} viewing now)"}
-      ><.icon name="add-person" size={15} /><span>Share</span><span
-        class="dim"
-        aria-label={"#{length(@present)} viewing now"}
-      >{length(@present)}</span></button><button
+      ><.icon name="add-person" size={15} /><span>Share</span><.viewers present={@present} /></button><button
         :if={!Ravix.People.workspace_sharing?(@project)}
-        class="ghost"
+        class="ghost track-share"
         phx-click={JS.push_focus() |> JS.push("dialog")}
         phx-value-name="people"
         aria-label={"Track sharing (#{length(@present)} viewing now)"}
         title={"Track sharing (#{length(@present)} viewing now)"}
-      ><.icon name="add-person" size={15} /><span>{length(@present)}</span></button>
-      <button
-        :if={rebuildable?(@current_user, @track)}
-        class="ghost icon-button"
-        aria-label="Rebuild machine"
-        title="Rebuild machine"
-        phx-click={JS.push_focus() |> JS.push("dialog")}
-        phx-value-name="rebuild"
-      >
-        <.icon name="refresh" size={15} />
-      </button>
-      <button
-        :if={owner_or_creator?(@current_user, @track)}
-        class="ghost icon-button"
-        aria-label="Close track"
-        title="Close track"
-        phx-click={JS.push_focus() |> JS.push("dialog")}
-        phx-value-name="close"
-      >
-        <.icon name="x" size={15} />
-      </button>
+      ><.icon name="add-person" size={15} /><.viewers present={@present} /></button>
+      <div id="track-more" class="chip-menu" phx-hook="ChipMenu">
+        <button
+          type="button"
+          id="track-more-trigger"
+          class="ghost icon-button"
+          popovertarget="track-more-panel"
+          aria-haspopup="dialog"
+          aria-expanded="false"
+          aria-controls="track-more-panel"
+          aria-label="More for this track"
+          title="More for this track"
+          phx-mounted={JS.ignore_attributes(["aria-expanded"])}
+          style="anchor-name: --track-more"
+        >
+          <.icon name="more" size={15} />
+        </button>
+        <div
+          id="track-more-panel"
+          class="chip-popover chip-popover-below chip-popover-end track-more"
+          popover
+          role="dialog"
+          aria-label="More for this track"
+          style="position-anchor: --track-more"
+        >
+          <dl class="track-facts">
+            <div>
+              <dt><.icon name="machine" size={14} /><span class="sr-only">Machine</span></dt>
+              <dd>
+                <span id="track-machine-scope" title={machine_scope_title(@track)}>{machine_scope(
+                  @track
+                )}</span><span class="dim"> · {machine_scope_title(@track)}</span>
+              </dd>
+            </div>
+            <div :if={payer_shown?(@track, @project)} id="track-payer">
+              <dt><.icon name="person" size={14} /><span class="sr-only">Who pays</span></dt>
+              <dd>{payer_label(@track)}</dd>
+            </div>
+          </dl>
+          <hr :if={
+            rebuildable?(@current_user, @track) || owner_or_creator?(@current_user, @track)
+          } />
+          <button
+            :if={rebuildable?(@current_user, @track)}
+            type="button"
+            class="account-item"
+            data-chip-close
+            phx-click={JS.push_focus(to: "#track-more-trigger") |> JS.push("dialog")}
+            phx-value-name="rebuild"
+          >
+            <span class="menu-check" aria-hidden="true"><.icon name="refresh" size={14} /></span>Rebuild machine
+          </button>
+          <button
+            :if={owner_or_creator?(@current_user, @track)}
+            type="button"
+            class="account-item"
+            data-chip-close
+            phx-click={JS.push_focus(to: "#track-more-trigger") |> JS.push("dialog")}
+            phx-value-name="close"
+          >
+            <span class="menu-check" aria-hidden="true"><.icon name="x" size={14} /></span>Close track
+          </button>
+        </div>
+      </div>
     </header>
     <nav class="track-view-switch workspace-tabs" aria-label="Track views">
       <button
@@ -169,6 +199,7 @@
           draft={@thread_draft}
           adding={@track.sandbox_layout == :dedicated and @track.sandbox_state != :ready}
           enabled={Ravix.Config.threads_enabled?()}
+          track_label={Track.label(@track)}
         />
         <div
           id="transcript-scroll"
@@ -238,7 +269,11 @@
             />
           </div>
           <div :if={!@thread_draft[:selected?]} id="transcript-turns" phx-update="stream">
-            <article :for={{dom_id, turn} <- @streams.turns} id={dom_id} class="workspace-turn">
+            <article
+              :for={{dom_id, turn} <- @streams.turns}
+              id={dom_id}
+              class={["workspace-turn", !turn.settled? && "running"]}
+            >
               <.prompt_message
                 :if={turn.prompt || turn.image_count > 0}
                 prompt={turn.prompt || ""}
@@ -279,6 +314,7 @@
                   :if={turn.settled?}
                   id={dom_id}
                   turn={turn}
+                  link={turn_link(@track, @thread_id, dom_id)}
                   workdir={@track.workdir}
                   options={@track.session_options}
                   zone={@timezone}
@@ -751,16 +787,6 @@
                   role="status"
                 >
                   Loading agents…
-                </span>
-                <span
-                  :if={
-                    @composer_mode == :ask &&
-                      (@track.billing == :creator || @project.role != :owner)
-                  }
-                  id="composer-payer"
-                  class="dim composer-payer"
-                >
-                  {payer_label(@track)}
                 </span>
                 <.model_menu
                   :if={!@thread_draft[:selected?] && @composer_mode == :ask}
