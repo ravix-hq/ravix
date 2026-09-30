@@ -62,6 +62,76 @@ defmodule RavixWeb.ProjectSectionsLiveTest do
     refute has_element?(reloaded, "#section-#{section.id}")
   end
 
+  test "sections label their projects, say when empty, and every disclosure follows its state",
+       %{conn: conn} do
+    user = insert_user()
+    project = insert_project(user: user, name: "Filed project")
+    {:ok, work} = Sections.create(user, %{name: "Work"})
+    {:ok, empty} = Sections.create(user, %{name: "Later"})
+    {:ok, _} = Sections.move(user, project.id, work.id)
+    {:ok, view, _} = live(log_in_user(conn, user), "/p/#{project.id}")
+    render_async(view)
+
+    # Manage sections is an icon button whose name and tooltip say what it is for.
+    assert has_element?(
+             view,
+             "#manage-sections[aria-label='Manage sections'][title='Organize projects into sections'] svg"
+           )
+
+    refute has_element?(view, "#manage-sections", "Manage sections")
+
+    # Every labelled group indents its projects; each disclosure's chevron sits
+    # in the button whose aria-expanded turns it.
+    assert has_element?(view, "#section-#{work.id}.labelled")
+    toggle = "#section-#{work.id} > .section-toggle"
+    assert has_element?(view, "#{toggle}[aria-expanded=true] > svg.disclosure-chevron")
+    project_toggle = "#project-row-#{project.id} .project-collapse"
+
+    assert has_element?(
+             view,
+             "#{project_toggle}[data-collapse='#{project.id}'][aria-expanded=true][aria-controls='project-tracks-#{project.id}'] > svg.disclosure-chevron"
+           )
+
+    # The icon draws no direction of its own, so the attribute alone decides it.
+    refute render(element(view, "#{project_toggle} svg")) =~ "rotate"
+
+    view |> element(toggle) |> render_click()
+    assert has_element?(view, "#{toggle}[aria-expanded=false] > svg.disclosure-chevron")
+    assert has_element?(view, "#section-projects-#{work.id}[hidden]")
+    # Collapsing one section hides only its own contents.
+    refute has_element?(view, "#section-projects-#{empty.id}[hidden]")
+    refute has_element?(view, "#section-projects-other[hidden]")
+    view |> element(toggle) |> render_click()
+    assert has_element?(view, "#{toggle}[aria-expanded=true]")
+    refute has_element?(view, "#section-projects-#{work.id}[hidden]")
+
+    # An empty section says so, muted, rather than a chevron over nothing,
+    # and stays a place to drag a project to.
+    assert has_element?(
+             view,
+             "#section-#{empty.id}[data-section-drop='#{empty.id}'] #section-empty-#{empty.id}.dim",
+             "No projects"
+           )
+
+    refute has_element?(view, "#section-#{work.id} .section-empty")
+  end
+
+  test "unsectioned projects alone have no label, no indent and no empty line", %{conn: conn} do
+    user = insert_user()
+    project = insert_project(user: user)
+    {:ok, view, _} = live(log_in_user(conn, user), "/p/#{project.id}")
+    render_async(view)
+    assert has_element?(view, "#section-other a[href='/p/#{project.id}']")
+    refute has_element?(view, "#section-other.labelled")
+    refute has_element?(view, "#section-other .section-toggle")
+    refute has_element?(view, ".section-empty")
+
+    assert has_element?(
+             view,
+             "#project-row-#{project.id} .project-collapse > .disclosure-chevron"
+           )
+  end
+
   test "forged section and project ids cannot change another person's layout", %{conn: conn} do
     user = insert_user()
     project = insert_project(user: user)

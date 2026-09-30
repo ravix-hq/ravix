@@ -188,10 +188,14 @@
           <button
             type="button"
             id="manage-sections"
-            class="ghost"
+            class="section-action"
+            aria-label="Manage sections"
+            title="Organize projects into sections"
             phx-click={JS.push_focus() |> JS.push("dialog")}
             phx-value-name="sections"
-          >Manage sections</button>
+          >
+            <.icon name="settings" size={13} />
+          </button>
         </div>
         <div id="rail-scope" class="rail-scope" role="group" aria-label="Show tracks from">
           <button
@@ -233,11 +237,11 @@
                   )
               }
               id={"section-#{section_key(section)}"}
-              class="project-section"
+              class={["project-section", section_labelled?(section, @sections) && "labelled"]}
               data-section-drop={if !scratch_section?(section), do: section.id || ""}
             >
               <button
-                :if={section.id || @sections != [] || scratch_section?(section)}
+                :if={section_labelled?(section, @sections)}
                 type="button"
                 class="ghost section-toggle"
                 data-collapse={if is_nil(section.id), do: "section-#{section_key(section)}"}
@@ -247,10 +251,17 @@
                 aria-expanded={to_string(!section.collapsed)}
                 aria-controls={"section-projects-#{section_key(section)}"}
               >
-                <.icon name="chevron" size={12} open={!section.collapsed} />
+                <.disclosure_chevron />
                 <span class="truncate">{section.name}</span>
               </button>
               <div id={"section-projects-#{section_key(section)}"} hidden={section.collapsed}>
+                <p
+                  :if={projects == [] and section_labelled?(section, @sections)}
+                  id={"section-empty-#{section_key(section)}"}
+                  class="section-empty dim"
+                >
+                  No projects
+                </p>
                 <section
                   :for={project <- projects}
                   id={"project-row-#{project.id}"}
@@ -267,7 +278,7 @@
                       aria-expanded="true"
                       aria-controls={"project-tracks-#{project.id}"}
                     >
-                      <.icon name="chevron" size={12} open={true} />
+                      <.disclosure_chevron />
                     </button>
                     <.link
                       id={"project-link-#{project.id}"}

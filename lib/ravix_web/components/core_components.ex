@@ -40,6 +40,17 @@ defmodule RavixWeb.CoreComponents do
     """
   end
 
+  @doc """
+  A disclosure's chevron: › collapsed, ⌄ expanded. Placed directly inside
+  the button that carries `aria-expanded`, and turned by that attribute in
+  CSS, so a server render and a hook's toggle draw the same state.
+  """
+  def disclosure_chevron(assigns) do
+    ~H"""
+    <.icon name="chevron" size={12} class="disclosure-chevron" />
+    """
+  end
+
   @doc "A provider timestamp in UTC, preserving unknown formats as supplied."
   attr :value, :string, required: true
 
