@@ -1002,6 +1002,10 @@ html[data-yard="closed"] .yard .workspace-gear { display: none; }
 .composer-suggestions li[aria-disabled="true"]:hover { background: none; }
 .composer-shortcut { font-size: 11.5px; color: var(--dim); white-space: nowrap; }
 .composer-shortcut kbd { font: inherit; }
+/* Narrow tracks (the 760px switch to one view at a time) are mostly touch
+   screens, and the hint is what would wrap the action row onto a second
+   line, taking 40px from the transcript. The shortcut itself still works. */
+@media (max-width: 760px) { .composer-shortcut { display: none; } }
 
 /* A person's comment in the transcript: neither the prompt bubble on the
    right nor the reply on the left, but a card across the width. */
