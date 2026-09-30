@@ -71,7 +71,11 @@ defmodule RavixWeb.WorkspaceManagementTest do
 
     render_async(ctx.view)
     render_async(ctx.view)
-    assert has_element?(ctx.view, "#new_track-runtime option[value=codex][selected]", "Connected")
+
+    assert has_element?(
+             ctx.view,
+             ~s|#new-track-model-menu input[name="new_track[runtime]"][value=codex][checked]:not([disabled])|
+           )
 
     assert :sys.get_state(ctx.view.pid).socket.assigns.track_form.params["title"] ==
              "keep-my-branch"
@@ -295,7 +299,7 @@ defmodule RavixWeb.WorkspaceManagementTest do
       params = if @kind == "pr", do: Map.delete(params, :title), else: params
       ctx.view |> form("#new-track-form", new_track: params) |> render_submit()
       assert render_async(ctx.view, 1000) =~ "Machine is busy"
-      refute has_element?(ctx.view, "#new-track-form button[disabled]")
+      refute has_element?(ctx.view, "#new-track-create[disabled]")
     end
   end
 
@@ -323,7 +327,7 @@ defmodule RavixWeb.WorkspaceManagementTest do
       render_async(ctx.view, 5_000)
       assert has_element?(ctx.view, "#new-track-form .field p.error", message)
       assert has_element?(ctx.view, "#track-title[value='#{name}']")
-      refute has_element?(ctx.view, "#new-track-form button[disabled]")
+      refute has_element?(ctx.view, "#new-track-create[disabled]")
     end
   end
 
@@ -486,7 +490,7 @@ defmodule RavixWeb.WorkspaceManagementTest do
     assert has_element?(ctx.view, "#settings-form button[disabled]")
     # The secret form is not the one that is out, and the page still answers.
     refute has_element?(ctx.view, "#secret-form button[disabled]")
-    assert render_click(ctx.view, "dialog", %{name: "settings"}) =~ "settings-form"
+    assert render_patch(ctx.view, "/p/#{ctx.project.id}/settings/general") =~ "settings-form"
 
     send(saving, :finish)
     render_async(ctx.view, 1000)
@@ -805,7 +809,7 @@ defmodule RavixWeb.WorkspaceManagementTest do
     assert has_element?(
              ctx.view,
              "#search-dialog [role=status]",
-             "No projects, tracks or plans match"
+             "No tracks match 'does-not-exist'"
            )
 
     refute has_element?(ctx.view, "#search-dialog h3")
@@ -1233,7 +1237,7 @@ defmodule RavixWeb.WorkspaceManagementTest do
        })}
     end)
 
-    render_click(ctx.view, "dialog", %{name: "settings"})
+    render_patch(ctx.view, "/p/#{ctx.project.id}/settings/general")
     render_async(ctx.view)
   end
 end

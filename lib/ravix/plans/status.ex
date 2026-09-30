@@ -1,6 +1,7 @@
 defmodule Ravix.Plans.Status do
   @moduledoc "Derived status, using one bounded batch of the cached GitHub pull requests."
   alias Ravix.Plans.Store
+  alias Ravix.Tracks.Track
 
   def items(project, items) do
     tracks = Store.tracks(Enum.flat_map(items, &if(&1.track_id, do: [&1.track_id], else: [])))
@@ -21,7 +22,7 @@ defmodule Ravix.Plans.Status do
         status_available: report != :unavailable,
         pull: public_pull(report),
         track_url: if(track, do: "/p/#{project.id}/t/#{track.id}"),
-        track_title: if(track, do: track.title)
+        track_title: if(track, do: Track.label(track))
       })
     end)
   end

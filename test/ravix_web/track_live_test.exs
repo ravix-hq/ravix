@@ -5228,9 +5228,10 @@ defmodule RavixWeb.TrackLiveTest do
   test "the header names the track once and keeps its actions to labelled icons", ctx do
     header = fn view -> element(view, ".track-crumbs") end
 
-    # This track's title and branch differ, so the chip still says something
-    # the title does not.
-    assert has_element?(ctx.view, ".track-crumbs .track-branch", ctx.track.branch)
+    # A titled track is named by its title alone; the branch is not repeated
+    # beside it (RAV-83), and stays in the ribbon under the header.
+    assert has_element?(ctx.view, ".track-crumbs .track-title-crumb", ctx.track.title)
+    refute render(header.(ctx.view)) =~ ctx.track.branch
 
     refute has_element?(ctx.view, ".track-crumbs button[aria-label='Project settings']")
 
@@ -5257,13 +5258,20 @@ defmodule RavixWeb.TrackLiveTest do
 
     assert has_element?(ctx.view, "#close-form")
 
-    # A track still titled with its branch shows the name once.
-    Repo.update!(Ecto.Changeset.change(Repo.get!(Track, ctx.track.id), title: ctx.track.branch))
+    # A track still titled with its branch is named by it, less the
+    # namespace every Ravix branch shares.
+    Repo.update!(Ecto.Changeset.change(Repo.get!(Track, ctx.track.id), title: "ravix/fix-login"))
     {:ok, parent, _} = live(ctx.conn, "/p/#{ctx.project.id}/t/#{ctx.track.id}")
     view = find_live_child(parent, "track-host")
     settle(view)
-    assert has_element?(view, ".track-crumbs button", ctx.track.branch)
-    refute has_element?(view, ".track-crumbs .track-branch")
+
+    assert has_element?(
+             view,
+             ".track-crumbs button.track-title-crumb[aria-label='Rename track: fix-login']",
+             "fix-login"
+           )
+
+    refute render(header.(view)) =~ "ravix/fix-login"
   end
 
   test "a member who neither owns nor opened the track has no close action", ctx do

@@ -2,6 +2,7 @@ import { test, expect } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
 import { composerFixture } from './composer-fixture.js';
 import { signIn as signInAs, connectClaude } from './sign-in.js';
+import { openProjectSettings } from './settings.js';
 
 async function primaryAppearance(locator) {
   return locator.evaluate((element) => {
@@ -177,7 +178,7 @@ test.describe.serial('first visit, then the account dialog', () => {
     await expect(page).toHaveURL(/\/welcome\/agent$/);
     await expect(page).toHaveTitle('Connect your agent · Ravix');
     // One decision: a card per agent, each offering Connect, and the rest
-    // (default, what is held, API keys) behind Manage.
+    // (API keys, replacing, removing) behind each card's ⋯ menu.
     await expect(page.getByRole('button', { name: 'Connect Claude Code', exact: true })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Connect Codex', exact: true })).toBeVisible();
     await expect(page.locator('#agent-manage')).toBeHidden();
@@ -217,12 +218,14 @@ test.describe.serial('first visit, then the account dialog', () => {
     await page.getByLabel('Subscription token', { exact: true }).fill('sk-ant-oat01-mock');
     await page.getByRole('button', { name: 'Connect Claude Code', exact: true }).click();
     await expect(page.locator('#agent-claude-status')).toContainText('Connected');
-    // Adding Claude leaves the first connected agent (Codex) as the default,
-    // which Manage can change.
+    // Adding Claude leaves the first connected agent (Codex) as the default;
+    // Claude's card offers to be it.
     await expect(page.locator('#agent-codex-status')).toContainText('Default for new projects');
-    await page.locator('#agent-manage-toggle').click();
-    await expect(page.locator('#agent-manage')).toBeVisible();
+    await page.locator('#agent-menu-claude-trigger').click();
+    await expect(page.getByRole('menu', { name: 'Claude Code' })).toBeVisible();
     await accessible(page);
+    await page.keyboard.press('Escape');
+    await expect(page.getByRole('menu', { name: 'Claude Code' })).toBeHidden();
     await page.locator('#make-default-claude').click();
     await expect(page.locator('#agent-claude-status')).toContainText('Default for new projects');
     await page.getByRole('link', { name: 'Continue', exact: true }).click();
@@ -265,7 +268,7 @@ test.describe.serial('first visit, then the account dialog', () => {
     await expect(page.getByRole('heading', { name: /Inbox/ })).toBeVisible();
   });
 
-  test('the account dialog is where the agent lives after the walkthrough', async ({ page }) => {
+  test('Settings › Agents is where the agent lives after the walkthrough', async ({ page }) => {
     await signIn(page);
     const trigger = page.locator('#account-trigger');
     await trigger.click();
@@ -287,15 +290,17 @@ test.describe.serial('first visit, then the account dialog', () => {
     await trigger.click();
     await page.locator('#workspace-stage').click({ position: { x: 400, y: 300 } });
     await expect(menu).toBeHidden();
+    // Settings opens the person's own pages (RAV-77); the agent is Agents.
     await trigger.click();
-    await menu.getByRole('button', { name: 'Account', exact: true }).click();
+    await menu.getByRole('button', { name: 'Settings', exact: true }).click();
     await expect(menu).toBeHidden();
-    const account = page.getByRole('dialog', { name: 'Your account' });
-    await expect(account).toBeVisible();
-    await expect(account).toContainText('Each project uses its selected agent');
-    await expect(account.getByRole('link', { name: 'Manage connected applications' })).toHaveAttribute('href', '/settings/connections');
+    await expect(page).toHaveURL(/\/settings\/profile$/);
+    await page.locator('#settings-nav-agents').click();
+    await expect(page).toHaveURL(/\/settings\/agents$/);
+    const agents = page.locator('#settings-agents');
+    await expect(agents).toContainText('Each project uses its selected agent');
 
-    await expect(page.getByRole('group', { name: 'Agent' })).toBeVisible();
+    await expect(page.getByRole('group', { name: 'Agents' })).toBeVisible();
     await accessible(page);
     await expect(page.locator('#agent-claude-status')).toContainText('Connected');
     await expect(page.locator('#agent-codex-status')).toContainText('Connected');
@@ -303,8 +308,11 @@ test.describe.serial('first visit, then the account dialog', () => {
     await expect(page.locator('#agent-codex-status')).toContainText('Default for new projects');
     await page.locator('#make-default-claude').click();
     await expect(page.locator('#agent-claude-status')).toContainText('Default for new projects');
+    // Removing is in the card's ⋯ menu, and asks in the page, not the browser.
+    const more = page.locator('#agent-menu-claude-trigger');
     const remove = page.locator('#remove-claude-subscription');
-    await expect(account.locator('[data-confirm]')).toHaveCount(0);
+    await expect(agents.locator('[data-confirm]')).toHaveCount(0);
+    await more.click();
     await remove.click();
     const confirmation = page.getByRole('group', { name: 'Confirm agent removal' });
     await expect(confirmation).toBeVisible();
@@ -314,11 +322,8 @@ test.describe.serial('first visit, then the account dialog', () => {
     await accessible(page);
     await confirmation.getByRole('button', { name: 'Cancel', exact: true }).click();
     await expect(confirmation).toHaveCount(0);
-    await expect(remove).toBeFocused();
-    await capture(page, 'account-dialog');
-    await page.keyboard.press('Escape');
-    await expect(page.getByRole('dialog', { name: 'Your account' })).toHaveCount(0);
-    await expect(trigger).toBeFocused();
+    await expect(more).toBeFocused();
+    await capture(page, 'settings-agents');
   });
 });
 
@@ -459,7 +464,7 @@ test('find a track focuses its search field and explains no matches', async ({ p
   await open.press('Enter');
   await expect(query).toBeFocused();
   await page.keyboard.type('no-track-could-match-this-query');
-  await expect(dialog.getByRole('status')).toHaveText('No projects, tracks or plans match');
+  await expect(dialog.getByRole('status')).toHaveText("No tracks match 'no-track-could-match-this-query'");
   await expect(dialog.locator('a')).toHaveCount(0);
   await expect(query).toBeFocused();
   await page.keyboard.press('Escape');
@@ -510,7 +515,7 @@ test('project, track, streaming, image upload, reconnect, and revocation', async
   await page.locator('#yard .workspace-project.current .project-add').click();
   const newTrack = page.getByRole('dialog', { name: 'New track', exact: true });
   await expect(newTrack.getByLabel('Branch name')).toHaveValue('');
-  await newTrack.getByRole('button', { name: 'Advanced', exact: true }).click();
+  await newTrack.getByRole('button', { name: 'Options', exact: true }).click();
   await expect(newTrack.getByRole('button', { name: 'Branch', exact: true })).toBeVisible();
   for (const [kind, value, label] of [
     ['Branch', 'release/2026-08', 'release/2026-08'],
@@ -525,7 +530,7 @@ test('project, track, streaming, image upload, reconnect, and revocation', async
     if (kind === 'Branch') {
       for (const width of [390, 1280]) {
         await page.setViewportSize({ width, height: 844 });
-        const toggle = await newTrack.getByRole('button', { name: 'Hide advanced', exact: true }).boundingBox();
+        const toggle = await newTrack.getByRole('textbox', { name: 'What do you want to work on?', exact: true }).boundingBox();
         const source = await newTrack.locator('.origin-options').boundingBox();
         const start = await refs.boundingBox();
         const branch = await newTrack.getByLabel('Branch name', { exact: true }).boundingBox();
@@ -541,7 +546,7 @@ test('project, track, streaming, image upload, reconnect, and revocation', async
     await expect(newTrack).toBeVisible();
     await expect(newTrack.getByRole('button', { name: 'Create track', exact: true })).toBeEnabled();
   }
-  await newTrack.getByRole('button', { name: 'Hide advanced', exact: true }).click();
+  await newTrack.getByRole('button', { name: 'Options', exact: true }).click();
   await expect(newTrack.getByRole('button', { name: 'Branch', exact: true })).not.toBeVisible();
   await capture(page, 'new-track');
   await expect(newTrack.getByLabel('Branch name')).not.toBeVisible();
@@ -657,17 +662,18 @@ test('project, track, streaming, image upload, reconnect, and revocation', async
   await page.keyboard.press('Escape');
   await expect(newTrackTrigger).toBeFocused();
   await expect(composer).toHaveValue('A draft while opening workspace dialogs');
-  await page.locator('#yard .workspace-project.current button[title="Project settings"]').click();
-  const settings = page.getByRole('dialog', { name: 'Project settings', exact: true });
-  await expect(settings).toBeVisible();
-  await settings.getByRole('button', { name: 'Danger zone', exact: true }).click();
+  // Settings are a page in the shell (RAV-72): the track is left, and
+  // Back returns to it.
+  const trackPage = page.url();
+  const settings = await openProjectSettings(page, 'danger');
   const removeProject = settings.getByRole('button', { name: 'Delete project', exact: true });
   await removeProject.scrollIntoViewIfNeeded();
   await expect(removeProject).toBeInViewport();
-  await expect(settings.getByRole('button', { name: 'Close', exact: true })).toBeInViewport();
+  await expect(page.locator('#yard')).toBeVisible();
   await capture(page, 'settings');
-  await page.keyboard.press('Escape');
-  await expect(composer).toHaveValue('A draft while opening workspace dialogs');
+  await page.goBack();
+  await page.goBack();
+  await expect(page).toHaveURL(trackPage);
   await composer.fill('Explain this project for the browser smoke test');
   await composer.press('Enter');
   // A second prompt while the first one still holds the track: that one has to
@@ -803,7 +809,7 @@ test('project, track, streaming, image upload, reconnect, and revocation', async
   const firstLane = await page.locator('#transcript-scroll').getAttribute('data-track');
   await page.locator('#yard .workspace-project.current .project-add').click();
   await expect(newTrack).toBeVisible();
-  await newTrack.getByRole('button', { name: 'Advanced', exact: true }).click();
+  await newTrack.getByRole('button', { name: 'Options', exact: true }).click();
   await page.getByLabel('Branch name').fill('second-lane');
   await page.getByRole('button', { name: 'Create track', exact: true }).click();
   await expect(page.locator('.track-crumbs')).toContainText('second-lane');
@@ -886,7 +892,7 @@ test('help explains desktop connections and stays accessible on mobile', async (
   await help.click();
   await expect(dialog).toBeVisible();
   await dialog.getByText('Permissions, progress and disconnecting', { exact: true }).click();
-  await expect(dialog.getByRole('link', { name: 'Connected applications' })).toHaveAttribute('href', '/settings/connections');
+  await expect(dialog.getByRole('link', { name: 'Connected applications' })).toHaveAttribute('href', '/settings/connected-apps');
   await accessible(page);
   await capture(page, 'tooling-help-mobile');
   await dialog.getByRole('button', { name: 'Close', exact: true }).click();
@@ -901,21 +907,30 @@ test('project settings navigate, warn before discarding, and save sections acces
   await create.getByLabel('Project name', { exact: true }).fill('Settings browser');
   await create.getByRole('button', { name: 'Create project', exact: true }).click();
   await expect(create).not.toBeVisible();
-  await page.locator('#yard .workspace-project.current button[title="Project settings"]').click();
-  const settings = page.getByRole('dialog', { name: 'Project settings', exact: true });
+  const settings = await openProjectSettings(page);
+  const nav = page.getByRole('navigation', { name: 'Settings sections' });
+  const leave = page.getByRole('alertdialog', { name: 'Leave without saving?' });
+  await expect(page).toHaveTitle('General · Settings browser · Ravix');
+  await expect(page.getByRole('navigation', { name: 'Breadcrumb' })).toContainText('Settings browser');
   await settings.getByLabel('Name', { exact: true }).fill('Unsaved name');
   await expect(settings.getByRole('status')).toHaveText('Unsaved changes');
   const nativeDialogs = [];
   page.on('dialog', async dialog => { nativeDialogs.push(dialog.type()); await dialog.dismiss(); });
-  await settings.getByRole('button', { name: 'Agent', exact: true }).click();
-  await expect(settings.getByLabel('Name', { exact: true })).toBeVisible();
-  await expect(settings.getByRole('button', { name: 'Save general', exact: true })).toBeFocused();
-  await expect(settings.getByLabel('Name', { exact: true })).toHaveValue('Unsaved name');
+  // Leaving a section with changes in it asks, in the page, never natively.
+  await settings.locator('#settings-nav-agent').click();
+  await expect(leave).toBeVisible();
+  await expect(leave.getByRole('button', { name: 'Keep editing', exact: true })).toBeFocused();
+  await accessible(page);
   await page.keyboard.press('Escape');
-  await expect(settings).toBeVisible();
+  await expect(leave).toBeHidden();
+  await expect(page).toHaveURL(/\/settings\/general$/);
+  await expect(settings.getByLabel('Name', { exact: true })).toHaveValue('Unsaved name');
   await settings.getByRole('button', { name: 'Discard changes', exact: true }).click();
-  await settings.getByRole('button', { name: 'Agent', exact: true }).click();
-  await expect(settings.getByRole('heading', { name: 'Agent', exact: true })).toBeFocused();
+  await expect(settings.getByLabel('Name', { exact: true })).toHaveValue('Settings browser');
+  await settings.locator('#settings-nav-agent').click();
+  await expect(leave).toBeHidden();
+  await expect(page).toHaveURL(/\/settings\/agent$/);
+  await expect(page.locator('#settings-title')).toHaveText('Agent');
   await expect(settings.locator('[data-settings-agent] strong')).toHaveText(['Claude Code', 'Codex']);
   await settings.locator('#settings-agent-codex').click();
   await expect(settings.getByLabel('Model', { exact: true }).locator('option')).toHaveText(['GPT-6 Astra', 'GPT-5.5']);
@@ -925,12 +940,17 @@ test('project settings navigate, warn before discarding, and save sections acces
   await settings.getByRole('button', { name: 'Save agent', exact: true }).click();
   await expect(settings.getByRole('status')).toHaveText('Saved.');
   await accessible(page);
-  await settings.getByRole('button', { name: 'General', exact: true }).click();
+  // Back and forward move between sections.
+  await page.goBack();
+  await expect(page).toHaveURL(/\/settings\/general$/);
+  await page.goForward();
+  await expect(page).toHaveURL(/\/settings\/agent$/);
+  await settings.locator('#settings-nav-general').click();
   await expect(settings.getByLabel('Name', { exact: true })).toHaveValue('Settings browser');
   await settings.getByLabel('Name', { exact: true }).fill('Settings organized');
   await settings.getByRole('button', { name: 'Save general', exact: true }).click();
   await expect(settings.getByRole('status')).toHaveText('Saved.');
-  await settings.getByRole('button', { name: 'Run script', exact: true }).click();
+  await settings.locator('#settings-nav-run-script').click();
   await settings.getByLabel('Run command', { exact: true }).fill('npm run dev -- --port "$PORT" --strictPort');
   // A readiness path must be an absolute HTTP path; the refusal lands on its field.
   await settings.getByLabel('Readiness path (optional)', { exact: true }).fill('health');
@@ -940,12 +960,18 @@ test('project settings navigate, warn before discarding, and save sections acces
   await settings.getByLabel('Readiness path (optional)', { exact: true }).fill('/health');
   await settings.getByRole('button', { name: 'Save defaults', exact: true }).click();
   await expect(settings.getByRole('status')).toHaveText('Saved.');
-  const top = (await settings.boundingBox()).y;
-  for (const section of ['Environment', 'Secrets', 'Danger zone']) {
-    await settings.getByRole('button', { name: section, exact: true }).click();
-    expect((await settings.boundingBox()).y).toBeCloseTo(top, 0);
+  // Each section opens at its top, wherever the last one was scrolled to.
+  const body = settings.locator('.settings-body');
+  let top;
+  for (const section of ['environment', 'secrets', 'danger']) {
+    await settings.locator(`#settings-nav-${section}`).click();
+    await expect(page).toHaveURL(new RegExp(`/settings/${section}$`));
+    await expect.poll(() => settings.evaluate(el => el.scrollTop)).toBe(0);
+    top ??= (await body.boundingBox()).y;
+    expect((await body.boundingBox()).y).toBeCloseTo(top, 0);
     await accessible(page);
   }
+  await expect(nav.locator('.settings-group').last()).toHaveClass(/danger/);
   const rebuild = settings.getByRole('button', { name: 'Rebuild machine', exact: true });
   const remove = settings.getByRole('button', { name: 'Delete project', exact: true });
   await expect(rebuild).toBeDisabled();
@@ -960,22 +986,25 @@ test('project settings navigate, warn before discarding, and save sections acces
   await expect(rebuild).toBeDisabled();
   await settings.getByLabel('Type Settings organized to confirm deletion', { exact: true }).fill('');
   await expect(remove).toBeDisabled();
+  // A typed confirmation is not a change to save: leaving does not ask.
   await page.setViewportSize({ width: 390, height: 844 });
-  await settings.getByRole('button', { name: 'Agent', exact: true }).click();
+  await settings.locator('#settings-nav-agent').click();
+  await expect(leave).toBeHidden();
   await expect(settings.getByLabel('Instructions', { exact: true })).toHaveValue('Explain changes and run focused tests.');
   await accessible(page);
   await capture(page, 'settings-mobile');
-  const mobileTop = (await settings.boundingBox()).y;
-  for (const section of ['General', 'Environment', 'Secrets', 'Danger zone', 'Agent']) {
-    await settings.getByRole('button', { name: section, exact: true }).click();
-    expect((await settings.boundingBox()).y).toBeCloseTo(mobileTop, 0);
+  let mobileTop;
+  for (const section of ['general', 'environment', 'secrets', 'danger', 'agent']) {
+    await settings.locator(`#settings-nav-${section}`).click();
+    await expect(page).toHaveURL(new RegExp(`/settings/${section}$`));
+    await expect.poll(() => settings.evaluate(el => el.scrollTop)).toBe(0);
+    mobileTop ??= (await body.boundingBox()).y;
+    expect((await body.boundingBox()).y).toBeCloseTo(mobileTop, 0);
     await fitsViewport(page);
   }
-  const tabTops = await settings.locator('[data-settings-section]').evaluateAll(tabs => tabs.map(tab => tab.getBoundingClientRect().top));
+  const tabTops = await nav.locator('.settings-link').evaluateAll(tabs => tabs.map(tab => tab.getBoundingClientRect().top));
   expect(Math.max(...tabTops) - Math.min(...tabTops)).toBeLessThan(2);
   expect(nativeDialogs).toEqual([]);
-  await page.keyboard.press('Escape');
-  await expect(settings).not.toBeVisible();
 });
 
 test('composer Send stays compact and keeps its arrow after repeated submissions in every theme', async ({ page, request }) => {
@@ -991,7 +1020,7 @@ test('composer Send stays compact and keeps its arrow after repeated submissions
   await page.locator('#yard .workspace-project.current .project-add').click();
   // New tracks are named after their reserved ravix/ branch (#154).
   const newTrack = page.getByRole('dialog', { name: 'New track', exact: true });
-  await newTrack.getByRole('button', { name: 'Advanced', exact: true }).click();
+  await newTrack.getByRole('button', { name: 'Options', exact: true }).click();
   await newTrack.getByLabel('Branch name', { exact: true }).fill('compact-send');
   await newTrack.getByRole('button', { name: 'Create track', exact: true }).click();
   await expect(page.locator('.track-crumbs')).toContainText('compact-send');

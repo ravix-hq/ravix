@@ -83,13 +83,13 @@ defmodule Ravix.Coverage do
 
   defp in_group?(row, :server), do: String.starts_with?(row.source, "lib/ravix/")
   defp in_group?(row, :web), do: String.starts_with?(row.source, "lib/ravix_web/")
-  # The workspace page and the dialogs only it opens. `SettingsDialog` is
+  # The workspace page and the dialogs only it opens. `ProjectSettings` is
   # named here because it was `WorkspaceLive` until the four forms in it
   # moved out, and a refactor must not quietly move behaviour from the 95%
   # floor to the 92% one. `PeopleDialog` is not: the track page opens it too,
   # so it belongs to `web` where both its callers are counted.
   defp in_group?(row, :workspace),
-    do: row.module in ["RavixWeb.WorkspaceLive", "RavixWeb.Live.SettingsDialog"]
+    do: row.module in ["RavixWeb.WorkspaceLive", "RavixWeb.Live.ProjectSettings"]
 
   defp in_group?(row, :track), do: row.module == "RavixWeb.TrackLive"
   defp percent(_, 0), do: 100.0

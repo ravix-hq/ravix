@@ -1,6 +1,7 @@
 import { test, expect } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
 import { signIn, connectClaude } from './sign-in.js';
+import { openRepositories } from './new-track.js';
 
 test('conversation tabs, project picker, settings gears and inspector at desktop and 500px', async ({ page }) => {
   test.setTimeout(120_000);
@@ -74,20 +75,27 @@ test('conversation tabs, project picker, settings gears and inspector at desktop
     await gear.focus();
     await expect(gear).toHaveCSS('opacity', '1');
     await gear.click();
-    await expect(page.getByRole('dialog', { name: 'Project settings', exact: true })).toBeVisible();
-    await page.keyboard.press('Escape');
+    // Settings are a page in the shell (RAV-72); Back returns to the track.
+    await expect(page).toHaveURL(/\/settings\/general$/);
+    await expect(page.locator('#settings-page')).toBeVisible();
+    await page.goBack();
+    await expect(page).toHaveURL(trackUrl);
     if (width === 500) await page.getByRole('button', { name: 'Menu', exact: true }).click();
-    await page.getByRole('button', { name: 'Account and app settings', exact: true }).click();
+    await page.getByRole('button', { name: 'You', exact: true }).click();
     await expect(page.locator('#account-menu')).toBeVisible();
     await page.keyboard.press('Escape');
     if (width === 500) await page.getByRole('button', { name: 'Menu', exact: true }).click();
     await page.locator('#top-new-track').click();
-    await expect(newTrack.getByLabel('Project / repository')).toHaveValue(projects[1]);
-    await newTrack.getByRole('button', { name: 'Advanced', exact: true }).click();
+    await newTrack.getByRole('button', { name: 'Options', exact: true }).click();
     await newTrack.getByLabel('Branch name').fill('keep-my-draft');
+    await openRepositories(newTrack);
+    await expect(newTrack.getByLabel('Project / repository')).toHaveValue(projects[1]);
     await newTrack.getByLabel('Project / repository').selectOption(projects[0]);
     await expect(newTrack.getByLabel('Branch name')).toHaveValue('keep-my-draft');
     await expect(newTrack.getByLabel('Project / repository')).toHaveValue(projects[0]);
+    // Escape closes the repository popover first, then the dialog.
+    await page.keyboard.press('Escape');
+    await expect(newTrack.locator('#new-track-repo-menu')).toBeHidden();
     await expect(page).toHaveURL(trackUrl);
     await expect(page.locator('.workspace-project.current')).toHaveAttribute('data-project-id', projects[1]);
     await page.keyboard.press('Escape');

@@ -177,6 +177,22 @@ defmodule Ravix.Tracks.Track do
   def creator_billed?(%__MODULE__{billing_policy: :creator}), do: true
   def creator_billed?(%__MODULE__{}), do: false
 
+  @doc """
+  What a track is called wherever it is named: the sidebar, the header, the
+  Inbox, quick jump, notifications and the page title (RAV-83). One source,
+  so no surface drifts back to the branch.
+
+  A track opens titled with its branch; once RAV-48 titles it, or a person
+  renames it, that title is the name and the branch is not repeated beside
+  it. Until then the branch stands in, less the `ravix/` every Ravix branch
+  shares, which tells no two tracks apart.
+  """
+  @spec label(%{:title => String.t(), optional(atom()) => any()}) :: String.t()
+  def label(%{title: title}) when is_binary(title) do
+    namespace = Ravix.Ids.branch_namespace()
+    if title != namespace, do: String.replace_prefix(title, namespace, ""), else: title
+  end
+
   @doc "The four things a track can be started from."
   @spec origin_kinds() :: [origin_kind()]
   def origin_kinds, do: @origin_kinds

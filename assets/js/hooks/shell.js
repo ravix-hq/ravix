@@ -170,6 +170,7 @@ export const Shell = {
   refit() {
     const visible = Boolean(this.fit) && !this.el.closest("[hidden]")
     const shown = visible && this.visible === false
+    if (!visible && this.visible) this.hiddenAt = this.viewport()
     this.visible = visible
     if (!visible) return
     try {
@@ -177,7 +178,34 @@ export const Shell = {
     } catch {
       // Not laid out yet; the observer will call again when it is.
     }
-    if (shown) this.term.focus()
+    if (shown) {
+      this.restoreScroll()
+      this.term.focus()
+    }
+  },
+
+  // Where the view was when the pane was hidden: following the output, or
+  // on a line somebody scrolled back to.
+  viewport() {
+    const buffer = this.term?.buffer?.active
+    return buffer ? {atBottom: buffer.viewportY >= buffer.baseY, line: buffer.viewportY} : null
+  },
+
+  // A hidden pane's viewport has no height, so the browser shows it again
+  // from the top: a pane opened behind another tab, or written to while
+  // there (a reload's replayed scrollback), would open on its first rows.
+  // Put the view back once the writes still being parsed have landed and
+  // the pane has laid out --- at the end, unless it was scrolled back.
+  restoreScroll() {
+    const saved = this.hiddenAt
+    this.hiddenAt = null
+    this.term.write("", () =>
+      requestAnimationFrame(() => {
+        if (this.gone || !this.term) return
+        if (saved && !saved.atBottom) this.term.scrollToLine(saved.line)
+        else this.term.scrollToBottom()
+      }),
+    )
   },
 
   attach(select = false) {

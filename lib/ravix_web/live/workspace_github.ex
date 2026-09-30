@@ -1,12 +1,15 @@
 defmodule RavixWeb.Live.WorkspaceGitHub do
   @moduledoc """
-  The GitHub section of a workspace's page (ADR 0009, phase 4b): its
-  connections with their standing, "Connect GitHub" for owners and admins,
-  and the repository catalog with each repository's project.
+  A workspace's GitHub (ADR 0009, phase 4b), the body of its Repositories
+  settings page (RAV-73): its connections with their standing, "Connect
+  GitHub" and "Configure on GitHub" for owners and admins, and the
+  repository catalog with the project that uses each repository, or "Add
+  project" where none does.
 
   Drawn from `Ravix.Workspaces.Repositories.catalog/2`'s cached answer;
   it never asks GitHub. Its events (`refresh-catalog`, `add-repo`,
-  `add-installation`) are the host page's, `RavixWeb.WorkspacePeopleLive`.
+  `add-installation`) go to `target`, the host's component: the
+  Repositories section of `RavixWeb.Live.WorkspaceSettings`.
 
   RAV-69: an owner also sees the GitHub accounts they can reach themselves
   that the workspace does not use yet (`Ravix.Workspaces.Connect.available/2`,
@@ -15,7 +18,8 @@ defmodule RavixWeb.Live.WorkspaceGitHub do
   so an owner is never sent to install the App again for an account that
   already has it.
   """
-  import Phoenix.LiveView, only: [connected?: 1, start_async: 3, put_flash: 3]
+  import Phoenix.LiveView, only: [connected?: 1, start_async: 3]
+  import RavixWeb.Live.Result, only: [flash: 3]
 
   alias Ravix.Workspaces.Connect
   use RavixWeb, :html
@@ -95,7 +99,7 @@ defmodule RavixWeb.Live.WorkspaceGitHub do
   def installation_added(socket, {:ok, {:ok, installation}}) do
     socket
     |> assign(attaching: nil)
-    |> put_flash(
+    |> flash(
       :info,
       "Added @#{installation.account_login || installation.installation_id} to this workspace."
     )
@@ -104,13 +108,13 @@ defmodule RavixWeb.Live.WorkspaceGitHub do
   def installation_added(socket, {:ok, {:error, reason}}) do
     socket
     |> assign(attaching: nil)
-    |> put_flash(:error, RavixWeb.Error.from(reason, noun: "GitHub account").message)
+    |> flash(:error, RavixWeb.Error.from(reason, noun: "GitHub account").message)
   end
 
   def installation_added(socket, {:exit, _reason}) do
     socket
     |> assign(attaching: nil)
-    |> put_flash(:error, "The GitHub account could not be added. Try again.")
+    |> flash(:error, "The GitHub account could not be added. Try again.")
   end
 
   attr :workspace, :map, required: true
@@ -120,6 +124,12 @@ defmodule RavixWeb.Live.WorkspaceGitHub do
   attr :adding, :string, default: nil
   attr :available, :list, default: nil
   attr :attaching, :string, default: nil
+
+  attr :configure_url, :string,
+    default: nil,
+    doc: "the App's page on GitHub, for owners and admins"
+
+  attr :target, :any, default: nil, doc: "where the section's events go"
 
   @doc "The section."
   def section(assigns) do
@@ -133,7 +143,7 @@ defmodule RavixWeb.Live.WorkspaceGitHub do
 
     ~H"""
     <section id="workspace-github" aria-labelledby="github-heading">
-      <h2 id="github-heading">GitHub</h2>
+      <h2 id="github-heading">GitHub accounts</h2>
       <div class="workspace-github-actions">
         <a
           :if={@connect?}
@@ -143,12 +153,24 @@ defmodule RavixWeb.Live.WorkspaceGitHub do
         >
           <.icon name="github" size={14} />Connect GitHub
         </a>
+        <a
+          :if={(@connect? and @configure_url) && not @empty?}
+          id="configure-github"
+          class="button ghost"
+          href={@configure_url}
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          Configure on GitHub
+          <span aria-hidden="true">↗</span><span class="sr-only">(opens in a new tab)</span>
+        </a>
         <button
           :if={@catalog && @catalog.installations != []}
           type="button"
           id="refresh-catalog"
           class="ghost"
           phx-click="refresh-catalog"
+          phx-target={@target}
           disabled={@refreshing}
         >
           {if @refreshing, do: "Refreshing…", else: "Refresh"}
@@ -204,6 +226,7 @@ defmodule RavixWeb.Live.WorkspaceGitHub do
             type="button"
             class={if @empty?, do: "primary", else: "ghost"}
             phx-click="add-installation"
+            phx-target={@target}
             phx-value-installation={installation.id}
             disabled={not is_nil(@attaching)}
             aria-label={"Add @#{installation.account} to #{@workspace.name}"}
@@ -217,14 +240,15 @@ defmodule RavixWeb.Live.WorkspaceGitHub do
       <p :if={@offered != [] and @workspace.kind == :team} class="hint">
         Every member of {@workspace.name} can then work in its repositories.
       </p>
-
-      <h3 :if={@catalog && @catalog.repos != []} id="catalog-heading">Repositories</h3>
-      <ul
-        :if={@catalog && @catalog.repos != []}
-        id="workspace-catalog"
-        class="workspace-people"
-        aria-labelledby="catalog-heading"
-      >
+    </section>
+    <section
+      :if={@catalog && @catalog.repos != []}
+      id="workspace-repositories"
+      aria-labelledby="catalog-heading"
+    >
+      <h2 id="catalog-heading">Repositories</h2>
+      <p class="hint">Each repository is one project here, which every member can work in.</p>
+      <ul id="workspace-catalog" class="workspace-people" aria-labelledby="catalog-heading">
         <li
           :for={%{repo: repo, project: project} <- @catalog.repos}
           id={"repo-#{repo.id}"}
@@ -233,18 +257,26 @@ defmodule RavixWeb.Live.WorkspaceGitHub do
           <span class="truncate">{repo.full_name}</span>
           <small :if={repo.private}>Private</small>
           <span class="spacer"></span>
-          <.link :if={project} navigate={"/p/#{project.id}"} class="ghost">Open project</.link>
+          <.link
+            :if={project}
+            navigate={"/p/#{project.id}"}
+            class="ghost"
+            aria-label={"Open project #{project.name}"}
+          >
+            <.icon name="folder" size={14} />{project.name}
+          </.link>
           <button
             :if={is_nil(project) and @admit?}
             type="button"
             class="ghost"
             phx-click="add-repo"
+            phx-target={@target}
             phx-value-repo={repo.full_name}
             disabled={not is_nil(@adding)}
           >
-            {if @adding == repo.full_name, do: "Adding…", else: "Add"}
+            {if @adding == repo.full_name, do: "Adding…", else: "Add project"}
           </button>
-          <small :if={is_nil(project) and not @admit?}>Not added yet</small>
+          <small :if={is_nil(project) and not @admit?}>No project yet</small>
         </li>
       </ul>
     </section>
