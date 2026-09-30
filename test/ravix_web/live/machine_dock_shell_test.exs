@@ -20,6 +20,13 @@ defmodule RavixWeb.Live.MachineDockShellTest do
 
   setup :verify_on_exit!
 
+  # How long a shell may take to say it is attached (`:ready`, which the pane
+  # hears as `shell:reset`): the handshake deadline `Ravix.Sprites.Pty` gives
+  # it. Past that the shell has failed and says so, so waiting on the event
+  # to this bound is waiting for it, not guessing at a load; a healthy run
+  # returns as soon as it arrives.
+  @ready_ms 15_000
+
   setup do
     owner = insert_user()
     project = insert_project(user: owner)
@@ -127,7 +134,7 @@ defmodule RavixWeb.Live.MachineDockShellTest do
     |> element("#shell-#{id}")
     |> render_hook("shell-attach", %{id: id, cols: cols, rows: rows})
 
-    assert_push_event(view, "shell:reset", %{id: ^id}, 2_000)
+    assert_push_event(view, "shell:reset", %{id: ^id}, @ready_ms)
   end
 
   defp await_output(view, id, text, acc \\ "") do
@@ -232,7 +239,7 @@ defmodule RavixWeb.Live.MachineDockShellTest do
     |> element("#shell-#{id}")
     |> render_hook("shell-attach", %{id: id, cols: 100, rows: 30, select: true})
 
-    assert_push_event(view, "shell:reset", %{id: ^id}, 2_000)
+    assert_push_event(view, "shell:reset", %{id: ^id}, @ready_ms)
     assert has_element?(view, "#machine-dock:not([hidden]) #shell-pane-#{id}:not([hidden])")
     assert_receive {SpritesFake, :exec, {:attach, "s1"}}
     assert await_output(view, id, "ran: iex -S mix") =~ "$ iex -S mix"
@@ -406,7 +413,7 @@ defmodule RavixWeb.Live.MachineDockShellTest do
       # Awake: attached at the size the pane asked for, and connected.
       send(probe, :go)
       render_async(view, 5_000)
-      assert_push_event(view, "shell:reset", %{id: ^id}, 2_000)
+      assert_push_event(view, "shell:reset", %{id: ^id}, @ready_ms)
       assert_receive {SpritesFake, :exec, {:spawn, query}}
       assert {query["cols"], query["rows"]} == {"120", "33"}
       assert await_output(view, id, "$ ")
@@ -488,7 +495,7 @@ defmodule RavixWeb.Live.MachineDockShellTest do
       # process: `render_async` settles the first, the shell's `:ready` (the
       # pane's reset) the second. The fake reports the spawn before it
       # answers the upgrade, so it is in the mailbox by then.
-      assert_push_event(view, "shell:reset", %{id: ^id}, 2_000)
+      assert_push_event(view, "shell:reset", %{id: ^id}, @ready_ms)
       assert_received {SpritesFake, :exec, {:spawn, %{"cols" => "80"}}}
       assert await_output(view, id, "$ ")
       refute has_element?(view, empty)
@@ -512,7 +519,7 @@ defmodule RavixWeb.Live.MachineDockShellTest do
       # pane's reset) the second. The fake reports the spawn before it
       # answers the upgrade, so it is in the mailbox by then.
       tab_id = tab.id
-      assert_push_event(view, "shell:reset", %{id: ^tab_id}, 2_000)
+      assert_push_event(view, "shell:reset", %{id: ^tab_id}, @ready_ms)
       assert_received {SpritesFake, :exec, {:spawn, _}}
       assert await_output(view, tab.id, "$ ")
     end
@@ -567,7 +574,7 @@ defmodule RavixWeb.Live.MachineDockShellTest do
     send(probe, :go)
     render_async(view, 5_000)
     # Attached once the wake answers; connected once the shell is ready.
-    assert_push_event(view, "shell:reset", %{id: ^id}, 2_000)
+    assert_push_event(view, "shell:reset", %{id: ^id}, @ready_ms)
     assert_received {SpritesFake, :exec, {:spawn, %{"cols" => "100", "rows" => "30"}}}
   end
 
