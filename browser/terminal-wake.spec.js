@@ -1,6 +1,12 @@
 import { test, expect } from '@playwright/test';
 import { signIn, connectClaude } from './sign-in.js';
 
+// RAV-101: "+" opens a menu; "New terminal" is its first item.
+async function openTerminal(page) {
+  await page.locator('#dock-add-trigger').click();
+  await page.getByRole('menuitem', { name: /New terminal/ }).click();
+}
+
 const mock = `http://localhost:${process.env.MOCK_PORT || 8893}`;
 
 // The sandbox the mock made for this track: its vault is tagged with the track.
@@ -36,10 +42,10 @@ test('a terminal opened on a sleeping machine wakes it, then connects', async ({
   test.setTimeout(120_000);
   const sandbox = await newTrack(page, request, 'Terminal wake');
   expect((await request.post(`${mock}/__browser/sandbox-status`, { data: { id: sandbox, status: 'suspended', wake_ms: 1500 } })).ok()).toBe(true);
-  await page.getByRole('button', { name: 'Refresh', exact: true }).click();
+  await page.locator('.panel-refresh').click();
   await expect(page.locator('#track-machine-state')).toHaveText('Asleep');
 
-  await page.getByRole('button', { name: 'New terminal', exact: true }).click();
+  await openTerminal(page);
   const pane = page.locator('.shell-pane:not([hidden])');
   await expect(pane.getByRole('status')).toHaveText('Waking the machine…');
   await expect(pane.locator('.xterm-rows')).toContainText(/\S+ \$ /, { timeout: 20_000 });
@@ -60,7 +66,7 @@ test('a terminal the machine does not answer says so, and Retry connects', async
   const sandbox = await newTrack(page, request, 'Terminal retry');
   expect((await request.post(`${mock}/__browser/pty-silent`, { data: { id: sandbox, silent: true } })).ok()).toBe(true);
 
-  await page.getByRole('button', { name: 'New terminal', exact: true }).click();
+  await openTerminal(page);
   const pane = page.locator('.shell-pane:not([hidden])');
   await expect(pane.locator('.shell-status')).toHaveText(/Connecting/);
   const status = pane.locator('.shell-status');
