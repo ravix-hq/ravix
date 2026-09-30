@@ -98,8 +98,8 @@ defmodule Ravix.Tracks.FountainTitlesTest do
       listing(ctx.project, [
         conversation(untitled, %{title: nil}),
         conversation(owned, %{title: "Owner's name", title_source: "user"}),
-        # A conversation opened before this release, by a Fountain that does
-        # not send `title_source`: the branch Ravix sent as its title.
+        # Opened before RAV-107, from a Fountain that does not send
+        # `title_source`: the title Ravix sent at creation.
         conversation(opened, %{title: "ravix/opened"})
       ])
 
@@ -111,5 +111,37 @@ defmodule Ravix.Tracks.FountainTitlesTest do
     end
 
     refute_received {:hub, %Event{name: :tracks}}
+  end
+
+  # The regression RAV-107's review caught: a secondary thread opened as
+  # "New thread", which Fountain still calls that (locked as the owner's),
+  # and which the first prompt retitled in Ravix.
+  test "an unsourced stale title never reverts an automatic secondary thread", ctx do
+    track = titled_track(ctx.project, "second")
+    conversation_id = "c-second-thread-#{System.unique_integer([:positive])}"
+
+    {:ok, second} =
+      Store.create_thread(%{
+        track_id: track.id,
+        title: "New thread",
+        conversation_id: conversation_id
+      })
+
+    Repo.update_all(from(t in Thread, where: t.id == ^second.id),
+      set: [title: "Fix Login", title_source: :auto]
+    )
+
+    client =
+      listing(ctx.project, [
+        conversation(track, %{title: "Main branch pull", title_source: "harness"}),
+        %{id: conversation_id, status: "idle", sandbox_id: "sb", title: "New thread"}
+      ])
+
+    assert {:ok, [_, _]} = MachineCache.conversations(client, ctx.project)
+
+    id = track.id
+    assert_receive {:hub, %Event{name: :tracks, track_id: ^id}}, 2_000
+    assert Store.thread(id).title == "Main branch pull"
+    assert %Thread{title: "Fix Login", title_source: :auto} = Repo.get!(Thread, second.id)
   end
 end

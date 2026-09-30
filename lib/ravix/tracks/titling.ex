@@ -90,47 +90,36 @@ defmodule Ravix.Tracks.Titling do
   write, and every write is `Store.auto_title/3`'s compare-and-set, so two
   instances reading the same list write it once and publish once.
   """
-  @spec from_fountain(String.t(), %{String.t() => {String.t(), String.t() | nil}}) ::
-          [:ok | :stale | :skipped]
+  @spec from_fountain(String.t(), %{String.t() => String.t()}) :: [:ok | :stale | :skipped]
   def from_fountain(project_id, titles) do
     project_id
     |> Store.auto_titled_threads(Map.keys(titles))
     |> Enum.map(fn {thread, track} ->
-      {title, source} = Map.fetch!(titles, thread.conversation_id)
-      adopt(thread, track, Title.runtime(title), source)
+      adopt(thread, track, Title.runtime(Map.fetch!(titles, thread.conversation_id)))
     end)
   end
 
   @doc """
-  The harness titles on a conversation list, by conversation id, each with
-  the `title_source` Fountain gave (nil when it gave none).
+  The harness titles on a conversation list, by conversation id.
 
-  A title is the harness's when Fountain says so. A Fountain that does not
-  send `title_source` still sends `title`, and then a non-blank one is taken
-  for the harness's; `adopt/4` refuses the one case where that is known to
-  be wrong. A `"user"` title is the conversation owner's, set in Fountain,
-  and is not the harness's.
+  Only a title Fountain marks `title_source: "harness"`. A `"user"` title is
+  the conversation owner's. A title with no `title_source` is not trusted
+  either: every conversation opened before RAV-107 carries the title Ravix
+  sent at creation ("New thread", the branch, the create dialog's name),
+  which Fountain locked as the owner's and which the first prompt has since
+  replaced in Ravix. Until Fountain sends `title_source`, nothing is adopted.
   """
-  @spec harness_titles([Conversation.t()]) :: %{String.t() => {String.t(), String.t() | nil}}
+  @spec harness_titles([Conversation.t()]) :: %{String.t() => String.t()}
   def harness_titles(conversations) do
-    for %Conversation{id: id, title: title, title_source: source} <- conversations,
+    for %Conversation{id: id, title: title, title_source: "harness"} <- conversations,
         is_binary(id) and is_binary(title) and String.trim(title) != "",
-        source in ["harness", nil],
         into: %{},
-        do: {id, {title, source}}
+        do: {id, title}
   end
 
-  defp adopt(_thread, _track, nil, _source), do: :skipped
-  defp adopt(%Thread{title: title}, _track, title, _source), do: :skipped
-
-  # Until this release every conversation was opened with a title, which
-  # Fountain keeps as its owner's and never lets the harness replace. For a
-  # track's first thread that was the branch. Without `title_source` it
-  # cannot be told from a harness title, and adopting it would undo the title
-  # the first prompt gave.
-  defp adopt(_thread, %Track{branch: branch}, branch, nil), do: :skipped
-
-  defp adopt(thread, track, title, _source), do: write(thread, track, title)
+  defp adopt(_thread, _track, nil), do: :skipped
+  defp adopt(%Thread{title: title}, _track, title), do: :skipped
+  defp adopt(thread, track, title), do: write(thread, track, title)
 
   defp write(thread, track, title) do
     with :ok <- Store.auto_title(thread, track, title) do

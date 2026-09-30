@@ -271,24 +271,23 @@ defmodule Ravix.Tracks.TitlingTest do
       assert thread(ctx.track).title_source == :manual
     end
 
-    test "adopts only harness titles, or unsourced ones that are not Ravix's own opening name",
-         ctx do
+    test "adopts only titles Fountain marks as the harness's", ctx do
       id = ctx.track.conversation_id
 
       assert Titling.harness_titles([
                listed("a", "Set by the owner", "user"),
                listed("b", "   "),
                listed("c", nil),
+               listed("d", "No source", nil),
                listed(nil, "No id")
              ]) == %{}
 
-      # Before this release Ravix opened every conversation with the branch as
-      # its title, which Fountain keeps as the owner's. Unsourced, it would
-      # otherwise undo the prompt's title.
-      assert [:skipped] = from_list(ctx, [listed(id, "ravix/crewe", nil)])
+      # Before RAV-107 Ravix opened every conversation with a title, which
+      # Fountain locked as the owner's. Unsourced, it is that stale name.
+      assert [] = from_list(ctx, [listed(id, "New thread", nil)])
       assert thread(ctx.track).title == "Pull Latest Main"
 
-      assert [:ok] = from_list(ctx, [listed(id, "Main branch pull", nil)])
+      assert [:ok] = from_list(ctx, [listed(id, "Main branch pull", "harness")])
       assert thread(ctx.track).title == "Main branch pull"
     end
 
