@@ -26,7 +26,7 @@ defmodule RavixWeb.Live.Settings do
   The section lists below are the one place a section's URL and label are
   spelled. They are static, so the page can decide a URL before anything
   is loaded, and `resolve/3` sends a URL for a section that is not there
-  (a project's Workspace section while workspaces are off) to the first.
+  to the first.
   """
   use RavixWeb, :html
 
@@ -34,14 +34,21 @@ defmodule RavixWeb.Live.Settings do
   @workspace [{"general", "General"}, {"members", "Members"}]
   @project [
     {"general", "General"},
+    {"access", "Access"},
     {"agent", "Agent"},
-    {"workspace", "Workspace"},
-    {"environment", "Environment"},
-    {"variables", "Environment variables"},
-    {"secrets", "Secrets"},
-    {"run-script", "Run script"},
+    {"machine", "Machine"},
     {"danger", "Danger zone"}
   ]
+
+  # The project dialog's eight tabs became five pages (RAV-74). A tab that
+  # is now a part of a page keeps its URL, which opens that page at it.
+  @moved %{
+    "environment" => {"machine", "machine-environment"},
+    "variables" => {"machine", "machine-variables"},
+    "secrets" => {"machine", "machine-secrets"},
+    "run-script" => {"machine", "machine-run-script"},
+    "workspace" => {"general", "general-workspace"}
+  }
 
   @typedoc "Whose settings: the signed-in person's, a workspace's or a project's."
   @type kind :: :personal | :workspace | :project
@@ -111,7 +118,7 @@ defmodule RavixWeb.Live.Settings do
     }
 
   @doc """
-  A project's groups: the project, its machine, then Danger zone alone and
+  A project's groups: the project's own pages, then Danger zone alone and
   last. `shown` lists the section keys the page can show.
   """
   @spec project_groups(%{id: String.t(), display_name: String.t()}, [String.t()], map()) ::
@@ -124,8 +131,7 @@ defmodule RavixWeb.Live.Settings do
           do: {key, item(:project, project.id, section, counts)}
 
     [
-      {project.display_name, ~w(general agent workspace)},
-      {"Machine", ~w(environment variables secrets run-script)},
+      {project.display_name, ~w(general access agent machine)},
       {nil, ~w(danger)}
     ]
     |> Enum.map(fn {label, keys} ->
@@ -139,7 +145,9 @@ defmodule RavixWeb.Live.Settings do
 
   @doc """
   What a settings URL opens, decided from what the shell holds: the page,
-  somewhere else to send the browser with a sentence saying why, `:wait`
+  somewhere else to send the browser with a sentence saying why, a
+  `{:moved, path}` for a project section that is now part of another page
+  (the page, and the part as its fragment), `:wait`
   while the project it names is not in hand yet, or nil for a URL that is
   not a settings page at all.
 
@@ -148,7 +156,11 @@ defmodule RavixWeb.Live.Settings do
   a project's for its owner, as the dialog was.
   """
   @spec resolve(atom(), map(), map()) ::
-          {:ok, page()} | {:redirect, String.t(), String.t()} | :wait | nil
+          {:ok, page()}
+          | {:redirect, String.t(), String.t()}
+          | {:moved, String.t()}
+          | :wait
+          | nil
   def resolve(:user_settings, %{"section" => section}, _assigns) do
     if section?(:personal, section),
       do: {:ok, %{kind: :personal, section: section, id: nil}},
@@ -176,9 +188,11 @@ defmodule RavixWeb.Live.Settings do
       project.access == :tracks or project.role != :owner ->
         {:redirect, "/p/#{project.id}", "Only the project's owner can change its settings."}
 
-      # The Workspace section is only there while workspaces are on.
-      not section?(:project, section) or
-          (section == "workspace" and not Ravix.Workspaces.enabled?()) ->
+      is_map_key(@moved, section) ->
+        {page, part} = Map.fetch!(@moved, section)
+        {:moved, section_path(:project, project.id, page) <> "#" <> part}
+
+      not section?(:project, section) ->
         {:redirect, section_path(:project, project.id, first(:project)),
          "Settings page not found."}
 

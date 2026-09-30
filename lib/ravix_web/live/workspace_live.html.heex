@@ -363,8 +363,41 @@
                         only ever showed on the open project, so opening a
                         track made that one row an icon wider and cut its
                         name short (RAV-63). --%>
+                      <%!-- Buttons, not links, so the menu closes as they go;
+                        `data-leaves-page` has a page with unsaved changes ask. --%>
                       <button
-                        :if={@project && @project.id == project.id}
+                        :if={project.role == :owner}
+                        type="button"
+                        id={"project-menu-settings-#{project.id}"}
+                        class="account-item"
+                        role="menuitem"
+                        aria-label={"Settings for #{project.display_name}"}
+                        popovertarget={"project-menu-#{project.id}"}
+                        popovertargetaction="hide"
+                        data-leaves-page
+                        phx-click={JS.patch("/p/#{project.id}/settings/general")}
+                      >
+                        <span class="menu-check" aria-hidden="true">
+                          <.icon name="settings" size={14} />
+                        </span>Settings
+                      </button>
+                      <button
+                        :if={@project && @project.id == project.id && project.role == :owner}
+                        type="button"
+                        class="account-item"
+                        role="menuitem"
+                        aria-label={"People in #{project.display_name}"}
+                        popovertarget={"project-menu-#{project.id}"}
+                        popovertargetaction="hide"
+                        data-leaves-page
+                        phx-click={JS.patch("/p/#{project.id}/settings/access")}
+                      >
+                        <span class="menu-check" aria-hidden="true">
+                          <.icon name="add-person" size={14} />
+                        </span>People
+                      </button>
+                      <button
+                        :if={@project && @project.id == project.id && project.role != :owner}
                         type="button"
                         class="account-item"
                         role="menuitem"
@@ -619,14 +652,32 @@
           >
             Plans
           </.link>
+          <%!-- The owner's People is the Access settings page (RAV-74);
+            everyone else's is still the dialog. --%>
+          <.link
+            :if={@project.access != :tracks && @project.role == :owner}
+            id="crumb-people"
+            class="ghost"
+            patch={"/p/#{@project.id}/settings/access"}
+          >
+            People
+          </.link>
           <button
-            :if={@project.access != :tracks}
+            :if={@project.access != :tracks && @project.role != :owner}
             class="ghost"
             phx-click={JS.push_focus() |> JS.push("dialog")}
             phx-value-name="people"
           >
             People
           </button>
+          <.link
+            :if={@project.access != :tracks && @project.role == :owner}
+            id="crumb-settings"
+            class="ghost"
+            patch={"/p/#{@project.id}/settings/general"}
+          >
+            Settings
+          </.link>
         </div>
         <p
           :if={@project && @project.role != :owner && is_nil(@track_id)}

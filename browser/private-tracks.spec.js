@@ -12,11 +12,12 @@ test('private tracks are hidden from project members until invited', async ({ pa
   await project.getByRole('button', { name: 'Create project', exact: true }).click();
   await expect(project).toHaveCount(0);
   const projectPath = new URL(page.url()).pathname;
-  await page.locator('#workspace-stage').getByRole('button', { name: 'People', exact: true }).click();
+  // The owner's People is the project's Access settings page (RAV-74).
+  await page.locator('#workspace-stage').getByRole('link', { name: 'People', exact: true }).click();
+  await expect(page).toHaveURL(/\/settings\/access$/);
   await page.getByLabel('GitHub username', { exact: true }).fill('privacyguest');
   await page.getByRole('button', { name: 'Invite', exact: true }).click();
-  await expect(page.locator('#people-dialog')).toContainText('@privacyguest');
-  await page.keyboard.press('Escape');
+  await expect(page.locator('#project-access')).toContainText('@privacyguest');
   await page.locator('#yard .workspace-project.current .project-add').click();
   const track = page.getByRole('dialog', { name: 'New track', exact: true });
   await expect(track.locator('#new-track-sharing-trigger')).toContainText('Everyone');

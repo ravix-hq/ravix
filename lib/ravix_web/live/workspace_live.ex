@@ -358,6 +358,11 @@ defmodule RavixWeb.WorkspaceLive do
       {:ok, page} ->
         socket |> assign(settings: page) |> assign_page_title()
 
+      # One of the project dialog's old tabs, now a part of a page: that
+      # page, scrolled to it, and nothing to say about it.
+      {:moved, to} ->
+        socket |> assign(settings: nil) |> push_patch(to: to, replace: true)
+
       # A URL the page was mounted at is left before there is a page to
       # patch, so the sentence goes in the flash the redirect carries too.
       {:redirect, to, message} ->
@@ -1205,6 +1210,15 @@ defmodule RavixWeb.WorkspaceLive do
   # a project you just left goes, and a project you took somebody off has a
   # different set of tracks under it -- so it is re-read and the dialog
   # closes behind it.
+  #
+  # On the project's Access settings page it was the owner taking somebody
+  # else's grant away, and the page stays where it is.
+  def handle_info(
+        {:person_removed, :project, _login},
+        %{assigns: %{settings: %{kind: :project}}} = socket
+      ),
+      do: {:noreply, reload_async(socket)}
+
   def handle_info({:person_removed, :project, _login}, socket),
     do: {:noreply, socket |> reload_async() |> push_patch(to: "/")}
 
@@ -1430,6 +1444,10 @@ defmodule RavixWeb.WorkspaceLive do
     # viewer may still manage them (ADR 0010).
     if name == :people and socket.assigns[:dialog] == :people,
       do: send_update(RavixWeb.Live.PeopleDialog, id: "people", reload: true)
+
+    # So does the project's Access settings page.
+    if name == :people and match?(%{kind: :project, section: "access"}, socket.assigns.settings),
+      do: send_update(RavixWeb.Live.PeopleDialog, id: "project-access", reload: true)
 
     {:noreply, socket |> recheck_or_leave() |> reload_async()}
   end

@@ -1290,8 +1290,10 @@ defmodule RavixWeb.WorkspaceLiveTest do
     render_async(view)
 
     row = "#yard [data-project-id='#{mine.id}'].current"
-    assert has_element?(view, ".crumbs button[phx-value-name=people]")
-    refute has_element?(view, ".crumbs button[phx-value-name=settings]")
+    # The owner's People and Settings are pages (RAV-74), linked from the header.
+    assert has_element?(view, ~s(.crumbs #crumb-people[href="/p/#{mine.id}/settings/access"]))
+    assert has_element?(view, ~s(.crumbs #crumb-settings[href="/p/#{mine.id}/settings/general"]))
+    refute has_element?(view, ".crumbs button[phx-value-name=people]")
     assert has_element?(view, "#{row} a.project-add[aria-label='New track in Mine']")
     # Every owned project exposes its settings directly on its own row.
     closed = "#yard [data-project-id='#{other.id}']"
@@ -1301,13 +1303,15 @@ defmodule RavixWeb.WorkspaceLiveTest do
     # The nested links under the open project are gone.
     refute has_element?(view, ".project-links")
 
-    view |> element(".crumbs button[phx-value-name=people]") |> render_click()
-    assert has_element?(view, "#people-dialog")
-    render_click(view, "dismiss")
+    view |> element("#crumb-people") |> render_click()
+    assert_patch(view, "/p/#{mine.id}/settings/access")
+    assert has_element?(view, "#project-access")
+    render_patch(view, "/p/#{mine.id}")
 
     stub(Projects, :settings, fn _, id when id == mine.id ->
       {:ok,
        %{
+         env_vars: %{},
          name: "Mine",
          runtime: "claude",
          model: "model",
@@ -1323,7 +1327,7 @@ defmodule RavixWeb.WorkspaceLiveTest do
     view |> element("#{row} button[title='Project settings']") |> render_click()
     assert_patch(view, "/p/#{mine.id}/settings/general")
     render_async(view)
-    assert has_element?(view, "#settings-sections")
+    assert has_element?(view, "#settings-page")
     assert has_element?(view, ".settings-crumbs [aria-current=page]", "General")
     assert page_title(view) == "General · Mine · Ravix"
 
@@ -1334,13 +1338,13 @@ defmodule RavixWeb.WorkspaceLiveTest do
     assert has_element?(view, "#{row} button[aria-label='People in sharer / Shared']")
     refute has_element?(view, "#{row} button[aria-label^='Project settings']")
     render_hook(view, "project-settings", %{project: shared.id})
-    refute has_element?(view, "#settings-sections")
+    refute has_element?(view, "#settings-page")
     render_patch(view, "/p/#{shared.id}?settings=true")
-    refute has_element?(view, "#settings-sections")
+    refute has_element?(view, "#settings-page")
     render_patch(view, "/p/#{shared.id}/settings/general")
     assert_patch(view, "/p/#{shared.id}")
     assert has_element?(view, "#flash-info", "Only the project's owner can change its settings.")
-    refute has_element?(view, "#settings-sections")
+    refute has_element?(view, "#settings-page")
   end
 
   test "top New track defaults to the current project and switches scoped projects", %{conn: conn} do
@@ -1405,7 +1409,7 @@ defmodule RavixWeb.WorkspaceLiveTest do
     render_patch(view, "/p/#{first.id}?settings=true")
     assert_patch(view, "/p/#{first.id}/settings/general")
     render_async(view)
-    assert has_element?(view, "#settings-sections")
+    assert has_element?(view, "#settings-section-general")
   end
 
   for has_project <- [false, true] do
@@ -1978,6 +1982,7 @@ defmodule RavixWeb.WorkspaceLiveTest do
     project = insert_project(user: user)
 
     settings = %{
+      env_vars: %{},
       name: project.name,
       runtime: "claude",
       model: "model",
@@ -1992,6 +1997,11 @@ defmodule RavixWeb.WorkspaceLiveTest do
     stub(Projects, :settings, fn _, id ->
       assert id == project.id
       {:ok, settings}
+    end)
+
+    expect(Projects, :rebuild, fn _, id ->
+      assert id == project.id
+      {:ok, %Ravix.Projects.Machine.Rebuild{removed: ["agent"], failed: []}}
     end)
 
     expect(Projects, :update_settings, fn actual_user, id, attrs ->
@@ -2009,12 +2019,14 @@ defmodule RavixWeb.WorkspaceLiveTest do
     |> element("#yard .workspace-project.current button[title='Project settings']")
     |> render_click()
 
-    view
-    |> form("#environment-settings-form", settings: [apt: "git curl"])
-    |> render_submit()
+    render_patch(view, "/p/#{project.id}/settings/machine")
+    render_async(view)
+    view |> form("#machine-form", settings: [apt: "git curl"]) |> render_submit()
+    render_async(view)
+    view |> form("#machine-form") |> put_submitter("#confirm-machine") |> render_submit()
 
     # The save runs under `start_async`; the flash only exists once it lands.
-    assert render_async(view) =~ "Settings saved"
+    assert render_async(view) =~ "Machine settings saved"
   end
 
   test "file, diff, check, and preview panels consume their context shapes", %{

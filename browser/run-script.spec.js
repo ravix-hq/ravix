@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { signIn, connectClaude } from './sign-in.js';
-import { openProjectSettings } from './settings.js';
+import { openProjectSettings, saveMachine } from './settings.js';
 
 test('project run script is inherited: run, ready, restart, stop and plain override', async ({ page }) => {
   await signIn(page, 'eli', '/home');
@@ -13,12 +13,15 @@ test('project run script is inherited: run, ready, restart, stop and plain overr
   await expect(page.getByRole('textbox', { name: 'Message', exact: true })).toBeEnabled();
 
   const trackUrl = page.url();
-  const settings = await openProjectSettings(page, 'run-script');
+  const settings = await openProjectSettings(page, 'machine');
   await settings.locator('#default-directory').fill('.');
   await settings.locator('#default-command').fill('npm run dev -- --port "$PORT" --strictPort');
   await settings.locator('#default-readiness').fill('/');
-  await settings.getByRole('button', { name: 'Save defaults', exact: true }).click();
-  await expect(page.getByText('Run script saved.', { exact: true })).toBeVisible();
+  // The run script alone needs no new machine: the open track stays.
+  const question = await saveMachine(page, ['run script edited']);
+  expect(question).toContain('Save these changes?');
+  expect(question).toContain('The machine is not rebuilt.');
+  await expect(page.getByText('Machine settings saved.', { exact: true })).toBeVisible();
   await page.goBack();
   await page.goBack();
   await expect(page).toHaveURL(trackUrl);
