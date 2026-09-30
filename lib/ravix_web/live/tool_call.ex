@@ -190,6 +190,12 @@ defmodule RavixWeb.Live.ToolCall do
   under it becomes relative, the directory itself becomes `.`, and a
   leading `cd <dir> &&`, which is where the agent already is, goes. The
   sandbox's absolute paths are the machine's business, not the reader's.
+
+  The row applies it to everything it draws that the machine wrote about
+  itself: the line, the command, the note, the arguments and the output
+  (RAV-92's "File created successfully at: /home/sprite/work/..."). A
+  file's content and its diff lines are the file's own words, and stay as
+  they are.
   """
   @spec relative(String.t(), String.t() | nil) :: String.t()
   def relative(text, workdir) when is_binary(workdir) do
@@ -289,16 +295,16 @@ defmodule RavixWeb.Live.ToolCall do
         <span :if={@block.status != :done} class={"chip tool-#{@block.status}"}>{@block.status}</span>
       </summary>
       <div class="tool-body">
-        <p :if={@note} class="tool-note">{@note}</p>
-        <pre :if={@shell? && @target} class="tool-command">{@target}</pre>
+        <p :if={@note} class="tool-note">{relative(@note, @workdir)}</p>
+        <pre :if={@shell? && @target} class="tool-command">{relative(@target, @workdir)}</pre>
         <p :if={!@shell? && !@structured? && @target && @block.detail.paths == []}>
-          <code>{@target}</code>
+          <code>{relative(@target, @workdir)}</code>
         </p>
         <p :for={path <- @block.detail.paths}><code>{relative(path, @workdir)}</code></p>
         <dl :if={@rest != []} class="tool-args">
           <%= for {key, value} <- @rest do %>
             <dt>{key}</dt>
-            <dd>{if is_binary(value), do: value, else: Jason.encode!(value)}</dd>
+            <dd>{relative(if(is_binary(value), do: value, else: Jason.encode!(value)), @workdir)}</dd>
           <% end %>
         </dl>
         <pre :if={@structured? && @block.detail.input != %{}}>{Jason.encode!(@block.detail.input, pretty: true)}</pre>
@@ -309,7 +315,7 @@ defmodule RavixWeb.Live.ToolCall do
           :if={@write? && @block.detail.edits == [] && is_binary(@block.detail.input["content"])}
           class="tool-content"
         >{@block.detail.input["content"]}</pre>
-        <pre :if={@block.output != ""} class="tool-output">{@block.output}</pre>
+        <pre :if={@block.output != ""} class="tool-output">{relative(@block.output, @workdir)}</pre>
       </div>
     </details>
     """
