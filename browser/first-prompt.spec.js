@@ -38,7 +38,7 @@ test('a first prompt typed in the create dialog opens the track with it waiting 
   const queue = page.locator('.workspace-queue');
   await expect(queue).toContainText('Add a health check endpoint');
   await expect(queue.locator('.queue-prompt strong')).toHaveText('health check');
-  await expect(queue.locator('.chip')).toHaveText('Waiting');
+  await expect(queue.locator('.queue-state')).toHaveText('Queued');
   await expect(page.locator('#track-setup-status')).toContainText('Prompts will wait until setup is ready.');
 
   // Once setup is ready the queue delivers it as the thread's first message.

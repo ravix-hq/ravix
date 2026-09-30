@@ -90,7 +90,7 @@ test('a new person goes from welcome to a track with their first prompt waiting'
   await connected(page);
   const queue = page.locator('.workspace-queue');
   await expect(queue).toContainText('Add a health check endpoint');
-  await expect(queue).toContainText('Starts when setup is ready');
+  await expect(queue).toContainText('Queued · starts when setup is ready');
   await expect(page.locator('#track-setup-steps')).toBeVisible();
   await expect(page.locator('#track-setup-steps li')).toHaveCount(4);
 
