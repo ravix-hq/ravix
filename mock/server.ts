@@ -1539,6 +1539,7 @@ const PEOPLE = [
     { id: 9088, login: "personalsettings", name: "Personal Settings", avatar_url: `${BASE}/ghweb/avatar.svg` },
     { id: 9099, login: "quickjumper", name: "Quick Jumper", avatar_url: `${BASE}/ghweb/avatar.svg` },
     { id: 9083, login: "titler", name: "Track Titler", avatar_url: `${BASE}/ghweb/avatar.svg` },
+    { id: 9096, login: "sidebarpolish", name: "Sidebar Polish", avatar_url: `${BASE}/ghweb/avatar.svg` },
     { id: 9189, login: "inspectorfiles", name: "Inspector Files", avatar_url: `${BASE}/ghweb/avatar.svg` },
     { id: 9190, login: "inspectorswitch", name: "Inspector Switch", avatar_url: `${BASE}/ghweb/avatar.svg` },
     { id: 9191, login: "inspectordiff", name: "Inspector Diff", avatar_url: `${BASE}/ghweb/avatar.svg` },
