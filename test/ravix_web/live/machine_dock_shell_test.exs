@@ -502,7 +502,8 @@ defmodule RavixWeb.Live.MachineDockShellTest do
       assert has_element?(view, "#shell-asleep-#{tab.id}", "Waking the machine…")
       send(probe, :go)
       render_async(view, 5_000)
-      assert_receive {SpritesFake, :exec, {:spawn, _}}
+      # As above: the spawn follows the wake on a later async step.
+      assert_receive {SpritesFake, :exec, {:spawn, _}}, 2_000
       assert await_output(view, tab.id, "$ ")
     end
   end
