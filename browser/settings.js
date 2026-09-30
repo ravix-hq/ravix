@@ -48,3 +48,32 @@ export async function createWorkspace(page, name) {
 
 // The workspace a settings page is for, as its breadcrumb names it.
 export const breadcrumb = page => page.getByRole('navigation', { name: 'Breadcrumb' });
+
+// RAV-77: an agent is connected and managed in Settings › Agents. The You
+// menu's Settings opens Profile; the frame's nav moves to Agents. Returns
+// the panel once Fountain has said what is held.
+export async function openAgentSettings(page) {
+  await page.locator('#account-trigger').click();
+  await page.locator('#open-personal-settings').click();
+  await expect(page).toHaveURL(/\/settings\/profile$/);
+  await page.locator('#settings-nav-agents').click();
+  await expect(page).toHaveURL(/\/settings\/agents$/);
+  const panel = page.locator('#settings-agent-panel');
+  await expect(panel.locator('.agent-card')).toHaveCount(2);
+  await expect(panel.locator('.agent-card-status', { hasText: 'Checking' })).toHaveCount(0);
+  return panel;
+}
+
+// Connect `agent` ('Claude Code' or 'Codex') with an API key, which is the
+// card's ⋯ menu's "Connect with an API key", from Settings › Agents.
+export async function connectApiKey(page, agent, key) {
+  const panel = await openAgentSettings(page);
+  const id = agent === 'Codex' ? 'codex' : 'claude';
+  await panel.locator(`#agent-menu-${id}-trigger`).click();
+  await panel.locator(`#connect-${id}-api_key`).click();
+  await panel.getByLabel('API key', { exact: true }).fill(key);
+  await panel.getByRole('button', { name: `Connect ${agent}`, exact: true }).click();
+  await expect(panel.locator(`#agent-${id}-status`)).toContainText('Connected');
+  await expect(panel.locator(`#remove-${id}-api_key`)).toBeAttached();
+  return panel;
+}

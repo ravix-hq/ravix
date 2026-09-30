@@ -1,10 +1,14 @@
 import { test, expect } from '@playwright/test';
+import AxeBuilder from '@axe-core/playwright';
 import { signIn, connectClaude } from './sign-in.js';
+import { connectApiKey } from './settings.js';
 
 // RAV-52 on Fountain ADR 0062: the model menu offers what the runtime
 // advertised (`session_config_options`), every prompt carries the thread's
 // `session_config`, and each turn reports what was applied, skipped or
 // refused. Nothing is ever sent as an `/effort` or `/fast` prompt turn.
+// The Claude mock names its top level "Xhigh", as the adapter does, and the
+// menu says "Extra high" (RAV-95).
 
 async function newTrack(page, name, agent) {
   await page.getByRole('button', { name: 'Add a project', exact: true }).first().click();
@@ -34,21 +38,29 @@ test('a Claude thread sets effort and Fast from the advertised options, per turn
   await newTrack(page, 'Claude effort');
 
   const trigger = page.locator('#model-trigger');
-  const menu = page.getByRole('menu', { name: 'Model', exact: true });
-  const effort = menu.getByRole('group', { name: 'Effort', exact: true });
+  const menu = page.getByRole('dialog', { name: 'Model', exact: true });
+  const effort = menu.getByRole('radiogroup', { name: 'Effort', exact: true });
   await expect(trigger).toHaveAttribute('title', 'Claude Code · Claude Opus 5.5 · Default');
 
   await trigger.click();
-  await expect(effort.locator('[role=menuitemradio] .truncate')).toHaveText(['Default', 'Low', 'Medium', 'High', 'Extra high', 'Max']);
-  await expect(effort.getByRole('menuitemradio', { name: 'Default', exact: true })).toHaveAttribute('aria-checked', 'true');
-  await effort.getByRole('menuitemradio', { name: 'High', exact: true }).click();
+  await expect(effort.locator('[role=radio] .truncate')).toHaveText(['Default', 'Low', 'Medium', 'High', 'Extra high', 'Max']);
+  await expect(effort.getByRole('radio', { name: 'Default', exact: true })).toHaveAttribute('aria-checked', 'true');
+  await effort.getByRole('radio', { name: 'High', exact: true }).click();
   await expect(trigger).toHaveAttribute('title', 'Claude Code · Claude Opus 5.5 · High');
 
+  // RAV-95: sections, and Fast a switch that stays in the open menu.
   await trigger.click();
-  const fast = menu.getByRole('menuitemcheckbox', { name: 'Fast mode' });
+  await expect(menu.locator('.model-section-label')).toHaveText(['Model', 'Effort', 'Speed']);
+  await expect(menu.locator('.model-default-hint')).toHaveText('Also your default for new threads');
+  expect((await new AxeBuilder({ page }).include('#model-menu').withTags(['wcag2a', 'wcag2aa']).analyze()).violations).toEqual([]);
+  const fast = menu.getByRole('switch', { name: 'Fast mode' });
   await expect(fast).toHaveAttribute('aria-checked', 'false');
   await fast.click();
+  await expect(fast).toHaveAttribute('aria-checked', 'true');
+  await expect(menu).toBeVisible();
   await expect(trigger).toHaveAttribute('title', 'Claude Code · Claude Opus 5.5 · High · Fast mode');
+  await page.keyboard.press('Escape');
+  await expect(menu).toBeHidden();
 
   await send(page, 'Think hard about this');
   const turns = page.locator('#transcript-turns');
@@ -60,9 +72,9 @@ test('a Claude thread sets effort and Fast from the advertised options, per turn
   // latest turn, so Max is still offered after the switch, and the runtime
   // refuses it: the turn fails before the prompt, saying so.
   await trigger.click();
-  await effort.getByRole('menuitemradio', { name: 'Max', exact: true }).click();
+  await effort.getByRole('radio', { name: 'Max', exact: true }).click();
   await trigger.click();
-  await menu.getByRole('menuitemradio', { name: /Claude Sonnet 5/ }).click();
+  await menu.getByRole('radio', { name: /Claude Sonnet 5/ }).click();
   await expect(trigger).toHaveAttribute('title', /Claude Sonnet 5 · Max/);
   await page.getByRole('textbox', { name: 'Message', exact: true }).fill('Now on Sonnet');
   await page.getByRole('button', { name: 'Send', exact: true }).click();
@@ -74,35 +86,33 @@ test('a Claude thread sets effort and Fast from the advertised options, per turn
   // "Change setting" opens the menu, now with Sonnet's own list.
   await expect(trigger).toBeEnabled({ timeout: 30_000 });
   await refusal.getByRole('button', { name: 'Change setting', exact: true }).click();
-  await expect(effort.locator('[role=menuitemradio] .truncate')).toHaveText(['Default', 'Low', 'Medium', 'High']);
-  await expect(menu.getByRole('menuitemcheckbox')).toHaveCount(0);
-  await effort.getByRole('menuitemradio', { name: 'High', exact: true }).click();
+  await expect(effort.locator('[role=radio] .truncate')).toHaveText(['Default', 'Low', 'Medium', 'High']);
+  // Sonnet has no fast tier: the switch is there, off and disabled, saying why.
+  const noFast = menu.getByRole('switch', { name: 'Fast mode' });
+  await expect(noFast).toHaveAttribute('aria-checked', 'false');
+  await expect(noFast).toHaveAttribute('aria-disabled', 'true');
+  await expect(noFast).toHaveAttribute('title', 'Not available for this model');
+
+  await effort.getByRole('radio', { name: 'High', exact: true }).click();
   await expect(trigger).toHaveAttribute('title', 'Claude Code · Claude Sonnet 5 · High');
 });
 
 test('a Codex thread gets effort and Fast under its own option ids', async ({ page }) => {
   test.setTimeout(120_000);
   await signIn(page, 'modeleffort', '/home');
-  await page.locator('#account-trigger').click();
-  await page.locator('#open-account').click();
-  const account = page.getByRole('dialog', { name: 'Your account', exact: true });
-  await account.getByRole('button', { name: /^Codex/ }).click();
-  await account.getByRole('button', { name: 'API key', exact: true }).click();
-  await account.getByLabel('API key', { exact: true }).fill('mock-model-effort-key');
-  await account.getByRole('button', { name: 'Connect Codex', exact: true }).click();
-  await expect(account.locator('#held-codex-api_key')).toBeVisible();
-  await account.getByRole('button', { name: 'Close', exact: true }).click();
+  await connectApiKey(page, 'Codex', 'mock-model-effort-key');
   await newTrack(page, 'Codex effort', 'codex');
 
   const trigger = page.locator('#model-trigger');
-  const menu = page.getByRole('menu', { name: 'Model', exact: true });
-  const effort = menu.getByRole('group', { name: 'Reasoning effort', exact: true });
+  const menu = page.getByRole('dialog', { name: 'Model', exact: true });
+  const effort = menu.getByRole('radiogroup', { name: 'Effort', exact: true });
   await trigger.click();
-  await expect(effort.locator('[role=menuitemradio] .truncate')).toHaveText(['Low', 'Medium', 'High', 'Extra high']);
-  await effort.getByRole('menuitemradio', { name: 'Extra high', exact: true }).click();
+  await expect(effort.locator('[role=radio] .truncate')).toHaveText(['Low', 'Medium', 'High', 'Extra high']);
+  await effort.getByRole('radio', { name: 'Extra high', exact: true }).click();
   await trigger.click();
-  await menu.getByRole('menuitemcheckbox', { name: 'Fast mode' }).click();
+  await menu.getByRole('switch', { name: 'Fast mode' }).click();
   await expect(trigger).toHaveAttribute('title', /· Extra high · Fast mode$/);
+  await page.keyboard.press('Escape');
 
   await send(page, 'Plan the refactor');
   await expect(page.locator('#transcript-turns .turn-config').last()).toHaveText('Extra high · Fast mode', { timeout: 30_000 });

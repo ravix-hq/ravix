@@ -335,6 +335,19 @@ defmodule Ravix.Tracks.Store do
 
   def get_tracks(ids), do: Repo.all(from t in Track, where: t.id in ^ids)
 
+  @doc """
+  Open tracks still called by the branch they opened with and never named
+  by anyone, oldest first: what `Ravix.Tracks.TitleBackfill` retitles.
+  """
+  @spec branch_titled_tracks() :: [Track.t()]
+  def branch_titled_tracks,
+    do:
+      Repo.all(
+        from t in Track,
+          where: is_nil(t.closed_at) and is_nil(t.title_source) and t.title == t.branch,
+          order_by: [asc: t.created_at, asc: t.id]
+      )
+
   @doc "The track a conversation belongs to."
   @spec track_by_conversation(String.t()) :: Track.t() | nil
   def track_by_conversation(conversation_id) when is_binary(conversation_id),

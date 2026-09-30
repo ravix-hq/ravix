@@ -29,7 +29,8 @@ import { existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { WORKSPACE_ROOT, WORK_ROOT, RECEIPT_PATH, parseChannel } from "../shared/contract";
 let updateMockPreview = (_workdir: string): void => {};
-let setMockSpriteAsleep = (_sprite: string, _wake: (() => void) | null): void => {};
+let setMockSpriteAsleep = (_sprite: string, _wake: (() => void) | null, _wakeMs?: number): void => {};
+let setMockPtySilent = (_sprite: string, _on: boolean): void => {};
 
 const PORT = Number(process.env.MOCK_PORT || 8793);
 const BASE = `http://localhost:${PORT}`;
@@ -362,6 +363,12 @@ const commands = () => acp({
     { name: "init", description: "Write a CLAUDE.md describing this codebase" },
     { name: "compact", description: "Summarise the conversation so far to free up context" },
     { name: "pr-comments", description: "Read the comments on this branch's pull request" },
+    // Skills arrive as commands too, described for the model rather than for
+    // a person: the composer shows each one's own purpose (RAV-95).
+    { name: "sprite", description: "Use this skill when users are modifying system configuration, starting dev servers, or requesting services. Also use it for checkpoints." },
+    { name: "api-gateway", description: "Use this skill when users want to call external APIs (GitHub, Slack, Linear, etc.) with authenticated requests. The gateway holds the keys." },
+    { name: "ravix-testing", description: "Use when adding regression tests or raising coverage in this repository. Covers server, LiveView and hooks." },
+    { name: "dataviz", description: "Use this skill whenever you are about to create any chart, graph or plot." },
   ],
 });
 const thought = (t: string) => acp({ sessionUpdate: "agent_thought_chunk", content: { type: "text", text: t } });
@@ -432,7 +439,7 @@ function advertised(conv: Conv): SessionConfigOption[] {
   } else {
     if (!model.includes("haiku")) {
       const levels: [string, string][] = [["default", "Default"], ["low", "Low"], ["medium", "Medium"], ["high", "High"]];
-      if (!model.includes("sonnet")) levels.push(["xhigh", "Extra high"], ["max", "Max"]);
+      if (!model.includes("sonnet")) levels.push(["xhigh", "Xhigh"], ["max", "Max"]);
       opts.push({ id: "effort", name: "Effort", category: "thought_level", type: "select", currentValue: "default", options: select(levels) });
     }
     if (model.endsWith("claude-opus-5-5")) opts.push({ id: "fast", name: "Fast mode", category: "model_config", type: "boolean", currentValue: false });
@@ -1518,7 +1525,10 @@ const PEOPLE = [
     { id: 9061, login: "firstrun", name: "First Run", avatar_url: `${BASE}/ghweb/avatar.svg` },
     { id: 9086, login: "attributor", name: "Attributed Sender", avatar_url: `${BASE}/ghweb/avatar.svg` },
     { id: 9087, login: "attributecolleague", name: "Attribute Colleague", avatar_url: `${BASE}/ghweb/avatar.svg` },
+    { id: 9088, login: "personalsettings", name: "Personal Settings", avatar_url: `${BASE}/ghweb/avatar.svg` },
     { id: 9099, login: "quickjumper", name: "Quick Jumper", avatar_url: `${BASE}/ghweb/avatar.svg` },
+    { id: 9083, login: "titler", name: "Track Titler", avatar_url: `${BASE}/ghweb/avatar.svg` },
+    { id: 9096, login: "sidebarpolish", name: "Sidebar Polish", avatar_url: `${BASE}/ghweb/avatar.svg` },
   ] : []),
   { id: 9001, login: "dana", name: "Dana Okonkwo", avatar_url: `${BASE}/ghweb/avatar.svg?dana` },
   { id: 9002, login: "eli", name: "Eli Fischer", avatar_url: `${BASE}/ghweb/avatar.svg?eli` },
@@ -1876,7 +1886,7 @@ function githubWeb(req: Request, url: URL, webBody: Record<string, unknown> = {}
 // ── the port ───────────────────────────────────────────────────────────
 
 if (import.meta.main) {
-({ updateMockPreview, setMockSpriteAsleep } = await import("./previews"));
+({ updateMockPreview, setMockSpriteAsleep, setMockPtySilent } = await import("./previews"));
 Bun.serve({
   port: PORT,
   // A track's transcript stream stays open as long as its tab is; the default
@@ -1933,11 +1943,20 @@ Bun.serve({
     // are refused while it sleeps, and its sprite reads as stopped until a
     // command runs on it (see `setMockSpriteAsleep`).
     if (p === "/__browser/sandbox-status" && req.method === "POST" && process.env.RAVIX_BROWSER_TEST === "1") {
-      const { id, status } = await req.json() as { id: string; status: string };
+      const { id, status, wake_ms = 0 } = await req.json() as { id: string; status: string; wake_ms?: number };
       const box = state.boxes.get(id);
       if (!box || !["suspended", "ready"].includes(status)) return json({ error: "invalid_fixture" }, 400);
       setSandboxStatus(id, status as "suspended" | "ready");
-      setMockSpriteAsleep(box.sprite_name, status === "suspended" ? () => setSandboxStatus(id, "ready") : null);
+      setMockSpriteAsleep(box.sprite_name, status === "suspended" ? () => setSandboxStatus(id, "ready") : null, Number(wake_ms) || 0);
+      return json({ status: "ok" });
+    }
+
+    // A machine whose terminal socket never answers (`setMockPtySilent`).
+    if (p === "/__browser/pty-silent" && req.method === "POST" && process.env.RAVIX_BROWSER_TEST === "1") {
+      const { id, silent } = await req.json() as { id: string; silent: boolean };
+      const box = state.boxes.get(id);
+      if (!box || typeof silent !== "boolean") return json({ error: "invalid_fixture" }, 400);
+      setMockPtySilent(box.sprite_name, silent);
       return json({ status: "ok" });
     }
 

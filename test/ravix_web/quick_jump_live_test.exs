@@ -57,10 +57,11 @@ defmodule RavixWeb.QuickJumpLiveTest do
     assert has_element?(view, "#{group} h3 .search-label", "ravix 2")
     assert has_element?(view, "#{group} h3 .search-count[aria-label='2 results']", "2")
 
-    # The same name the sidebar draws, less the namespace; the title keeps all of it.
+    # The same name the sidebar draws, less the namespace; the tooltip adds
+    # the raw branch.
     assert has_element?(
              view,
-             "#search-track-link-#{slug.id}[title='#{long}'] .search-label",
+             "#search-track-link-#{slug.id}[title^='#{String.replace_prefix(long, "ravix/", "")}'][title$='#{slug.branch}'] .search-label",
              "rav-83-workspaces-as-the-unit-of-sharing-across-projects"
            )
 

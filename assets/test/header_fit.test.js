@@ -21,7 +21,7 @@ beforeEach(() => {
     }
   }
   document.body.innerHTML = `<header id="h">
-    <span class="chip track-branch">ravix/a-long-branch</span>
+    <strong class="track-title-crumb">Pull Latest Main</strong>
     <span class="spacer"></span>
     <button class="chip track-plan-chip"><span id="plan" data-fit-label>Plan: Small fixes</span></button>
     <span class="chip"><span id="state" data-fit-label>Asleep</span></span>
@@ -37,7 +37,6 @@ const widths = (sel, scrollWidth, clientWidth) => dimensions($(sel), {scrollWidt
 const whole = () => {
   widths("#plan", 120, 120)
   widths("#state", 40, 40)
-  widths(".track-branch", 150, 150)
 }
 
 test("whole labels leave the header as it is; a cut one makes it compact", () => {
@@ -51,10 +50,9 @@ test("whole labels leave the header as it is; a cut one makes it compact", () =>
   expect(hook.el.hasAttribute("data-compact")).toBe(true)
 })
 
-test("compact holds until the spacer fits every label and the branch is whole", () => {
+test("compact holds until the spacer fits every label", () => {
   widths("#plan", 120, 0)
   widths("#state", 40, 0)
-  widths(".track-branch", 150, 150)
   const header = $("#h")
   header.setAttribute("data-compact", "")
   const needed = 120 + 40 + 2 * LABEL_GAP
@@ -63,10 +61,6 @@ test("compact holds until the spacer fits every label and the branch is whole", 
   expect(compact(header)).toBe(true)
   dimensions($(".spacer"), {clientWidth: needed})
   expect(compact(header)).toBe(false)
-
-  // Room for the words, but the branch is still cut: it has the prior claim.
-  widths(".track-branch", 150, 90)
-  expect(compact(header)).toBe(true)
 })
 
 test("a patch is measured again, and a header without labels is never compact", () => {

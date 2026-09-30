@@ -166,6 +166,20 @@ defmodule Ravix.Workspaces.Connect do
   end
 
   @doc """
+  Where "Configure on GitHub" goes: the App's page on GitHub, which lists
+  the accounts it is installed on and changes which repositories each
+  lets it read. Owners and admins (`:connect_repos`). No state rides on
+  it, so coming back connects nothing; Refresh reads the change.
+  """
+  @spec configure_url(User.t(), String.t()) :: {:ok, String.t()} | {:error, reason()}
+  def configure_url(%User{} = user, workspace_id) do
+    with {:ok, _access} <- Access.workspace_grant(user, workspace_id, :connect_repos),
+         {:ok, app} <- Ravix.Providers.github() do
+      {:ok, Ravix.GitHub.install_url(app)}
+    end
+  end
+
+  @doc """
   Connect one of the caller's own installations to a workspace, in one
   click: no round trip to GitHub's install page. Owners only; the
   installation must be among the ones GitHub says the caller can see, read

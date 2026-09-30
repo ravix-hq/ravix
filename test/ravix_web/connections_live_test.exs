@@ -37,21 +37,28 @@ defmodule RavixWeb.ConnectionsLiveTest do
     assert has_element?(view, "#connection-#{first.grant.id} h2", "Desktop test")
     assert has_element?(view, "#connection-#{second.grant.id} h2", "Desktop test")
 
+    # Two clients of one name are told apart by when each connected, in the
+    # heading, in the viewer's time (the `LocalTime` hook), and how long ago
+    # each was last used (the `RelativeTime` hook).
     assert has_element?(
              view,
-             "#connection-#{first.grant.id} time[datetime='2026-01-01T09:00:00.000000Z']"
+             "#connection-#{first.grant.id} h2 time#connection-#{first.grant.id}-connected[phx-hook=LocalTime][datetime='2026-01-01T09:00:00.000000Z']",
+             "Jan 1, 9:00 AM"
            )
 
-    assert has_element?(view, "#connection-#{first.grant.id}", "Not recorded yet")
+    assert has_element?(view, "#connection-#{first.grant.id}-meta", "not used yet")
+    refute has_element?(view, "#connection-#{first.grant.id}-used")
 
     assert has_element?(
              view,
-             "#connection-#{second.grant.id} time[datetime='2026-03-01T11:45:00.000000Z']"
+             "#connection-#{second.grant.id}-connected[datetime='2026-02-01T10:30:00.000000Z']",
+             "Feb 1, 10:30 AM"
            )
 
     assert has_element?(
              view,
-             "#connection-#{second.grant.id} time[datetime='2026-02-01T10:30:00.000000Z']"
+             "#connection-#{second.grant.id}-used[phx-hook=RelativeTime][data-style=ago][datetime='2026-03-01T11:45:00.000000Z']",
+             "ago"
            )
 
     assert has_element?(
@@ -72,24 +79,29 @@ defmodule RavixWeb.ConnectionsLiveTest do
     refute has_element?(view, ".connection-card")
   end
 
-  test "the old address and the bare one land on Connected apps", %{conn: conn} do
+  test "the old address lands on Connected apps, keeping its query", %{conn: conn} do
     conn = log_in_user(conn, insert_user())
     assert redirected_to(get(conn, "/settings/connections")) == "/settings/connected-apps"
-    assert redirected_to(get(conn, "/settings")) == "/settings/connected-apps"
+    assert redirected_to(get(conn, "/settings/connections?x=1")) == "/settings/connected-apps?x=1"
   end
 
-  test "an unknown personal section goes to the first one", %{conn: conn} do
-    assert {:error,
-            {:live_redirect,
-             %{to: "/settings/connected-apps", flash: %{"info" => "Settings page not found."}}}} =
-             live(log_in_user(conn, insert_user()), "/settings/nope")
-  end
-
-  test "the You menu opens personal settings", %{conn: conn} do
-    {:ok, view, _} = live(log_in_user(conn, insert_user()), "/home")
-    view |> element("#open-personal-settings") |> render_click()
+  test "Settings' nav opens Connected apps", %{conn: conn} do
+    {:ok, view, _} = live(log_in_user(conn, insert_user()), "/settings/profile")
+    view |> element("#settings-nav-connected-apps") |> render_click()
     assert_patch(view, "/settings/connected-apps")
     assert has_element?(view, "#connections-panel")
+  end
+
+  test "a connection says its client and dates, and nothing about where it came from",
+       %{conn: conn} do
+    user = insert_user()
+    {principal, _, _} = principal(user)
+    {:ok, view, _} = live(log_in_user(conn, user), "/settings/connected-apps")
+    card = view |> element("#connection-#{principal.grant.id}") |> render()
+    assert card =~ "Desktop test"
+    assert card =~ "connected"
+    assert card =~ "Disconnect"
+    refute card =~ ~r/IP address|User agent|127\.0\.0\.1/i
   end
 
   test "revoking the session leaves the connections page", %{conn: conn} do

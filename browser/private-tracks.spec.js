@@ -25,7 +25,7 @@ test('private tracks are hidden from project members until invited', async ({ pa
   await track.getByRole('button', { name: 'Options', exact: true }).click();
   await track.getByLabel('Branch name', { exact: true }).fill('secret-investigation');
   await track.getByRole('button', { name: 'Create track', exact: true }).click();
-  await expect(page.locator('.track-crumbs')).toContainText('secret-investigation');
+  await expect(page.locator('.track-crumbs')).toContainText('Secret investigation');
   await expect(page.locator('.track-crumbs')).toContainText('Private');
   const trackPath = new URL(page.url()).pathname;
 
@@ -34,14 +34,14 @@ test('private tracks are hidden from project members until invited', async ({ pa
     const guest = await guestContext.newPage();
     await signIn(guest, 'privacyguest', projectPath);
     await expect(guest.locator('#project-sections[aria-busy="false"]')).toBeAttached();
-    await expect(guest.locator('body')).not.toContainText('secret-investigation');
+    await expect(guest.locator('body')).not.toContainText(/secret.investigation/i);
     await guest.locator('#quick-jump-trigger').click();
     await guest.getByLabel('Search projects, tracks and plans').fill('secret-investigation');
     await expect(guest.locator('#search-dialog [data-jump-result]')).toHaveCount(0);
     await guest.keyboard.press('Escape');
     await guest.goto(trackPath);
     await expect(guest).toHaveURL(new RegExp(`${projectPath}$`));
-    await expect(guest.locator('body')).not.toContainText('secret-investigation');
+    await expect(guest.locator('body')).not.toContainText(/secret.investigation/i);
 
     await page.getByRole('button', { name: /^Track sharing/ }).click();
     const people = page.locator('#track-people-dialog');
@@ -49,7 +49,7 @@ test('private tracks are hidden from project members until invited', async ({ pa
     await people.getByRole('button', { name: 'Invite', exact: true }).click();
     await expect(people).toContainText('@privacyguest');
     await guest.goto(trackPath);
-    await expect(guest.locator('.track-crumbs')).toContainText('secret-investigation');
+    await expect(guest.locator('.track-crumbs')).toContainText('Secret investigation');
     await expect(guest.locator('.track-crumbs')).toContainText('Private');
   } finally {
     await guestContext.close();

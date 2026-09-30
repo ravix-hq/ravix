@@ -36,6 +36,13 @@ defmodule RavixWeb.Live.MachineDock do
   A reconnect remounts the page: the tabs are read again, each pane's hook
   asks to attach again, and the shell --- still running on the machine ---
   replays its output into it.
+
+  A machine that is asleep would not answer the attach, so a pane that asks
+  while it is (by the track's own state or the dock's status read) is held
+  while `Ravix.Tracks.wake/2` wakes it --- the inspector's Wake, with the
+  same access check --- and attached at the size it asked for once that
+  answers. A machine that stays asleep, or a new shell the machine did not
+  answer, leaves the tab in place with the way back: Wake, or Retry.
   """
   use RavixWeb, :live_component
 
@@ -77,9 +84,14 @@ defmodule RavixWeb.Live.MachineDock do
        # This person's terminal tabs on the track, each with what the page
        # last heard about it. See `shell/2`.
        shells: [],
+       # Whether this dock is waking the machine for a terminal. One wake at
+       # a time, whichever tabs are waiting on it.
+       shell_waking?: false,
        # Whether this person may open a shell (Write, ADR 0010). Hiding the
        # button is courtesy; `Ravix.Terminal` refuses a Read member anyway.
-       can_write: true
+       can_write: true,
+       # Whether the track's machine is asleep, as the page's header says.
+       asleep: false
      )}
   end
 
@@ -151,7 +163,7 @@ defmodule RavixWeb.Live.MachineDock do
     shells =
       with true <- connected?(socket),
            {:ok, tabs} <- Terminal.tabs(socket.assigns.current_user, socket.assigns.track_id) do
-        Enum.map(tabs, &%{tab: &1, status: :connecting})
+        Enum.map(tabs, &shell/1)
       else
         _ -> []
       end
@@ -168,7 +180,15 @@ defmodule RavixWeb.Live.MachineDock do
     assign(socket, shells: shells, dock: dock)
   end
 
+  # A tab as this page holds it: what it last heard, and the size its pane
+  # asked to be attached at, which is kept so a tab held while the machine
+  # wakes can be attached without asking the pane again.
+  defp shell(tab), do: %{tab: tab, status: :connecting, size: nil}
+
   defp shell_event(socket, tab_id, :ready), do: put_status(socket, tab_id, :ready)
+
+  defp shell_event(socket, tab_id, {:failed, _error}),
+    do: put_status(socket, tab_id, :no_answer)
 
   defp shell_event(socket, tab_id, :disconnected),
     do: put_status(socket, tab_id, :disconnected)
@@ -192,14 +212,82 @@ defmodule RavixWeb.Live.MachineDock do
 
   defp shell_event(socket, _tab_id, _event), do: socket
 
-  defp put_status(socket, tab_id, status) do
+  defp put_status(socket, tab_id, status), do: put_shell(socket, tab_id, &%{&1 | status: status})
+
+  defp put_shell(socket, tab_id, fun) do
     update(socket, :shells, fn shells ->
       Enum.map(shells, fn
-        %{tab: %{id: ^tab_id}} = shell -> %{shell | status: status}
+        %{tab: %{id: ^tab_id}} = shell -> fun.(shell)
         shell -> shell
       end)
     end)
   end
+
+  # Asleep by the track's own state (`asleep`, from the page), or by the
+  # dock's passive status read: a machine that is not running. Either way an
+  # attach would wait out the handshake for an answer that is not coming.
+  defp asleep?(%{assigns: %{asleep: true}}), do: true
+
+  defp asleep?(%{
+         assigns: %{machine_status: %Terminal.Status{available: false, why: :unreachable}}
+       }),
+       do: true
+
+  defp asleep?(_socket), do: false
+
+  defp attach_shell(socket, id, size) do
+    %{current_user: user, session_hash: hash, track_id: track_id} = socket.assigns
+
+    case Terminal.attach(user, hash, track_id, id, size) do
+      {:ok, _shell} -> put_status(socket, id, :connecting)
+      {:error, reason} -> shell_event(socket, id, {:ended, reason})
+    end
+  end
+
+  # Hold `id` while the machine wakes, through the inspector's own door
+  # (`Ravix.Tracks.wake/2`, Write access). Somebody who may not wake it is
+  # told it is asleep instead; `Ravix.Terminal` would refuse them the shell
+  # anyway.
+  defp wake_for(socket, id) do
+    cond do
+      not socket.assigns.can_write ->
+        put_status(socket, id, :asleep)
+
+      socket.assigns.shell_waking? ->
+        put_status(socket, id, :waking)
+
+      true ->
+        %{current_user: user, track_id: track_id} = socket.assigns
+
+        socket
+        |> put_status(id, :waking)
+        |> assign(shell_waking?: true)
+        |> scoped_async(:shell_wake, fn -> Tracks.wake(user, track_id) end)
+    end
+  end
+
+  # Awake: every tab that was held is attached at the size its pane asked
+  # for; one whose pane has not asked yet will, and is attached then.
+  defp woke(socket) do
+    socket = socket |> assign(shell_waking?: false) |> probe(awake(socket))
+
+    Enum.reduce(socket.assigns.shells, socket, fn
+      %{status: :waking, size: nil, tab: %{id: id}}, s -> put_status(s, id, :connecting)
+      %{status: :waking, size: size, tab: %{id: id}}, s -> attach_shell(s, id, size)
+      _shell, s -> s
+    end)
+  end
+
+  defp still_asleep(socket) do
+    socket = assign(socket, shell_waking?: false)
+
+    Enum.reduce(socket.assigns.shells, socket, fn
+      %{status: :waking, tab: %{id: id}}, s -> put_status(s, id, :asleep)
+      _shell, s -> s
+    end)
+  end
+
+  defp awake(socket), do: %Terminal.Status{available: true, why: nil, cwd: socket.assigns.workdir}
 
   @impl true
   def handle_event("dock", %{"name" => name}, socket) when is_map_key(@tabs, name) do
@@ -262,8 +350,9 @@ defmodule RavixWeb.Live.MachineDock do
     {:noreply,
      result(socket, Terminal.open_tab(user, id), fn s, tab ->
        s
-       |> update(:shells, &(&1 ++ [%{tab: tab, status: :connecting}]))
+       |> update(:shells, &(&1 ++ [shell(tab)]))
        |> assign(dock: {:shell, tab.id}, dock_open: true)
+       |> then(&if(asleep?(&1), do: wake_for(&1, tab.id), else: &1))
      end)}
   end
 
@@ -275,24 +364,37 @@ defmodule RavixWeb.Live.MachineDock do
       %{status: {:ended, _}} ->
         {:noreply, socket}
 
-      %{} ->
-        %{current_user: user, session_hash: hash, track_id: track_id} = socket.assigns
+      %{} = shell ->
         size = %{cols: params["cols"], rows: params["rows"]}
 
         # A reconnect remounts this component with the dock closed; the pane
         # that was in front before it says so, and is put back.
+        socket = put_shell(socket, id, &%{&1 | size: size})
+
         socket =
           if params["select"] == true,
             do: assign(socket, dock: {:shell, id}, dock_open: true),
             else: socket
 
-        case Terminal.attach(user, hash, track_id, id, size) do
-          {:ok, _shell} -> {:noreply, put_status(socket, id, :connecting)}
-          {:error, reason} -> {:noreply, shell_event(socket, id, {:ended, reason})}
+        cond do
+          # Held for a wake under way, or for somebody to press Wake.
+          shell.status in [:waking, :asleep] -> {:noreply, socket}
+          asleep?(socket) -> {:noreply, wake_for(socket, id)}
+          true -> {:noreply, attach_shell(socket, id, size)}
         end
 
       nil ->
         {:noreply, socket}
+    end
+  end
+
+  # Wake, on a tab held asleep, and Retry, on one the machine did not
+  # answer: both wake the machine (a probe, if it is already awake) and
+  # attach once it answers. Only this page's own tabs, and only those.
+  def handle_event("shell-wake", %{"id" => id}, socket) do
+    case Enum.find(socket.assigns.shells, &(&1.tab.id == id)) do
+      %{status: status} when status in [:asleep, :no_answer] -> {:noreply, wake_for(socket, id)}
+      _ -> {:noreply, socket}
     end
   end
 
@@ -329,6 +431,7 @@ defmodule RavixWeb.Live.MachineDock do
         _ ->
           {:noreply,
            assign(socket,
+             shell_waking?: false,
              exec_busy: false,
              vitals_busy?: false,
              output: [],
@@ -354,6 +457,9 @@ defmodule RavixWeb.Live.MachineDock do
   defp receive_async(:machine_status, _, socket),
     do: {:noreply, probe(socket, :unavailable)}
 
+  defp receive_async(:shell_wake, {:ok, :ok}, socket), do: {:noreply, woke(socket)}
+  defp receive_async(:shell_wake, _, socket), do: {:noreply, still_asleep(socket)}
+
   defp receive_async(:vitals, {:ok, response}, socket),
     do: {:noreply, result(assign(socket, vitals_busy?: false), response, &assign(&1, vitals: &2))}
 
@@ -376,9 +482,11 @@ defmodule RavixWeb.Live.MachineDock do
   # The probe's answer belongs to the header's machine chip, which is the
   # page's, not this strip's. A component runs in its page's process, so the
   # page hears it as a message; see `RavixWeb.TrackLive.handle_info/2`.
+  # The strip keeps its own copy too: whether a terminal must wake the
+  # machine before attaching (`asleep?/1`) is asked of it.
   defp probe(socket, status) do
     send(self(), {:machine_probe, socket.assigns.track_id, status})
-    socket
+    assign(socket, machine_status: status)
   end
 
   # Why there is nothing to show, in words. `Vitals` answers with an atom so
@@ -412,12 +520,14 @@ defmodule RavixWeb.Live.MachineDock do
   defp machine_label(_), do: "Machine"
 
   defp shell_status(:connecting), do: "Connecting to the machine…"
+  defp shell_status(:no_answer), do: "The machine didn't answer."
 
   defp shell_status(:disconnected),
     do: "The connection to this terminal dropped. Its shell may still be running."
 
   defp shell_status({:ended, message}), do: message
-  defp shell_status(_ready), do: nil
+  # Waking and asleep are the pane's whole content (`<.empty>`), not a line.
+  defp shell_status(_ready_waking_or_asleep), do: nil
 
   @impl true
   def render(assigns) do
@@ -525,8 +635,32 @@ defmodule RavixWeb.Live.MachineDock do
           hidden={@dock != {:shell, shell.tab.id}}
           class="term workspace-terminal shell-pane"
         >
+          <.empty
+            :if={shell.status in [:waking, :asleep]}
+            pane
+            status
+            busy={shell.status == :waking}
+            id={"shell-asleep-" <> shell.tab.id}
+            icon="moon"
+            title={if shell.status == :waking, do: "Waking the machine…", else: "Machine is asleep"}
+          >
+            <:action
+              :if={shell.status == :asleep && @can_write}
+              label="Wake"
+              click={JS.push("shell-wake", target: @myself, value: %{id: shell.tab.id})}
+            />
+          </.empty>
           <div :if={shell_status(shell.status)} class="shell-status" role="status">
             <span>{shell_status(shell.status)}</span>
+            <button
+              :if={shell.status == :no_answer}
+              class="ghost"
+              phx-click="shell-wake"
+              phx-target={@myself}
+              phx-value-id={shell.tab.id}
+            >
+              Retry
+            </button>
             <button
               :if={shell.status == :disconnected}
               class="ghost"

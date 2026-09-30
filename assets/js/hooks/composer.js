@@ -64,6 +64,8 @@ const DRAFT_PREFIX = "ravix.draft."
 const TYPING_EVERY = 1500
 /** How many files the `@` list shows at once. Typing more narrows it. */
 const SHOWN = 50
+/** What the `@` list says, beside a spinner, until the files arrive. */
+const SEARCHING = "Searching files…"
 
 /** The four Fountain takes, and so the four the picker offers. */
 const ACCEPTED = ["image/png", "image/jpeg", "image/gif", "image/webp"]
@@ -178,6 +180,47 @@ export function rankCommands(query, commands) {
   return starts.concat(others)
 }
 
+// Abbreviations whose full stop does not end a sentence.
+const NOT_AN_END = /\b(?:e\.g|i\.e|etc|vs|cf)\.$/i
+
+/**
+ * A command's own one-line purpose, from its description (RAV-95). Skills
+ * describe themselves to the model ("Use this skill when users are...") and
+ * the list is for a person, so: the first sentence, without a leading "Use
+ * this skill when", "Use this when" or "Use when", capitalised. Nothing is
+ * made up; with nothing left, the command's name.
+ */
+export function purpose(description, name) {
+  const text = String(description ?? "").replace(/\s+/g, " ").trim()
+  let first = text
+  for (const end of text.matchAll(/[.!?](?=\s|$)/g)) {
+    const upTo = text.slice(0, end.index + 1)
+    if (!NOT_AN_END.test(upTo)) {
+      first = upTo
+      break
+    }
+  }
+  const rest = first
+    .replace(/^use (?:this skill |this )?when\b[\s,:;-]*/i, "")
+    .replace(/[.!?]$/, "")
+    .trim()
+  if (!/[\p{L}\p{N}]/u.test(rest)) return name
+  return rest[0].toUpperCase() + rest.slice(1)
+}
+
+/**
+ * Bring `option` into view inside `list` and nowhere else. `scrollIntoView`
+ * scrolls every scroller around it too, and the list floats over the
+ * transcript: opening it must not move what somebody is reading (RAV-95).
+ */
+function reveal(list, option) {
+  if (!list || !option) return
+  const top = option.offsetTop
+  const bottom = top + option.offsetHeight
+  if (top < list.scrollTop) list.scrollTop = top
+  else if (bottom > list.scrollTop + list.clientHeight) list.scrollTop = bottom - list.clientHeight
+}
+
 /** ⌘L on a Mac, Ctrl+L elsewhere. */
 export function shortcutLabel(platform = navigator.userAgentData?.platform || navigator.platform || "") {
   return /mac|iphone|ipad/i.test(platform) ? "⌘L" : "Ctrl+L"
@@ -289,6 +332,11 @@ export const Composer = {
       if (suggestion) {
         e.preventDefault()
         if (suggestion.getAttribute("aria-disabled") !== "true") this.pick(Number(suggestion.dataset.index))
+        return
+      }
+      // The list's own padding or edge: the caret stays in the box.
+      if (e.target.closest?.("[data-composer-suggestions]")) {
+        e.preventDefault()
         return
       }
       const option = e.target.closest?.("[data-mention-options] [role=option]")
@@ -488,7 +536,7 @@ export const Composer = {
     if (this.active) this.active.setAttribute("aria-selected", "false")
     this.active = option
     option.setAttribute("aria-selected", "true")
-    option.scrollIntoView?.({block: "nearest"})
+    reveal(this.mentions(), option)
     this.el.setAttribute("aria-activedescendant", option.id)
   },
 
@@ -559,17 +607,18 @@ export const Composer = {
         this.filesAsked = true
         this.pushEvent(this.el.dataset.filesEvent, {})
       }
-      status = "Searching files…"
+      status = SEARCHING
     } else if (this.files.error) {
       status = this.files.error
     } else {
       items = rankFiles(found.query, this.files.paths)
-      if (!items.length) status = found.query ? "No files match." : "No files in this track yet."
+      if (!items.length) status = found.query ? "No files match" : "No files in this track yet"
     }
     const same = this.suggestion?.kind === found.kind && this.suggestion.start === found.start
     const keep = same && this.suggestion.items[this.suggestion.active]
     const active = keep ? Math.max(0, items.findIndex(i => itemKey(i) === itemKey(keep))) : 0
     this.suggestion = {...found, items, status, active: items.length ? active : -1}
+    this.searching = status === SEARCHING
     this.renderSuggestions(menu)
   },
 
@@ -595,8 +644,11 @@ export const Composer = {
         marked(name, item.command.name, item.marks)
         const about = document.createElement("span")
         about.className = "dim"
-        about.textContent = [item.command.description, item.command.hint && `(${item.command.hint})`]
+        const described = item.command.description && purpose(item.command.description, item.command.name)
+        about.textContent = [described, item.command.hint && `(${item.command.hint})`]
           .filter(Boolean).join(" ")
+        // The whole description is still there, for whoever wants it.
+        if (item.command.description) li.title = item.command.description
         li.append(name, about)
         if (item.command.source === "ravix") {
           const source = document.createElement("span")
@@ -613,16 +665,24 @@ export const Composer = {
       li.setAttribute("role", "option")
       li.setAttribute("aria-disabled", "true")
       li.setAttribute("aria-selected", "false")
-      li.textContent = status || "Not every file was searched. Type more of the path to narrow it."
+      if (this.searching) {
+        const spinner = document.createElement("span")
+        spinner.className = "suggestion-spinner"
+        spinner.setAttribute("aria-hidden", "true")
+        li.append(spinner)
+      }
+      li.append(status || "Not every file was searched. Type more of the path to narrow it.")
       options.push(li)
     }
     menu.replaceChildren(...options)
     menu.setAttribute("aria-label", kind === "files" ? "Files to mention" : "Commands")
+    if (this.searching) menu.setAttribute("aria-busy", "true")
+    else menu.removeAttribute("aria-busy")
     menu.hidden = false
     const current = options[active]
     if (current) {
       this.el.setAttribute("aria-activedescendant", current.id)
-      current.scrollIntoView?.({block: "nearest"})
+      reveal(menu, current)
     } else {
       this.el.removeAttribute("aria-activedescendant")
     }
@@ -689,6 +749,7 @@ export const Composer = {
     const menu = this.suggestions()
     if (menu) menu.hidden = true
     menu?.replaceChildren()
+    menu?.removeAttribute("aria-busy")
     this.el.removeAttribute("aria-activedescendant")
   },
 

@@ -48,7 +48,7 @@ defmodule RavixWeb.SettingsFrameTest do
 
   describe "the section lists" do
     test "name every section once, open on the first, and title a page" do
-      assert Settings.first(:personal) == "connected-apps"
+      assert Settings.first(:personal) == "profile"
       assert Settings.first(:workspace) == "general"
       assert Settings.first(:project) == "general"
       assert Settings.section?(:project, "machine")

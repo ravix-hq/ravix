@@ -95,6 +95,9 @@
         </button>
       </div>
       <div id="account-menu" class="account-menu" popover aria-label="You">
+        <%!-- Quick toggles, then Settings (RAV-77): Profile, Agents,
+          Notifications, Appearance and Connected apps are its pages. The two
+          toggles and their pages' switches keep each other current. --%>
         <.theme_picker id="theme-picker" />
         <div id="notify" phx-hook="Notify" class="notify">
           <button
@@ -114,27 +117,14 @@
         <button
           type="button"
           class="account-item"
-          id="open-account"
-          popovertarget="account-menu"
-          popovertargetaction="hide"
-          phx-click={JS.push_focus(to: "#account-trigger") |> JS.push("dialog")}
-          phx-value-name="account"
-        >
-          <.icon name="person" size={14} />Account
-        </button>
-        <button
-          type="button"
-          class="account-item"
           id="open-personal-settings"
           popovertarget="account-menu"
           popovertargetaction="hide"
-          phx-click={JS.patch("/settings/connected-apps")}
+          phx-click={JS.patch(Settings.section_path(:personal, nil, Settings.first(:personal)))}
+          data-leaves-page
         >
           <.icon name="settings" size={14} />Settings
         </button>
-        <a class="account-item" href="/api/auth/install">
-          <.icon name="github" size={14} />Repository access
-        </a>
         <button
           type="button"
           class="account-item"
@@ -346,6 +336,8 @@
                       id={"project-menu-trigger-#{project.id}"}
                       class="project-action"
                       aria-label={"More for #{project.display_name}"}
+                      aria-haspopup="menu"
+                      aria-expanded="false"
                       title="More"
                       popovertarget={"project-menu-#{project.id}"}
                     >
@@ -458,15 +450,13 @@
                       aria-current={if @track_id == track.id, do: "page"}
                       data-label={tab_name(track)}
                       aria-label={row_label(track, tab_name(track))}
-                      title={track.title}
+                      title={Track.tooltip(track)}
                     >
                       <.status_slot track={track} />
                       <.creator track={track} />
-                      <span class="track-title">{tab_label(track)}</span>
-                      <span :if={track.visibility == :private} class="track-private">
-                        <.icon name="lock" /> Private
-                      </span>
-                      <.age id={"track-age-#{track.id}"} at={track.activity_at} />
+                      <span class="track-title">{Track.label(track)}</span>
+                      <.private_mark :if={track.visibility == :private} />
+                      <.meta_slot track={track} />
                     </.link>
                     <div :if={MapSet.member?(@track_errors, project.id)} role="status">
                       <p class="hint">Couldn't load tracks</p>
@@ -511,19 +501,19 @@
                         >
                           <span class="track-status" aria-hidden="true"></span>
                           <.creator track={track} />
-                          <span class="track-title truncate" title={track.title}>
-                            {tab_label(track)}<span class="sr-only">, closed</span>
+                          <span class="track-title truncate" title={Track.tooltip(track)}>
+                            {Track.label(track)}<span class="sr-only">, closed</span>
                           </span>
-                          <span :if={track.visibility == :private} class="track-private">
-                            <.icon name="lock" /> Private
+                          <.private_mark :if={track.visibility == :private} />
+                          <span class="track-meta">
+                            <.age id={"closed-track-age-#{track.id}"} at={track.activity_at} />
                           </span>
-                          <.age id={"closed-track-age-#{track.id}"} at={track.activity_at} />
                           <button
                             :if={reopenable?(project)}
                             type="button"
                             id={"reopen-track-#{track.id}"}
                             class="ghost"
-                            aria-label={"Reopen #{track.title}"}
+                            aria-label={"Reopen #{Track.label(track)}"}
                             phx-click={JS.push_focus() |> JS.push("reopen-track")}
                             phx-value-track={track.id}
                           >Reopen</button>
@@ -563,15 +553,21 @@
           type="button"
           id="account-trigger"
           class="yard-account"
-          aria-label={"You" <> if(@changes_unseen > 0, do: ", #{@changes_unseen} new in What's new", else: "")}
-          title="You"
+          aria-label={"You" <> unseen_note(@changes_unseen, ", ")}
+          title={"You" <> unseen_note(@changes_unseen, " · ")}
           popovertarget="account-menu"
         >
+          <%!-- The gear's dot (RAV-96): What's new has entries this person
+            has not opened, and opening it clears the dot. The button's name
+            and tooltip both say so. --%>
           <span class="account-icon">
             <.icon name="settings" size={18} />
-            <span :if={@changes_unseen > 0} class="account-unseen" id="account-unseen">
-              <span class="sr-only">, {@changes_unseen} new in What's new</span>
-            </span>
+            <span
+              :if={@changes_unseen > 0}
+              class="account-unseen"
+              id="account-unseen"
+              aria-hidden="true"
+            ></span>
           </span>
           <span class="yard-who">
             <strong class="truncate">You</strong><small class="truncate">@{@current_user.login}</small>
@@ -773,7 +769,7 @@
             <ul class="first-prompt-recent">
               <li :for={track <- Enum.take(@tracks[@project.id], 5)}>
                 <.link patch={"/p/#{@project.id}/t/#{track.id}"}>
-                  <strong>{track.title}</strong> <code class="dimmer">{track.branch}</code>
+                  <strong title={Track.tooltip(track)}>{Track.label(track)}</strong>
                 </.link>
               </li>
             </ul>
@@ -973,11 +969,8 @@
                     zone={@timezone}
                   />
                 </div>
-                <strong>{track.title}</strong>
-                <span :if={track.visibility == :private}><.icon name="lock" /> Private</span><code
-                  :if={track.branch != track.title}
-                  class="dimmer"
-                >{track.branch}</code>
+                <strong title={Track.tooltip(track)}>{Track.label(track)}</strong>
+                <span :if={track.visibility == :private}><.icon name="lock" /> Private</span>
                 <span class="dim">
                   <%= cond do %>
                     <% billing_attention?(track) -> %>

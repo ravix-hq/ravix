@@ -63,7 +63,7 @@ defmodule RavixWeb.TrackLive do
   alias Ravix.GitHub.ChecksReport
   alias Ravix.{Hub, Previews, PromptQueue, SessionConfig, Terminal, Tracks}
   alias Ravix.Hub.Event
-  alias Ravix.Tracks.{AgentFailure, Diff, Files, Follower, MachineState}
+  alias Ravix.Tracks.{AgentFailure, Diff, Files, Follower, MachineState, Track}
   alias Ravix.Tracks.Transcript
   alias Ravix.Tracks.Transcript.Block, as: TranscriptBlock
   alias Ravix.Tracks.Transcript.Commands

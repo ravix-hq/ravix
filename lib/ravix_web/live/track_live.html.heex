@@ -28,9 +28,10 @@
       where anything that arrives late (the plan chip) or changes length
       (the machine's state) lives, so it grows into the spacer and never
       moves the title. When the strip is short the status chips give way
-      first, down to their icon or count, then the branch, and the title
-      last; see "the track's own header" in app.css, and HeaderFit for
-      why a chip's words show whole or not at all. --%>
+      first, down to their icon or count, and the title last; see "the
+      track's own header" in app.css, and HeaderFit for why a chip's words
+      show whole or not at all. The track is named by `Track.label/1` alone:
+      its branch is in the ribbon below, not repeated here (RAV-83). --%>
     <header id="track-header" class="crumbs track-crumbs" phx-hook="HeaderFit">
       <div class="track-header-path">
         <.link
@@ -45,26 +46,19 @@
         <span class="dimmer" aria-hidden="true">›</span>
         <button
           :if={owner_or_creator?(@current_user, @track)}
-          class={["ghost track-title-crumb", !fits?(@track.title, 16) && "long"]}
+          class={["ghost track-title-crumb", !fits?(Track.label(@track), 16) && "long"]}
           phx-click={JS.push_focus() |> JS.push("dialog")}
           phx-value-name="rename"
           title="Rename track"
-          aria-label={"Rename track: #{@track.title}"}
+          aria-label={"Rename track: #{Track.label(@track)}"}
         >
-          {@track.title}
+          {Track.label(@track)}
         </button>
         <strong
           :if={!owner_or_creator?(@current_user, @track)}
-          class={["track-title-crumb", !fits?(@track.title, 16) && "long"]}
-          title={@track.title}
-        >{@track.title}</strong>
-        <%!-- A new track is titled with its branch, so the chip appears only
-          once the two say different things: after a rename, say. --%>
-        <span
-          :if={@track.branch != @track.title}
-          class="chip mono track-branch"
-          title={@track.branch}
-        >{@track.branch}</span>
+          class={["track-title-crumb", !fits?(Track.label(@track), 16) && "long"]}
+          title={Track.tooltip(@track)}
+        >{Track.label(@track)}</strong>
       </div>
       <span class="spacer"></span>
       <div class="track-header-status">
@@ -480,7 +474,14 @@
             }
             refresh={@health_refresh}
           />
-          <p :for={person <- Enum.filter(@present, & &1.typing)} class="hint">
+          <%!-- Other people only: presence counts you too, and "@you is
+            typing…" was an `@` beside the composer's popovers (RAV-95). --%>
+          <p
+            :for={
+              person <- Enum.filter(@present, &(&1.typing and &1.login != @current_user.login))
+            }
+            class="hint"
+          >
             @{person.login} is typing…
           </p>
           <%!-- `phx-change` is what `allow_upload/3` needs to see an image
@@ -587,6 +588,9 @@
               </ul>
               <%!-- Ask mode's `@` files and `/` commands. The hook fills the
                 list, names it and opens it, so the server leaves it alone.
+                It scrolls past eight rows, so it is focusable, as a scroller
+                must be; while it is open the box keeps focus (Tab there
+                picks a row) and drives it by `aria-activedescendant`.
                 Open is `hidden` rather than a `data-` flag: a patch strips
                 any `data-` attribute from an ignored element that the
                 template does not have, and keeps the rest. --%>
@@ -596,6 +600,7 @@
                 class="mention-options composer-suggestions"
                 role="listbox"
                 aria-label="Suggestions"
+                tabindex="0"
                 phx-update="ignore"
                 hidden
                 data-composer-suggestions
@@ -1047,6 +1052,10 @@
           current_user={@current_user}
           session_hash={@session_hash}
           can_write={@track.level != :read}
+          asleep={
+            probed(machine(@track, @threads, @thread_states, @setup_now), @machine_probe, @track).state ==
+              :asleep
+          }
         />
       </aside>
     </div>
