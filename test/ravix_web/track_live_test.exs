@@ -3778,7 +3778,8 @@ defmodule RavixWeb.TrackLiveTest do
 
   test "the inspector widens while one file's diff is open", ctx do
     refute has_element?(ctx.view, "#inspector.diff-open")
-    expect(Tracks, :diff, fn _, _ -> {:ok, changes_fixture()} end)
+    # Two reads: the first visit, and the refresh behind the second.
+    expect(Tracks, :diff, 2, fn _, _ -> {:ok, changes_fixture()} end)
     render_click(ctx.view, "panel", %{name: "changes"})
     render_async(ctx.view, 1_000)
     refute has_element?(ctx.view, "#inspector.diff-open")
