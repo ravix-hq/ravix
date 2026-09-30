@@ -1509,6 +1509,7 @@ section.first-prompt#project-start { align-self: center; padding: 32px 24px; }
 .first-prompt-recent strong { font-weight: 500; }
 .workspace-home .first-prompt h1 { margin: 0; }
 .welcome-quick-start { margin-top: 16px; }
+.first-prompt-alt { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 0; }
 
 /* The compact agent step: a card per agent, and the rest behind Manage. */
 .agent-cards { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }

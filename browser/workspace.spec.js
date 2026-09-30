@@ -329,10 +329,10 @@ test('home quick start creates a scratch project and recent navigation survives 
   await expect(page.getByRole('button', { name: /Open a local project/ })).toHaveCount(0);
   await accessible(page);
   await capture(page, 'home-empty');
-  // With no project yet, /home is the first-prompt form (first-run.spec.js);
-  // a project without a track is still one rail button away.
+  // With no project yet, /home is the first-prompt form (first-run.spec.js),
+  // with New project still there for a project without a track.
   await expect(page.locator('#home-start')).toBeVisible();
-  await page.getByRole('button', { name: 'Add a project', exact: true }).first().click();
+  await page.getByRole('button', { name: /^New project/ }).click();
   await page.getByLabel('Project name', { exact: true }).fill('Quick start quality');
   const repository = page.getByLabel('Repository', { exact: true });
   await expect(repository).toHaveValue('');

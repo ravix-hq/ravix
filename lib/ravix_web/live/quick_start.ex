@@ -289,7 +289,7 @@ defmodule RavixWeb.Live.QuickStart do
             field={f[:target]}
             id={"#{@id}-target"}
             type="select"
-            label="Repository"
+            label="Work in"
             prompt={if f[:target].value in [nil, ""], do: "Choose a repository…"}
             options={Enum.map(@groups, fn {group, options} -> {group, options} end)}
             disabled={@busy}

@@ -733,6 +733,16 @@
               busy={@quick_busy}
             />
             <QuickStart.explainer id="home-explainer" />
+            <p class="hint first-prompt-alt">
+              <button
+                class="ghost home-action"
+                phx-click={JS.push_focus() |> JS.push("dialog")}
+                phx-value-name="new-project"
+              >
+                <.icon name="plus" size={14} class="ico" /> New project
+              </button>
+              to add a repository without starting a track yet.
+            </p>
           </section>
           <div
             :if={!@rail_loaded || !fresh_start?(@projects)}

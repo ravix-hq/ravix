@@ -21,6 +21,18 @@ defmodule RavixWeb.FirstRunTest do
     stub(Ravix.Fountain, :client, fn -> Client.new("https://fountain.test", "key") end)
     stub(Ravix.MachineCache, :conversations, fn _, _, _ -> {:ok, []} end)
     stub(Accounts, :capabilities, fn -> %{github: true} end)
+    # The rail from the database alone, and no provider health read: neither
+    # is what these tests are about, and both would otherwise ask the
+    # (unreachable) fake-hosted Fountain on every mount.
+    stub(Tracks, :list_many, fn user, ids, opts ->
+      Map.new(ids, fn id ->
+        {:ok, rows} = Tracks.list(user, id, opts)
+        {id, rows}
+      end)
+    end)
+
+    stub(Projects, :agent_health, fn _, _ -> {:error, :not_asked} end)
+    stub(Tracks, :agent_health, fn _, _, _ -> {:error, :not_asked} end)
     stub_track_page()
     :ok
   end
