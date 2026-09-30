@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
 import { signIn, connectClaude } from './sign-in.js';
-import { chooseDraft, draftChoice, draftModelLabel, draftModels, draftPill } from './draft-runtime.js';
+import { chooseDraft, draftChoice, draftModelLabel, draftModels, draftPill, newThread } from './draft-runtime.js';
 
 // RAV-30: "+" adds a draft tab on the person's default agent and model; the
 // first message creates the thread and sends that prompt as one step.
@@ -31,7 +31,7 @@ test('a draft thread becomes a real thread with its first message running, wide 
   ]) {
     await page.setViewportSize({ width, height: 900 });
     await expect(composer).toBeEnabled({ timeout: 30_000 });
-    await tabs.getByRole('button', { name: 'Add thread', exact: true }).click();
+    await newThread(page);
     const draft = page.locator('#draft-runtime');
     await expect(page.locator('#new-thread-dialog')).toHaveCount(0);
     await expect(page.locator('#draft-thread-empty')).toContainText('Your first message starts this thread.');

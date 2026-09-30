@@ -2,7 +2,7 @@ import { test, expect } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
 import { signIn } from './sign-in.js';
 import { connectApiKey } from './settings.js';
-import { chooseDraft, draftChoice, draftModels, draftPill } from './draft-runtime.js';
+import { chooseDraft, draftChoice, draftModels, draftPill, newThread } from './draft-runtime.js';
 
 const mock = `http://localhost:${process.env.MOCK_PORT || 8893}`;
 
@@ -30,7 +30,7 @@ test('cohort threads attach the other runtime to the home disk and reuse its pro
     await track.getByRole('button', { name: 'Create track', exact: true }).click();
     await expect(page.getByRole('textbox', { name: 'Message', exact: true })).toBeEnabled({ timeout: 30_000 });
     // Readiness is durable; the live-region announcement only describes new stream events.
-    await expect(page.getByRole('button', { name: 'Add thread', exact: true })).toBeEnabled({ timeout: 30_000 });
+    await expect(page.getByRole('button', { name: 'New thread or terminal', exact: true })).toBeEnabled({ timeout: 30_000 });
     await expect(page.locator('#track-setup-status')).toHaveCount(0);
     const homeAgent = (await list('agents')).find(a => a.metadata?.ravix?.project === projectId);
     expect(homeAgent.runtime).toBe(home);
@@ -38,7 +38,7 @@ test('cohort threads attach the other runtime to the home disk and reuse its pro
     expect(homeConversation.sandbox_id).toBeTruthy();
     let guestAgentId;
     for (let n = 1; n <= 2; n++) {
-      await page.getByRole('button', { name: 'Add thread', exact: true }).click();
+      await newThread(page);
       const form = page.locator('#draft-runtime');
       const draftTab = page.locator('#thread-tab-draft');
       // All-dedicated projects use the saved project default for each new thread.

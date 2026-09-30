@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { newThread } from './draft-runtime.js';
 import AxeBuilder from '@axe-core/playwright';
 import { composerFixture } from './composer-fixture.js';
 import { signIn as signInAs, connectClaude } from './sign-in.js';
@@ -738,7 +739,7 @@ test('project, track, streaming, image upload, reconnect, and revocation', async
   const threadTab = id => threadTabs.locator(`button[data-thread-id="${id}"]`);
   const defaultThread = await currentThread.getAttribute('data-thread-id');
   const threadCount = await threadTabs.locator('.thread-tab').count();
-  await threadTabs.getByRole('button', { name: 'Add thread', exact: true }).click();
+  await newThread(page);
   await expect(currentThread).toHaveAttribute('data-thread-id', 'draft');
   await expect(page.locator('#draft-thread-empty')).toContainText('Your first message starts this thread.');
   await expect(composer).toHaveValue('');

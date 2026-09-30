@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test';
 import { signIn, connectClaude } from './sign-in.js';
 import { openAgentSettings } from './settings.js';
-import { draftChoice } from './draft-runtime.js';
+import { draftChoice, newThread } from './draft-runtime.js';
 
 // The chip is "<agent> · <model>", then the runtime's effort and Fast once a
 // turn has reported them (RAV-52); this spec is about the model part. A turn
@@ -40,7 +40,7 @@ test('an account default selects the model for a new thread and leaves the exist
   await page.goBack();
   await page.goBack();
   await expect(page).toHaveURL(trackURL);
-  await tabs.getByRole('button', { name: 'Add thread', exact: true }).click();
+  await newThread(page);
   const draft = page.locator('#draft-runtime');
   await expect(draftChoice(page, 'model')).toHaveValue(selected.value.split('|')[1]);
   await expect(page.locator('#draft-runtime-menu label:has(input:checked)', { hasText: 'Your default' })).toHaveCount(1);
@@ -57,7 +57,7 @@ test('an account default selects the model for a new thread and leaves the exist
   await expect(page.locator('.model-default-hint')).toHaveText('Also your default for new threads');
   await page.locator('#model-menu [phx-value-model=""]').click();
   await chipModel(page).toBe(originalModel);
-  await tabs.getByRole('button', { name: 'Add thread', exact: true }).click();
+  await newThread(page);
   await expect(draftChoice(page, 'model')).not.toHaveValue(selected.value.split('|')[1]);
   await tabs.getByRole('button', { name: 'Discard new thread', exact: true }).click();
   await expect(draft).toHaveCount(0);

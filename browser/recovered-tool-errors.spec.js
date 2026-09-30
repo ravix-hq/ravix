@@ -16,7 +16,7 @@ test('recovered tool errors are muted while expanded errors retain their status'
     .getByRole('button', { name: 'Create track', exact: true }).click();
   const composer = page.getByRole('textbox', { name: 'Message', exact: true });
   await expect(composer).toBeEnabled({ timeout: 30_000 });
-  await expect(page.getByRole('button', { name: 'Add thread', exact: true }))
+  await expect(page.getByRole('button', { name: 'New thread or terminal', exact: true }))
     .toBeEnabled({ timeout: 60_000 });
   await expect(page.locator('#track-setup-status')).toHaveCount(0, { timeout: 45_000 });
   const mock = `http://localhost:${process.env.MOCK_PORT || 8893}`;
