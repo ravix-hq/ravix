@@ -133,7 +133,7 @@ defmodule RavixWeb.CreatorBillingLiveTest do
 
     assert has_element?(
              view,
-             "#thread_draft-runtime option[value=codex][disabled]",
+             "#draft-runtime-menu label:has(input[name=\"thread_draft[runtime]\"][value=codex][disabled])",
              "@#{ctx.creator.login} hasn't connected Codex"
            )
 

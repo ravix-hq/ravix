@@ -84,7 +84,7 @@
           summary={@assigned_plan}
         />
         <.machine_chip machine={
-          probed(machine(@track, @threads, @thread_states, @setup_now), @machine_probe, @track)
+          probed(machine(@track, @turn, @setup_now), @machine_probe, @track)
         } />
       </div>
       <button
@@ -194,7 +194,7 @@
           `assets/js/hooks/transcript_tail.js`. --%>
         <.thread_tabs
           threads={@threads}
-          states={@thread_states}
+          states={@turn.states}
           thread_id={@thread_id}
           draft={@thread_draft}
           adding={@track.sandbox_layout == :dedicated and @track.sandbox_state != :ready}
@@ -243,9 +243,8 @@
           >
             <span class="empty-icon"><.icon name="sparkle" size={22} /></span>
             <h2>New thread</h2>
-            <p>Your first message starts this thread.</p>
-            <p class="hint">
-              Threads share this checkout and can run concurrently. Coordinate edits to avoid collisions.
+            <p class="dim">
+              Your first message starts this thread. It shares this checkout with the others.
             </p>
           </div>
           <button
@@ -365,26 +364,37 @@
             </div>
           </div>
         </div>
-        <div :if={!@thread_draft[:selected?] && @queue != []} class="workspace-queue">
-          <div :for={item <- @queue}>
+        <%!-- RAV-94: each waiting prompt is one compact row above the
+          composer --- its state, its first lines, and why it waits --- with
+          its actions at the end, rather than a loose stack of each. --%>
+        <ol
+          :if={!@thread_draft[:selected?] && @queue != []}
+          class="workspace-queue"
+          aria-label="Queued prompts"
+        >
+          <li :for={item <- @queue} class="queue-item">
             <span class="chip">{queue_label(item.status)}</span>
-            <div :if={item.prompt} class="queue-prompt md">{queue_prompt_html(item.prompt)}</div>
-            <p
-              :if={
-                item.status == :queued and @track.setup_state != "ready" and
-                  is_nil(queue_feedback(item, @track.runtime || @project.runtime))
-              }
-              class="queue-starts"
-            >
-              Starts when setup is ready
-            </p>
-            <p
-              :if={queue_feedback(item, @track.runtime || @project.runtime)}
-              class="queue-feedback"
-            >
-              {queue_feedback(item, @track.runtime || @project.runtime)}
-            </p>
-            <span :if={item.error && item.status != :queued}>{item.error}</span>
+            <div class="queue-body">
+              <div :if={item.prompt} class="queue-prompt md">
+                {queue_prompt_html(item.prompt)}
+              </div>
+              <p
+                :if={
+                  item.status == :queued and @track.setup_state != "ready" and
+                    is_nil(queue_feedback(item, @track.runtime || @project.runtime))
+                }
+                class="queue-starts"
+              >
+                Starts when setup is ready
+              </p>
+              <p
+                :if={queue_feedback(item, @track.runtime || @project.runtime)}
+                class="queue-feedback"
+              >
+                {queue_feedback(item, @track.runtime || @project.runtime)}
+              </p>
+              <p :if={item.error && item.status != :queued} class="queue-error">{item.error}</p>
+            </div>
             <button
               :if={item.can_cancel}
               class="ghost"
@@ -403,8 +413,8 @@
             >
               Retry
             </button>
-          </div>
-        </div>
+          </li>
+        </ol>
         <%!-- The one thing a reader who is not looking should hear: a turn
           ended. Polite, so it waits for whatever is being read; visually
           hidden, because the transcript already shows it. --%>
@@ -470,15 +480,13 @@
           <button type="button" class="ghost" phx-click="dismiss-billing-notice">Got it</button>
         </div>
         <.loading_status :if={:retry in @pending}>Retrying track…</.loading_status>
-        <.loading_status :if={@thread_draft[:selected?] && :thread_options in @pending}>
-          Loading agents…
-        </.loading_status>
         <RavixWeb.Live.ThreadConnect.panel
           :if={@thread_draft[:selected?]}
           options={@thread_draft.options}
           connection={@thread_connect}
           current_user={@current_user}
           session_hash={@session_hash}
+          buttons={false}
         />
         <p :if={@thread_error} id="thread-error" role="alert">{@thread_error}</p>
         <.loading_status :if={:start_thread in @pending}>Starting thread…</.loading_status>
@@ -528,6 +536,9 @@
             the agent, so the whole box says which one it is: its colour, its
             placeholder, its accessible name and the send button's. Images
             are for prompts; any already attached wait for Ask agent. --%>
+          <%!-- RAV-94: Ask agent / Comment switches in the browser the moment
+            it is pressed (the `Composer` hook), and the server's render
+            catches up; the textarea's `data-mode` is what the server said. --%>
           <form id="composer-form" phx-submit="send" phx-change="validate">
             <div
               class={["composer-box", @composer_mode == :comment && "commenting"]}
@@ -541,13 +552,6 @@
               >
                 <.icon name="person" size={12} />You have Read access. Ask an admin for Write to send prompts; you can still comment.
               </p>
-              <p
-                :if={@composer_mode == :comment}
-                id="composer-mode-hint"
-                class="composer-mode-hint"
-              >
-                <.icon name="person" size={12} />Comment — not sent to the agent
-              </p>
               <textarea
                 :if={@thread_draft[:selected?]}
                 id={"composer-draft-#{@thread_draft.id}"}
@@ -555,7 +559,7 @@
                 name="text"
                 rows="2"
                 phx-debounce="blur"
-                placeholder="Start a new thread. @mention files…"
+                placeholder="Start a new thread, @mention files"
                 aria-label="Message"
                 aria-autocomplete="list"
                 aria-controls="composer-suggestions"
@@ -573,7 +577,24 @@
                 name="text"
                 rows="2"
                 phx-debounce="blur"
-                placeholder={composer_placeholder(@composer_mode, @page)}
+                placeholder={
+                  composer_placeholder(
+                    @composer_mode,
+                    @page,
+                    @turn.running?
+                  )
+                }
+                data-placeholder-ask={
+                  composer_placeholder(
+                    :ask,
+                    @page,
+                    @turn.running?
+                  )
+                }
+                data-placeholder-comment={composer_placeholder(:comment, @page, false)}
+                data-ask-disabled={
+                  to_string(is_nil(@track.conversation_id) or @track.level == :read)
+                }
                 aria-label={if @composer_mode == :comment, do: "Comment", else: "Message"}
                 aria-describedby={
                   (@composer_mode == :comment && "composer-mode-hint") ||
@@ -596,7 +617,7 @@
                     Jason.encode!(
                       composer_commands(
                         @agent_commands,
-                        turn_running?(@threads, @thread_states, @thread_id, @track),
+                        @turn.running?,
                         @pending
                       )
                     )
@@ -697,6 +718,7 @@
                     aria-pressed={to_string(@composer_mode == :ask)}
                     phx-click="composer-mode"
                     phx-value-mode="ask"
+                    data-composer-mode="ask"
                   >
                     Ask agent
                   </button>
@@ -706,40 +728,61 @@
                     aria-pressed={to_string(@composer_mode == :comment)}
                     phx-click="composer-mode"
                     phx-value-mode="comment"
+                    data-composer-mode="comment"
                   >
                     Comment
                   </button>
                 </div>
+                <%!-- In the row, where the model is in Ask mode, so switching
+                  never grows the box. Drawn in both modes and shown by the
+                  box's `commenting` class, which the browser sets at once. --%>
+                <p
+                  :if={!@thread_draft[:selected?]}
+                  id="composer-mode-hint"
+                  class="composer-mode-hint"
+                >
+                  <.icon name="person" size={12} /><span>Comment — not sent to the agent</span>
+                </p>
                 <button
                   :if={@composer_mode == :ask}
                   type="button"
-                  class="ghost"
+                  class="ghost composer-ask-only composer-attach"
                   aria-label="Choose images"
                   phx-click={JS.dispatch("click", to: "##{@uploads.images.ref}")}
                 >
                   <.icon name="picture" size={17} />
                 </button>
-                <%!-- A draft's agent is still open, so it offers both; once the
-                  thread exists only the model changes. The picks are part of
-                  this form, and each change arrives as `validate`. --%>
-                <div
+                <%!-- A draft's agent is still open, so its pill offers both
+                  (RAV-80); once the thread exists only the model changes. It
+                  sits where the model pill does, and is the composer's pill:
+                  the picks are radios of this form, and each change arrives
+                  as `validate`. --%>
+                <RavixWeb.Live.RuntimePicker.menu
                   :if={@thread_draft[:selected?] && @thread_draft.options}
                   id="draft-runtime"
-                  class="draft-runtime"
-                >
-                  <RavixWeb.Live.RuntimePicker.fields
-                    options={@thread_draft.options}
-                    params={
-                      %{
-                        "runtime" => @thread_draft.runtime,
-                        "model" => @thread_draft.model,
-                        "preference_explicit" => to_string(@thread_draft.explicit?)
-                      }
+                  options={@thread_draft.options}
+                  params={
+                    %{
+                      "runtime" => @thread_draft.runtime,
+                      "model" => @thread_draft.model,
+                      "preference_explicit" => to_string(@thread_draft.explicit?)
                     }
-                    name="thread_draft"
-                  />
-                  <p class="hint draft-default-hint">Also your default for new threads</p>
-                </div>
+                  }
+                  name="thread_draft"
+                  form="composer-form"
+                  class="composer-model model-trigger"
+                  hint="Also your default for new threads"
+                  connect
+                  disabled={:start_thread in @pending}
+                />
+                <span
+                  :if={@thread_draft[:selected?] && :thread_options in @pending}
+                  id="draft-runtime-loading"
+                  class="composer-model dim"
+                  role="status"
+                >
+                  Loading agents…
+                </span>
                 <.model_menu
                   :if={!@thread_draft[:selected?] && @composer_mode == :ask}
                   runtime={@track.runtime || @project.runtime}
@@ -756,7 +799,7 @@
                       :model in @pending or @track.level == :read
                   }
                   busy={
-                    turn_running?(@threads, @thread_states, @thread_id, @track) and
+                    @turn.running? and
                       @track.level != :read
                   }
                 /><span class="spacer"></span>
@@ -779,7 +822,7 @@
                 <button
                   :if={
                     !@thread_draft[:selected?] &&
-                      turn_running?(@threads, @thread_states, @thread_id, @track) &&
+                      @turn.running? &&
                       @track.level != :read
                   }
                   id="composer-stop"
@@ -795,7 +838,7 @@
                 <button
                   :if={
                     @thread_draft[:selected?] || @track.level == :read ||
-                      !turn_running?(@threads, @thread_states, @thread_id, @track) ||
+                      !@turn.running? ||
                       composer_filled?(
                         @composer_empty?,
                         @composer_mode,
@@ -926,7 +969,7 @@
           </button>
         </nav>
         <div class="workspace-panel">
-          <%= case inspector_state(@track, machine(@track, @threads, @thread_states, @setup_now), @panel) do %>
+          <%= case inspector_state(@track, machine(@track, @turn, @setup_now), @panel) do %>
             <% {:setup, step} -> %>
               <%!-- The setup banner is the live region for these words. --%>
               <.empty pane busy id="panel-setup" icon="spinner" title={step} />
@@ -955,6 +998,7 @@
                 failure={@git_failure}
                 can_wake={@track.level != :read}
                 waking={:wake in @pending}
+                working={@turn.working?}
               />
               <p :if={@panel.error} role="alert">{@panel.error}</p>
               <.panel_body
@@ -1136,7 +1180,7 @@
           session_hash={@session_hash}
           can_write={@track.level != :read}
           asleep={
-            probed(machine(@track, @threads, @thread_states, @setup_now), @machine_probe, @track).state ==
+            probed(machine(@track, @turn, @setup_now), @machine_probe, @track).state ==
               :asleep
           }
         />

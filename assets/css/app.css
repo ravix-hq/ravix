@@ -1086,10 +1086,30 @@ html[data-yard="closed"] .workspace-trigger-skeleton { flex: none; width: 28px; 
 .transcript-scroll .workspace-welcome .ghost:hover:not(:disabled) {
   border: 1px dashed var(--line-strong); border-radius: 8px; background: transparent;
 }
-.workspace-queue { padding: 8px 20px; max-height: 140px; overflow: auto; font-size: 12px; }
+/* RAV-94: prompts waiting their turn, one compact row each above the
+   composer: the state, the prompt's first two lines and why it waits, then
+   its actions at the end. */
+.workspace-queue {
+  display: flex; flex-direction: column; gap: 4px; margin: 0; padding: 0 16px 6px;
+  max-height: 140px; overflow: auto; list-style: none; font-size: 12px;
+}
+.queue-item {
+  display: flex; align-items: flex-start; gap: 8px; min-width: 0; padding: 6px 6px 6px 10px;
+  border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface);
+}
+.queue-item .chip { flex: none; margin-top: 1px; }
+.queue-body { flex: 1; min-width: 0; }
+.queue-item > button { flex: none; height: 24px; padding: 0 8px; font-size: 12px; }
+.queue-feedback, .queue-error { margin: 2px 0 0; color: var(--dim); }
+.queue-error { color: var(--bad); }
 /* A waiting prompt, rendered as its bubble will be. The queue sits outside
    the transcript's copy handler, so a fence here has no copy button. */
-.queue-prompt { margin: 4px 0; min-width: 0; overflow-wrap: anywhere; }
+.queue-prompt {
+  margin: 1px 0 0; min-width: 0; overflow: hidden; overflow-wrap: anywhere;
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2;
+}
+.queue-prompt > :first-child { margin-top: 0; }
+.queue-prompt > :last-child { margin-bottom: 0; }
 .queue-prompt .code-block-toolbar { display: none; }
 /* Setup progress or failure above the composer. A failure that needs the
    machine rebuilt carries that one action; routine rebuilds live in the header. */
@@ -1148,6 +1168,17 @@ html[data-yard="closed"] .workspace-trigger-skeleton { flex: none; width: 28px; 
 }
 .workspace-composer .composer-send svg { flex: none; }
 .workspace-composer .composer-send:disabled { opacity: 0.65; }
+/* RAV-94: sending. From Enter to the server's answer the form is
+   `phx-submit-loading` and LiveView disables send; the arrow becomes a
+   spinner in the same 34px, so the press shows and nothing moves. */
+#composer-form.phx-submit-loading .composer-send { opacity: 1; }
+#composer-form.phx-submit-loading .composer-send svg { visibility: hidden; }
+#composer-form.phx-submit-loading .composer-send::after {
+  content: ""; position: absolute; width: 14px; height: 14px; border-radius: 50%;
+  border: 2px solid currentColor; border-top-color: transparent; animation: suggestion-spin 700ms linear infinite;
+}
+.workspace-composer .composer-send { position: relative; }
+@media (prefers-reduced-motion: reduce) { #composer-form.phx-submit-loading .composer-send::after { animation-duration: 2s; } }
 /* RAV-87: Stop, while a turn runs, is where send is and the same size, so
    the row never grows. With nothing to send, send steps aside and Stop is
    alone in its place; typed text or held images bring send back to its
@@ -1158,11 +1189,35 @@ html[data-yard="closed"] .workspace-trigger-skeleton { flex: none; width: 28px; 
   color: var(--ink); background: var(--panel); border: 1px solid var(--line-strong);
 }
 .workspace-composer .composer-stop svg { flex: none; }
+/* Attach is the row's other icon button, and the same square: an inline
+   icon in a text button stands half a pixel taller than the rest. */
+.workspace-composer .composer-attach {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 34px; height: 34px; padding: 0;
+}
 .workspace-composer .composer-stop:hover:not(:disabled) { background: var(--surface-hover); }
 /* Both buttons need the room the shortcut hint takes, and the model's name
    gives way before the row wraps and the composer grows a line. */
 .workspace-actions:has(.composer-stop) .composer-shortcut { display: none; }
 .workspace-composer .model-trigger { min-width: 0; }
+/* RAV-94: the action row is one line at every width. What gives way, in
+   order: the shortcut hint, then the model's and the payer's names, which
+   truncate. A draft thread's agent and model selects are the exception
+   (RAV-80 replaces them). */
+.workspace-composer { container-type: inline-size; }
+.workspace-composer .workspace-actions:not(:has(#draft-runtime)) { flex-wrap: nowrap; }
+.workspace-composer .workspace-actions > * { flex-shrink: 0; }
+.workspace-composer .workspace-actions > .composer-model,
+.workspace-composer .workspace-actions > .composer-payer,
+.workspace-composer .workspace-actions > .composer-mode-hint { flex-shrink: 1; min-width: 0; }
+.workspace-composer .composer-payer { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@container (max-width: 520px) {
+  .workspace-composer .composer-shortcut { display: none; }
+  .composer-mode button { padding: 0 7px; }
+}
+/* The shortcut is for reaching the box; once it is there, it has nothing to
+   say. Hidden in place, so the row does not shift as focus comes and goes. */
+.composer-box:has(textarea:focus) .composer-shortcut { visibility: hidden; }
 /* Ask agent / Comment. In Comment mode the box takes the warning colour, so
    nobody mistakes a note for people for an instruction to the agent. */
 .composer-mode {
@@ -1182,6 +1237,16 @@ html[data-yard="closed"] .workspace-trigger-skeleton { flex: none; width: 28px; 
   display: flex; align-items: center; gap: 6px; margin: 0; padding: 8px 12px 0;
   color: var(--warn); font-size: 12px;
 }
+/* RAV-94: Comment's hint sits in the action row, where Ask's controls are,
+   so switching changes what the row says and not the box's height. Ask's
+   controls go the moment the class does, before the server drops them. */
+.workspace-actions .composer-mode-hint { display: none; padding: 0 4px; white-space: nowrap; }
+.workspace-actions .composer-mode-hint svg { flex: none; }
+.workspace-actions .composer-mode-hint span { overflow: hidden; text-overflow: ellipsis; }
+.composer-box.commenting .workspace-actions .composer-mode-hint { display: flex; }
+.composer-box.commenting .composer-ask-only,
+.composer-box.commenting .composer-payer,
+.composer-box.commenting .composer-model { display: none; }
 .mention-options {
   position: absolute; left: 8px; bottom: calc(100% + 4px); z-index: 5;
   display: none; min-width: 220px; max-width: calc(100% - 16px); max-height: 220px; overflow-y: auto;
@@ -1355,15 +1420,6 @@ html[data-yard="closed"] .workspace-trigger-skeleton { flex: none; width: 28px; 
 }
 .thread-tab-draft .thread-tab-title { font-style: italic; }
 @media (max-width: 760px) { .thread-tabs { padding-inline: 12px; } }
-/* A draft's agent and model sit where the model menu will be once it is a
-   thread; the labels stay visible because the two selects look alike. */
-.draft-runtime {
-  display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; min-width: 0;
-  font-size: 12px; color: var(--dim);
-}
-.draft-runtime select { max-width: 14rem; min-width: 0; font-size: 12px; padding: 2px 6px; }
-.draft-runtime .thread-default-source,
-.draft-runtime .draft-default-hint { flex-basis: 100%; margin: 0; }
 
 /* ── the inspector: files, changes, checks, preview ────────────────────── */
 
@@ -1418,11 +1474,22 @@ html[data-yard="closed"] .workspace-trigger-skeleton { flex: none; width: 28px; 
    margins in a column rather than by the pane's `justify-content`, so a pane
    too short for it scrolls to its top instead of cutting that off. */
 .dock-empty { font-family: var(--sans); }
-.workspace-terminal .term-scroll:has(> .dock-empty) { display: flex; flex-direction: column; padding: 8px 12px; }
+.workspace-terminal .term-scroll:has(> .dock-empty) {
+  display: flex; flex-direction: column; padding: 8px 12px;
+  container: dock-pane / size;
+}
 .term-scroll > .dock-empty { margin-block: auto; }
 .dock-empty .empty { padding: 8px 12px; gap: 4px; }
 .dock-empty .empty .mark { width: 28px; height: 28px; margin-bottom: 0; }
 .dock-empty .empty p { font-size: 12px; max-width: 60ch; }
+/* A pane shorter than the whole of it (a narrow, short window) keeps one
+   line and the button: the title says what is missing, the button what to
+   do, and the sentence about the tab is what gives way. The pane is the
+   container, not the page, since the dock's height is not the window's. */
+@container dock-pane (max-height: 172px) {
+  .dock-empty .empty .mark,
+  .dock-empty .empty p { display: none; }
+}
 /* The preview is somebody else's page in a frame; the panel colour is the
    ground it paints over, so the wait for it is not a hole in the inspector. */
 .workspace-preview { width: 100%; height: 360px; background: var(--panel); border: 0; margin: 12px 0; }
@@ -2332,10 +2399,13 @@ section.first-prompt#project-start { align-self: center; padding: 32px 24px; }
 .file-note { padding: 4px 12px; font-size: 12px; color: var(--dim); }
 /* Keep the current page usable while a request or navigation is in flight.
    LiveView owns event classes, so concurrent requests and failures clear with
-   the request that owns them. Async work uses a local loading-status instead. */
+   the request that owns them. Async work uses a local loading-status instead.
+   It sits in the toasts' corner rather than over the page's header (RAV-91),
+   where it covered the title and Share for as long as it was up, and lifts
+   the toasts above it while it shows. */
 #request-progress {
-  display: none; position: fixed; top: 12px; left: 50%; transform: translateX(-50%);
-  z-index: 70; max-width: calc(100vw - 24px); padding: 9px 14px;
+  display: none; position: fixed; right: 16px; bottom: 16px;
+  z-index: 70; max-width: calc(100vw - 32px); padding: 9px 14px;
   gap: 8px; align-items: center; pointer-events: none;
   color: var(--ink); background: var(--panel); border: 1px solid var(--line);
   border-radius: var(--radius); box-shadow: 0 4px 16px var(--shadow); font-size: 12px;
@@ -2344,7 +2414,12 @@ html.page-loading #request-progress,
 body:has(.phx-click-loading, .phx-submit-loading, .phx-change-loading) #request-progress {
   display: flex;
 }
+html.page-loading .toasts,
+body:has(.phx-click-loading, .phx-submit-loading, .phx-change-loading) .toasts {
+  bottom: 64px;
+}
 body:has(.phx-error) #request-progress { display: none; }
+body:has(.phx-error) .toasts { bottom: 16px; }
 .loading-status { display: flex; align-items: center; gap: 8px; color: var(--dim); font-size: 13px; }
 .loading-spinner {
   display: inline-block; width: 14px; height: 14px; flex: none;

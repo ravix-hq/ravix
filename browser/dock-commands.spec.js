@@ -8,8 +8,9 @@ function within(inner, outer) {
     inner.x >= outer.x - 1 && inner.x + inner.width <= outer.x + outer.width + 1;
 }
 
-// RAV-90: the Commands pane's empty state is all there without scrolling ---
-// mark, title, what the tab is for and Open Preview --- and neither pane
+// RAV-90: at every height the dock's Commands pane takes, its empty state is
+// all there without scrolling --- mark, title, what the tab is for and Open
+// Preview, or in a short pane the title and Open Preview --- and neither pane
 // repeats whose machine it is under the header's badge, which says so first.
 test("the dock's Commands empty state is whole, under no second machine heading", async ({ page }) => {
   test.setTimeout(120_000);
@@ -35,17 +36,50 @@ test("the dock's Commands empty state is whole, under no second machine heading"
   await expect(page.locator('#machine-dock').getByText("This track's machine")).toHaveCount(0);
   await expect(page.locator('#machine-dock .dock-context')).toHaveCount(0);
 
+  // Every part the pane shows lies wholly inside it, with nothing to scroll
+  // to; a pane too short for the whole of it keeps one line and the button.
+  const whole = async (label) => {
+    const height = (await scroll.boundingBox()).height;
+    expect(await scroll.evaluate(el => el.scrollHeight - el.clientHeight), label).toBeLessThanOrEqual(1);
+    const pane = await scroll.boundingBox();
+    const parts = [empty.locator('h3'), empty.getByRole('button', { name: 'Open Preview', exact: true })];
+    if (await empty.locator('p').isVisible()) parts.push(empty.locator('.mark'), empty.locator('p'));
+    else expect(height, `${label}: trimmed only when short`).toBeLessThan(190);
+    for (const part of parts) {
+      await expect(part).toBeVisible();
+      expect(within(await part.boundingBox(), pane), label).toBe(true);
+    }
+    return height;
+  };
+
+  // The desktop dock, at two widths.
   for (const size of [{ width: 1440, height: 900 }, { width: 1024, height: 700 }]) {
     await page.setViewportSize(size);
-    // Nothing to scroll to: the pane holds the whole of it.
-    expect(await scroll.evaluate(el => el.scrollHeight - el.clientHeight)).toBeLessThanOrEqual(1);
-    const pane = await scroll.boundingBox();
-    for (const part of [empty.locator('.mark'), empty.locator('h3'), empty.locator('p'),
-      empty.getByRole('button', { name: 'Open Preview', exact: true })]) {
-      await expect(part).toBeVisible();
-      expect(within(await part.boundingBox(), pane)).toBe(true);
-    }
+    await whole(`${size.width}x${size.height}`);
+    await expect(empty.locator('p')).toBeVisible();
   }
+
+  // The narrow Commands view is all dock, as tall as the window leaves it:
+  // from a phone held sideways to a tall one.
+  await page.setViewportSize({ width: 500, height: 900 });
+  const views = page.getByRole('navigation', { name: 'Track views', exact: true });
+  await views.getByRole('button', { name: 'Commands', exact: true }).click();
+  await expect(empty.locator('h3')).toBeVisible();
+  const heights = [];
+  for (let height = 900; height >= 320; height -= 20) {
+    await page.setViewportSize({ width: 500, height });
+    heights.push(await whole(`500x${height}`));
+  }
+  // The sweep reached a pane short enough to trim, and one tall enough not to.
+  expect(Math.max(...heights)).toBeGreaterThan(400);
+  expect(Math.min(...heights)).toBeLessThan(188);
+  await page.setViewportSize({ width: 500, height: 900 });
+  await expect(empty.locator('p')).toBeVisible();
+  await page.setViewportSize({ width: 500, height: 320 });
+  await expect(empty.locator('p')).toBeHidden();
+  await expect(empty.locator('h3')).toHaveText('No commands yet');
+  await views.getByRole('button', { name: 'Conversation', exact: true }).click();
+
   await page.setViewportSize({ width: 1440, height: 900 });
   expect((await new AxeBuilder({ page }).include('#machine-dock').withTags(['wcag2a', 'wcag2aa']).analyze()).violations).toEqual([]);
 

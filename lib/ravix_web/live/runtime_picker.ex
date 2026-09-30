@@ -1,5 +1,5 @@
 defmodule RavixWeb.Live.RuntimePicker do
-  @moduledoc "The shared runtime/model fields for a track's first or subsequent thread."
+  @moduledoc "The shared agent/model pill for a track's first thread and a new thread's draft."
   use Phoenix.Component
 
   alias RavixWeb.Live.ModelMenu
@@ -7,60 +7,23 @@ defmodule RavixWeb.Live.RuntimePicker do
   attr :options, :map, required: true
   attr :params, :map, required: true
   attr :name, :string, required: true
-
-  def fields(assigns) do
-    runtime = assigns.params["runtime"] || assigns.options.runtime
-    choice = Enum.find(assigns.options.runtimes, &(&1.runtime == runtime))
-    assigns = assign(assigns, runtime: runtime, models: if(choice, do: choice.models, else: []))
-
-    ~H"""
-    <input
-      type="hidden"
-      name={@name <> "[preference_explicit]"}
-      value={@params["preference_explicit"] || "false"}
-    />
-    <p :if={Map.has_key?(@options, :source)} class="thread-default-source">
-      {source_label(@options.source)}: {RavixWeb.AgentName.label(@options.runtime)} · {RavixWeb.ModelName.friendly(
-        @options.model
-      )}
-    </p>
-    <label for={@name <> "-runtime"}>Agent</label>
-    <select id={@name <> "-runtime"} name={@name <> "[runtime]"}>
-      <option
-        :for={choice <- @options.runtimes}
-        value={choice.runtime}
-        disabled={!choice.connected or !choice.enabled}
-        selected={choice.runtime == @runtime}
-      >
-        {RavixWeb.AgentName.label(choice.runtime)}{availability(choice, @options)}
-      </option>
-    </select>
-    <label for={@name <> "-model"}>Model</label>
-    <select id={@name <> "-model"} name={@name <> "[model]"}>
-      <option
-        :for={model <- @models}
-        value={model}
-        selected={model == (@params["model"] || @options.model)}
-      >
-        {RavixWeb.ModelName.friendly(model)}
-      </option>
-    </select>
-    """
-  end
-
-  attr :options, :map, required: true
-  attr :params, :map, required: true
-  attr :name, :string, required: true
   attr :id, :string, required: true
   attr :form, :string, required: true, doc: "the form the radios belong to, from outside it"
   attr :disabled, :boolean, default: false
+  attr :class, :any, default: "pick-chip", doc: "the chip's classes"
+  attr :hint, :string, default: nil, doc: "a line under the menu's groups"
+
+  attr :connect, :boolean,
+    default: false,
+    doc: "offer a payer's unconnected agents as `connect-thread-agent` rows"
 
   @doc """
-  The same choice as `fields/1`, as one `Agent · Model` chip whose menu is
-  the composer's (`RavixWeb.Live.ModelMenu`): the agents, then the chosen
+  The agent and model as one `Agent · Model` chip whose menu is the
+  composer's (`RavixWeb.Live.ModelMenu`): the agents, then the chosen
   agent's models, each a radio of the form, so every pick still arrives as
   its change event and `_target` marks it explicit. Choosing an agent keeps
-  the menu open for its models; choosing a model closes it.
+  the menu open for its models; choosing a model closes it. Where the
+  default came from is the tag on its row, not a line of its own.
   """
   def menu(assigns) do
     runtime = assigns.params["runtime"] || assigns.options.runtime
@@ -86,7 +49,7 @@ defmodule RavixWeb.Live.RuntimePicker do
       id={@id}
       label={ModelMenu.agent_model(@runtime, @model || "")}
       haspopup="dialog"
-      class="pick-chip"
+      class={@class}
       menu_class="model-menu"
       menu_label="Agent and model"
       disabled={@disabled}
@@ -107,6 +70,21 @@ defmodule RavixWeb.Live.RuntimePicker do
           close={false}
           disabled={!choice.connected or !choice.enabled}
         />
+        <%!-- RAV-80: connecting is asked for here, beside the agent it
+          unlocks, rather than by a button above the composer; the panel it
+          opens is still `ThreadConnect.panel/1`'s. --%>
+        <button
+          :for={choice <- @options.runtimes}
+          :if={@connect && @options.owner? && choice.enabled && !choice.connected}
+          type="button"
+          class="account-item model-option"
+          phx-click="connect-thread-agent"
+          phx-value-runtime={choice.runtime}
+          popovertarget={"#{@id}-menu"}
+          popovertargetaction="hide"
+        >
+          <span class="truncate">Connect {RavixWeb.AgentName.label(choice.runtime)}…</span>
+        </button>
       </fieldset>
       <fieldset :if={@models != []} class="chip-group">
         <legend>Model</legend>
@@ -125,6 +103,7 @@ defmodule RavixWeb.Live.RuntimePicker do
         />
         <ModelMenu.search_empty :if={ModelMenu.searchable?(@models)} />
       </fieldset>
+      <p :if={@hint} class="model-default-hint">{@hint}</p>
     </ModelMenu.chip>
     """
   end

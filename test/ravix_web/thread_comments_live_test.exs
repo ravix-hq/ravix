@@ -102,11 +102,33 @@ defmodule RavixWeb.ThreadCommentsLiveTest do
     assert has_element?(view, "button[aria-label='Choose images']")
     refute has_element?(view, "#mention-options")
 
+    # RAV-94: the browser switches before the server answers, so the box
+    # carries both modes' placeholders, the buttons say which mode is
+    # theirs, and Comment's hint is already in the row, shown by the
+    # `commenting` class and describing nothing until Comment is chosen.
+    assert has_element?(
+             view,
+             "textarea[data-mode=ask][data-ask-disabled=false]" <>
+               "[data-placeholder-ask='Add a follow-up, @mention files, run /commands']" <>
+               "[data-placeholder-comment='Comment for people on this thread, @mention someone']"
+           )
+
+    assert has_element?(view, "#composer-mode-ask[data-composer-mode=ask]")
+    assert has_element?(view, "#composer-mode-comment[data-composer-mode=comment]")
+    assert has_element?(view, ".workspace-actions #composer-mode-hint")
+    refute has_element?(view, "textarea[aria-describedby=composer-mode-hint]")
+
     comment_mode(view)
     assert has_element?(view, "#composer-mode-comment[aria-pressed=true]")
     assert has_element?(view, ".composer-box.commenting")
     assert has_element?(view, "#composer-mode-hint", "Comment — not sent to the agent")
-    assert has_element?(view, "textarea[aria-label=Comment][aria-describedby=composer-mode-hint]")
+
+    assert has_element?(
+             view,
+             "textarea[data-mode=comment][aria-label=Comment][aria-describedby=composer-mode-hint]" <>
+               "[placeholder='Comment for people on this thread, @mention someone']"
+           )
+
     assert has_element?(view, "button.composer-send[aria-label='Post comment']")
     refute has_element?(view, "button[aria-label='Choose images']")
 
@@ -294,26 +316,28 @@ defmodule RavixWeb.ThreadCommentsLiveTest do
     for user <- [ctx.owner, ctx.member], do: Tracks.mark_read(user, ctx.track.id)
     # They are on the project but not looking at the track.
     {:ok, rail, _} = live(log_in_user(build_conn(), ctx.member), "/p/#{ctx.project.id}")
-    render_async(rail)
+    # The rail's reads are the database's: `render_async/1`'s 100ms default
+    # is a guess about load, and a loaded CI runner can take longer.
+    render_async(rail, 1_000)
     {my_parent, mine} = open(ctx, ctx.owner)
-    render_async(my_parent)
+    render_async(my_parent, 1_000)
     refute has_element?(rail, ".track-tab [aria-label='New comment']")
 
     comment_mode(mine)
     submit(mine, "@#{ctx.member.login} can you look?")
-    render_async(rail)
-    render_async(my_parent)
+    render_async(rail, 1_000)
+    render_async(my_parent, 1_000)
 
     assert has_element?(rail, ".track-tab [role=img][aria-label='New comment']")
     refute has_element?(my_parent, ".track-tab [aria-label='New comment']")
 
     # The mention puts it in their Inbox, by name, and nobody else's.
     {:ok, inbox, _} = live(log_in_user(build_conn(), ctx.member), "/inbox")
-    render_async(inbox)
+    render_async(inbox, 1_000)
     assert has_element?(inbox, ".inbox-item", "Mentioned")
     assert has_element?(inbox, ".inbox-item", "@#{ctx.owner.login} mentioned you in a comment.")
     {:ok, inbox, _} = live(log_in_user(build_conn(), ctx.owner), "/inbox")
-    render_async(inbox)
+    render_async(inbox, 1_000)
     refute has_element?(inbox, ".inbox-item", "Mentioned")
   end
 
