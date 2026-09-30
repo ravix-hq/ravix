@@ -695,6 +695,25 @@ defmodule Ravix.Tracks.Store do
   def rename_track(track_id, title),
     do: update_track(track_id, title: title, title_source: :manual)
 
+  @doc """
+  A person named the thread (RAV-97): the title, and `:manual`, so no
+  automatic title replaces it. The track's own name is left alone, even for
+  its first thread; the track has its own rename. A closed thread is not
+  renamed.
+  """
+  @spec rename_thread(String.t(), String.t(), String.t()) :: :ok | :stale
+  def rename_thread(track_id, thread_id, title) do
+    case Repo.update_all(
+           from(t in Thread,
+             where: t.id == ^thread_id and t.track_id == ^track_id and is_nil(t.closed_at)
+           ),
+           set: [title: title, title_source: :manual]
+         ) do
+      {1, _} -> :ok
+      {0, _} -> :stale
+    end
+  end
+
   @doc "The thread on this track that `conversation_id` belongs to."
   @spec thread_by_conversation(String.t(), String.t()) :: Thread.t() | nil
   def thread_by_conversation(track_id, conversation_id)

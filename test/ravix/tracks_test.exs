@@ -11,7 +11,7 @@ defmodule Ravix.TracksTest do
   alias Ravix.PromptQueue.Body
   alias Ravix.QueryCount
   alias Ravix.Tracks
-  alias Ravix.Tracks.{Diff, Files, Names, Origin, Settlement, Setup, Track, Transcript}
+  alias Ravix.Tracks.{Diff, Files, Names, Origin, Settlement, Setup, Thread, Track, Transcript}
   alias Ravix.Tracks.Transcript.{Block, Turn}
 
   @root "/home/sprite/work/kyoto"
@@ -1464,6 +1464,74 @@ defmodule Ravix.TracksTest do
 
       assert {:error, {:unprocessable, "no_title", _}} =
                Tracks.rename(ctx.owner, ctx.track.id, "  ")
+    end
+  end
+
+  describe "rename_thread/4" do
+    setup do
+      owner = insert_user(login: "owner")
+      project = insert_project(user: owner)
+      track = insert_track(project: project, title: "Kyoto")
+
+      {:ok, thread} =
+        Tracks.Store.create_thread(%{track_id: track.id, title: "Next", conversation_id: "next"})
+
+      Ravix.Hub.subscribe(project.id)
+      {:ok, owner: owner, project: project, track: track, thread: thread}
+    end
+
+    test "names one thread by hand, which no automatic title replaces", ctx do
+      assert :ok = Tracks.rename_thread(ctx.owner, ctx.track.id, ctx.thread.id, "  Audit log  ")
+      assert %{title: "Audit log", title_source: :manual} = Repo.get!(Thread, ctx.thread.id)
+      assert_receive {:hub, %Ravix.Hub.Event{name: :tracks}}
+
+      # The track keeps its own name, even when its first thread is renamed.
+      assert :ok = Tracks.rename_thread(ctx.owner, ctx.track.id, ctx.track.id, "First")
+      assert Repo.get!(Track, ctx.track.id).title == "Kyoto"
+
+      renamed = Repo.get!(Thread, ctx.thread.id)
+      track = Repo.get!(Track, ctx.track.id)
+      assert :stale = Tracks.Store.auto_title(renamed, track, "Something automatic")
+      assert Repo.get!(Thread, ctx.thread.id).title == "Audit log"
+    end
+
+    test "anybody who can write may rename; a reader, a stranger and a blank name may not",
+         ctx do
+      writer = insert_user(login: "writer")
+      insert_track_member(ctx.track, writer)
+      assert :ok = Tracks.rename_thread(writer, ctx.track.id, ctx.thread.id, "Theirs")
+
+      reader = insert_user(login: "reader")
+      insert_track_member(ctx.track, reader, role: :read)
+
+      assert {:error, {:forbidden, _}} =
+               Tracks.rename_thread(reader, ctx.track.id, ctx.thread.id, "Mine")
+
+      stranger = insert_user(login: "stranger")
+
+      assert {:error, :not_found} =
+               Tracks.rename_thread(stranger, ctx.track.id, ctx.thread.id, "Mine")
+
+      assert {:error, {:unprocessable, "no_title", _}} =
+               Tracks.rename_thread(ctx.owner, ctx.track.id, ctx.thread.id, "  ")
+
+      assert Repo.get!(Thread, ctx.thread.id).title == "Theirs"
+    end
+
+    test "a thread on another track, or a closed one, is not found", ctx do
+      other = insert_track(project: ctx.project)
+
+      assert {:error, :not_found} =
+               Tracks.rename_thread(ctx.owner, other.id, ctx.thread.id, "Moved")
+
+      Repo.update_all(from(t in Thread, where: t.id == ^ctx.thread.id),
+        set: [closed_at: DateTime.utc_now()]
+      )
+
+      assert {:error, :not_found} =
+               Tracks.rename_thread(ctx.owner, ctx.track.id, ctx.thread.id, "Closed")
+
+      assert Repo.get!(Thread, ctx.thread.id).title == "Next"
     end
   end
 

@@ -116,7 +116,7 @@ defmodule RavixWeb.TrackLiveTest do
       render_async(ctx.view)
       assert has_element?(ctx.view, "#track-setup-status", text)
       assert has_element?(ctx.view, "#track-machine-scope", "Own machine")
-      assert has_element?(ctx.view, ".thread-add[disabled]")
+      assert has_element?(ctx.view, "#thread-add-trigger[disabled]")
     end
 
     render_click(ctx.view, "dialog", %{name: "close"})
@@ -1060,7 +1060,7 @@ defmodule RavixWeb.TrackLiveTest do
 
     stub(Ravix.MachineCache, :machine_of, fn _, _ -> {:ok, nil} end)
     stub(Ravix.MachineCache, :machine_for_track, fn _, _, _ -> {:ok, nil} end)
-    ctx.view |> element("#thread-switcher button[aria-label='Add thread']") |> render_click()
+    ctx.view |> element("#thread-add-menu button[phx-click='draft-thread']") |> render_click()
     render_async(ctx.view, 2_000)
     refute has_element?(ctx.view, "#new-thread-dialog")
     assert has_element?(ctx.view, "#thread-tab-draft[aria-selected=true]", "New thread")
@@ -1124,7 +1124,7 @@ defmodule RavixWeb.TrackLiveTest do
     stub(Ravix.Accounts.Inference, :usable_agents, fn _ -> {:ok, [:claude]} end)
     stub(Ravix.MachineCache, :catalog, fn _ -> {:ok, catalog} end)
     stub(Ravix.MachineCache, :machine_of, fn _, _ -> {:ok, nil} end)
-    ctx.view |> element("#thread-switcher button[aria-label='Add thread']") |> render_click()
+    ctx.view |> element("#thread-add-menu button[phx-click='draft-thread']") |> render_click()
     render_async(ctx.view)
     assert has_element?(ctx.view, "#draft-runtime-trigger", "Claude Code · Claude Opus 5")
 
@@ -1777,10 +1777,10 @@ defmodule RavixWeb.TrackLiveTest do
 
     html = tabs.(threads: two, thread_id: "a", enabled: false)
     assert html =~ ~s(data-thread-id="b")
-    refute html =~ "Add thread"
+    refute html =~ "New thread or terminal"
 
     html = tabs.(threads: one, thread_id: "a", enabled: true, adding: true)
-    assert html =~ ~r/aria-label="Add thread"[^>]*disabled/s
+    assert html =~ ~r/aria-label="New thread or terminal"[^>]*disabled/s
   end
 
   test "a forged thread ID cannot switch the page", ctx do
@@ -1790,7 +1790,204 @@ defmodule RavixWeb.TrackLiveTest do
     refute has_element?(ctx.view, "#composer-#{foreign.id}")
   end
 
-  for event <- ["select-thread", "draft-thread", "connect-thread-agent", "rebuild-machine"] do
+  describe "the thread strip (RAV-97)" do
+    setup ctx do
+      {:ok, thread} =
+        Tracks.Store.create_thread(%{
+          track_id: ctx.track.id,
+          title: "Next",
+          conversation_id: "next"
+        })
+
+      send(ctx.view.pid, {:hub, Event.new(:tracks, ctx.project.id, track_id: ctx.track.id)})
+      settle(ctx.view)
+      %{thread: thread}
+    end
+
+    defp title_of(id), do: Repo.get!(Tracks.Thread, id)
+
+    test "+ is a menu of New thread and New terminal, and the tabs have All threads", ctx do
+      assert has_element?(ctx.view, "#thread-add-trigger[aria-haspopup=dialog]")
+      refute has_element?(ctx.view, "#thread-add-trigger[phx-click]")
+
+      assert has_element?(
+               ctx.view,
+               "#thread-add-menu button[phx-click='draft-thread']",
+               "New thread"
+             )
+
+      assert has_element?(ctx.view, "#thread-add-menu button", "New terminal")
+
+      # New terminal is the dock's own, so it keeps the dock's checks and limit.
+      assert ctx.view |> element("#thread-add-menu button", "New terminal") |> render() =~
+               "shell-new"
+
+      assert ctx.view |> element("#thread-add-menu button", "New terminal") |> render() =~
+               ".machine-dock-host"
+
+      for id <- [ctx.track.id, ctx.thread.id] do
+        assert has_element?(
+                 ctx.view,
+                 "#thread-overflow-menu button[phx-click='select-thread'][phx-value-thread_id='#{id}']"
+               )
+      end
+
+      assert has_element?(
+               ctx.view,
+               "#thread-overflow-menu button[aria-current=true][phx-value-thread_id='#{ctx.track.id}']"
+             )
+
+      ctx.view
+      |> element("#thread-overflow-menu button[phx-value-thread_id='#{ctx.thread.id}']")
+      |> render_click()
+
+      assert has_element?(ctx.view, "#thread-tab-#{ctx.thread.id}[aria-selected=true]")
+      # There is no close on a tab: Ravix cannot close one thread.
+      refute has_element?(ctx.view, "#thread-tablist button[aria-label^='Close']")
+    end
+
+    test "a tab is renamed in place: Enter saves, Escape and a blank name keep it", ctx do
+      assert has_element?(
+               ctx.view,
+               "#thread-more-menu button[phx-click='edit-thread-title'][phx-value-thread_id='#{ctx.track.id}']",
+               "Rename thread"
+             )
+
+      render_hook(ctx.view, "edit-thread-title", %{thread_id: ctx.thread.id})
+      assert has_element?(ctx.view, "#thread-switcher[data-renaming='#{ctx.thread.id}']")
+
+      assert has_element?(
+               ctx.view,
+               "#thread-rename-input[value='Next'][aria-label='Thread name']"
+             )
+
+      # The field is laid over the tab, not put in the tablist.
+      refute has_element?(ctx.view, "#thread-tablist input")
+
+      ctx.view
+      |> form("#thread-rename-form", %{"title" => "  Audit log  "})
+      |> render_submit()
+
+      assert %{title: "Audit log", title_source: :manual} = title_of(ctx.thread.id)
+      refute has_element?(ctx.view, "#thread-rename-input")
+      assert has_element?(ctx.view, "#thread-tab-#{ctx.thread.id} .thread-tab-title", "Audit log")
+
+      # The field's blur arrives after Enter has ended the rename.
+      render_hook(ctx.view, "rename-thread", %{thread_id: ctx.thread.id, title: "Late blur"})
+      assert title_of(ctx.thread.id).title == "Audit log"
+
+      render_hook(ctx.view, "edit-thread-title", %{thread_id: ctx.thread.id})
+      render_hook(ctx.view, "cancel-thread-rename", %{})
+      refute has_element?(ctx.view, "#thread-rename-input")
+      render_hook(ctx.view, "rename-thread", %{thread_id: ctx.thread.id, title: "After Escape"})
+      assert title_of(ctx.thread.id).title == "Audit log"
+
+      render_hook(ctx.view, "edit-thread-title", %{thread_id: ctx.thread.id})
+      render_hook(ctx.view, "rename-thread", %{thread_id: ctx.thread.id, title: "   "})
+      refute has_element?(ctx.view, "#thread-rename-input")
+      assert title_of(ctx.thread.id).title == "Audit log"
+    end
+
+    test "leaving the first thread's field unchanged keeps it named after the track", ctx do
+      before = title_of(ctx.track.id)
+      label = ctx.view |> element("#thread-tab-#{ctx.track.id} .thread-tab-title") |> render()
+      [shown] = Regex.run(~r/>([^<]+)</, label, capture: :all_but_first)
+
+      render_hook(ctx.view, "edit-thread-title", %{thread_id: ctx.track.id})
+      assert has_element?(ctx.view, "#thread-rename-input[value='#{shown}']")
+      render_hook(ctx.view, "rename-thread", %{thread_id: ctx.track.id, title: shown})
+
+      assert title_of(ctx.track.id) == before
+      refute has_element?(ctx.view, "#thread-rename-input")
+    end
+
+    test "another track's thread cannot be renamed from this page", ctx do
+      foreign = insert_track()
+      before = title_of(foreign.id)
+      render_hook(ctx.view, "edit-thread-title", %{thread_id: foreign.id})
+      refute has_element?(ctx.view, "#thread-rename-input")
+      render_hook(ctx.view, "rename-thread", %{thread_id: foreign.id, title: "Hijacked"})
+      assert title_of(foreign.id) == before
+    end
+
+    test "a reader has no rename and no terminal, and cannot start one", ctx do
+      reader = insert_user()
+      insert_track_member(ctx.track, reader, role: :read)
+
+      # The page's detail, as `Tracks.get/3` presents it to a reader.
+      stub(Tracks, :get, fn _, id, _opts ->
+        {:ok,
+         %{
+           track: Tracks.present(Repo.get!(Track, id), role: :member, level: :read),
+           header: blank_header(),
+           threads: thread_options(id),
+           starters: [],
+           models: []
+         }}
+      end)
+
+      {:ok, parent, _} =
+        live(log_in_user(build_conn(), reader), "/p/#{ctx.project.id}/t/#{ctx.track.id}")
+
+      view = find_live_child(parent, "track-host")
+      settle(view)
+      refute has_element?(view, "#thread-more")
+      refute has_element?(view, "#thread-add-menu button", "New terminal")
+      refute has_element?(view, "#thread-switcher[data-can-rename]")
+
+      render_hook(view, "edit-thread-title", %{thread_id: ctx.thread.id})
+      refute has_element?(view, "#thread-rename-input")
+      render_hook(view, "rename-thread", %{thread_id: ctx.thread.id, title: "Reader's"})
+      assert title_of(ctx.thread.id).title == "Next"
+    end
+
+    test "a revoked session cannot finish a rename it started", ctx do
+      render_hook(ctx.view, "edit-thread-title", %{thread_id: ctx.thread.id})
+      token = Plug.Conn.get_session(ctx.conn, :session_token)
+      Repo.delete!(Repo.get_by!(Session, token_hash: Ravix.Crypto.sha256(token)))
+
+      :sys.replace_state(ctx.view.pid, fn state ->
+        update_in(state.socket.assigns.session_guard, &%{&1 | stale?: true})
+      end)
+
+      assert {:error, {:redirect, %{to: "/login"}}} =
+               render_hook(ctx.view, "rename-thread", %{thread_id: ctx.thread.id, title: "Gone"})
+
+      assert title_of(ctx.thread.id).title == "Next"
+    end
+
+    test "a removed member cannot finish a rename they started", ctx do
+      member = insert_user()
+      membership = insert_project_member(ctx.project, member)
+
+      {:ok, parent, _} =
+        live(log_in_user(build_conn(), member), "/p/#{ctx.project.id}/t/#{ctx.track.id}")
+
+      view = find_live_child(parent, "track-host")
+      settle(view)
+      render_hook(view, "edit-thread-title", %{thread_id: ctx.thread.id})
+      assert has_element?(view, "#thread-rename-input")
+      Repo.delete!(membership)
+
+      :sys.replace_state(view.pid, fn state ->
+        update_in(state.socket.assigns.track_guard, &%{&1 | stale?: true})
+      end)
+
+      assert {:error, {:redirect, %{to: "/"}}} =
+               render_hook(view, "rename-thread", %{thread_id: ctx.thread.id, title: "Gone"})
+
+      assert title_of(ctx.thread.id).title == "Next"
+    end
+  end
+
+  for event <- [
+        "select-thread",
+        "draft-thread",
+        "connect-thread-agent",
+        "rebuild-machine",
+        "edit-thread-title",
+        "rename-thread"
+      ] do
     @thread_event event
     test "revoked session rejects #{event}", ctx do
       token = Plug.Conn.get_session(ctx.conn, :session_token)
@@ -2760,7 +2957,7 @@ defmodule RavixWeb.TrackLiveTest do
         {:ok, draft_options(ctx, source: :person)}
       end)
 
-      ctx.view |> element("#thread-switcher button[aria-label='Add thread']") |> render_click()
+      ctx.view |> element("#thread-add-menu button[phx-click='draft-thread']") |> render_click()
       render_async(ctx.view)
 
       refute has_element?(ctx.view, "#new-thread-dialog")
@@ -2814,7 +3011,7 @@ defmodule RavixWeb.TrackLiveTest do
 
       key = draft_key(ctx.view)
 
-      ctx.view |> element("#thread-switcher button[aria-label='Add thread']") |> render_click()
+      ctx.view |> element("#thread-add-menu button[phx-click='draft-thread']") |> render_click()
       render_async(ctx.view)
 
       assert 1 ==
@@ -3039,7 +3236,9 @@ defmodule RavixWeb.TrackLiveTest do
       send(theirs.pid, {:hub, Event.new(:tracks, ctx.project.id, track_id: ctx.track.id)})
       settle(theirs)
       refute has_element?(theirs, "#thread-tab-draft")
-      refute render(theirs) =~ "New thread"
+      # "+" › New thread is everybody's; the draft itself is nowhere here.
+      refute has_element?(theirs, "#thread-picker option[value=draft]")
+      refute has_element?(theirs, "#thread-overflow-menu [phx-value-thread_id=draft]")
       assert has_element?(ctx.view, "#thread-tab-draft")
     end
 
@@ -3128,7 +3327,7 @@ defmodule RavixWeb.TrackLiveTest do
 
   defp open_draft(ctx, options) do
     stub(Tracks, :thread_options, fn _, _ -> {:ok, options} end)
-    ctx.view |> element("#thread-switcher button[aria-label='Add thread']") |> render_click()
+    ctx.view |> element("#thread-add-menu button[phx-click='draft-thread']") |> render_click()
     render_async(ctx.view)
     assert has_element?(ctx.view, "#thread-tab-draft[aria-selected=true]")
   end

@@ -128,7 +128,7 @@ defmodule RavixWeb.CreatorBillingLiveTest do
        }}
     end)
 
-    view |> element("#thread-switcher button[aria-label='Add thread']") |> render_click()
+    view |> element("#thread-add-menu button[phx-click='draft-thread']") |> render_click()
     render_async(view)
 
     assert has_element?(

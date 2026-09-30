@@ -1462,45 +1462,80 @@ html[data-yard="closed"] .workspace-trigger-skeleton { flex: none; width: 28px; 
 .turn-config { color: var(--dim); }
 .turn-config-skipped { color: var(--dimmer); font-style: italic; }
 
-/* The thread tabs sit above the conversation. The row
-   scrolls sideways instead of wrapping, and its block padding leaves room
-   for a focus ring the scroll container would otherwise clip. */
+/* The thread tabs sit above the conversation. The tablist scrolls sideways
+   instead of wrapping, its edges fading where tabs run out of sight, and
+   everything after it (All threads, ⋯, +) stays put (RAV-97). Block padding
+   leaves room for a focus ring the scroll container would otherwise clip. */
 .thread-tabs {
-  display: flex; align-items: center; gap: 4px; padding: 8px 12px 3px;
-  flex-shrink: 0; border-bottom: 1px solid var(--line);
-  overflow-x: auto; scrollbar-width: thin; background: transparent;
+  position: relative; display: flex; align-items: center; gap: 2px; padding: 6px 12px 0;
+  flex-shrink: 0; border-bottom: 1px solid var(--line); background: transparent;
 }
-.thread-tablist { display: flex; flex: none; align-items: center; gap: 4px; }
+.thread-tablist {
+  display: flex; flex: 0 1 auto; min-width: 0; align-items: stretch; gap: 2px;
+  padding: 2px 2px 0; overflow-x: auto; scrollbar-width: none; overscroll-behavior-x: contain;
+}
+.thread-tablist::-webkit-scrollbar { display: none; }
+.thread-tabs[data-overflow~="start"] .thread-tablist { mask-image: linear-gradient(to right, transparent, black 28px); }
+.thread-tabs[data-overflow~="end"] .thread-tablist { mask-image: linear-gradient(to left, transparent, black 28px); }
+.thread-tabs[data-overflow~="start"][data-overflow~="end"] .thread-tablist {
+  mask-image: linear-gradient(to right, transparent, black 28px, black calc(100% - 28px), transparent);
+}
 .thread-picker { display: none; min-width: 0; flex: 1; }
 .thread-picker select { width: 100%; min-width: 0; }
 @media (max-width: 500px) {
   .thread-tablist { display: none; }
   .thread-picker { display: block; }
+  .thread-tabs[data-renaming] .thread-picker { display: none; }
 }
 .thread-tabs button {
   flex: none; display: inline-flex; align-items: center; gap: 6px;
-  height: 26px; padding: 0 10px; font-size: 13px;
-  background: transparent; border: 0; border-bottom: 2px solid transparent; border-radius: 0;
+  height: 30px; padding: 0 10px; font-size: 13px;
+  background: transparent; border: 0; border-radius: var(--radius) var(--radius) 0 0;
   color: var(--dim);
 }
-.thread-tabs button:hover:not(:disabled) { background: transparent; border-color: transparent; color: var(--ink); }
-.thread-tab { max-width: 360px; }
-.threads-working { margin: 0; padding: 4px 20px; color: var(--dim); font-size: 12px; overflow-wrap: anywhere; }
-.thread-tab[aria-selected="true"],
-.thread-tab[aria-selected="true"]:hover:not(:disabled) {
-  background: transparent; color: var(--ink); border-bottom-color: var(--tab);
+.thread-tabs .icon-button, .thread-tabs .thread-add > button { width: 28px; height: 28px; padding: 0; justify-content: center; border-radius: var(--radius); margin-bottom: 2px; }
+.thread-tabs button:hover:not(:disabled) { background: var(--surface-hover); border-color: transparent; color: var(--ink); }
+.thread-tabs button[aria-expanded="true"] { background: var(--surface-hover); color: var(--ink); }
+/* The underline is the tab's own, drawn over the strip's rule. */
+.thread-tab { position: relative; max-width: 240px; user-select: none; }
+.thread-tab::after {
+  content: ""; position: absolute; left: 8px; right: 8px; bottom: 0; height: 2px;
+  border-radius: 2px 2px 0 0; background: transparent;
 }
+.thread-tab[aria-selected="true"],
+.thread-tab[aria-selected="true"]:hover:not(:disabled) { background: transparent; color: var(--ink); }
+.thread-tab[aria-selected="true"]::after { background: var(--accent); }
+.thread-tab:focus-visible { outline-offset: -2px; }
+.threads-working { margin: 0; padding: 4px 20px; color: var(--dim); font-size: 12px; overflow-wrap: anywhere; }
 .thread-tab-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .thread-unread { flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
-.thread-tabs .thread-add {
-  position: sticky; right: 0; margin-left: auto; width: 26px; padding: 0; justify-content: center;
-  background: var(--bg); border-bottom-color: transparent;
-}
-.thread-tabs .thread-add:hover:not(:disabled) { background: var(--surface-hover); border-bottom-color: transparent; }
-.thread-tabs .thread-draft-discard {
-  width: 22px; padding: 0; justify-content: center; background: var(--bg);
-}
+/* "All threads" appears only while the tabs overrun the row; the hook says so. */
+.thread-overflow { display: none; }
+.thread-tabs[data-overflow] .thread-overflow { display: block; }
+@media (max-width: 500px) { .thread-tabs[data-overflow] .thread-overflow { display: none; } }
+.thread-tabs .thread-overflow, .thread-tabs .thread-more { margin-left: auto; }
+.thread-tabs[data-overflow] .thread-overflow + .thread-more { margin-left: 0; }
+.thread-tabs .thread-draft-discard { width: 22px; height: 22px; }
 .thread-tab-draft .thread-tab-title { font-style: italic; }
+.thread-menu { width: min(280px, calc(100vw - 32px)); }
+.thread-menu .account-item { color: var(--ink); }
+.thread-menu .account-item[aria-current="true"] { font-weight: 500; }
+.thread-menu .menu-kbd { margin-left: auto; }
+/* Rename lays a field over its tab, outside the tablist, which holds tabs only. */
+.thread-rename { position: absolute; z-index: 2; left: 12px; top: 6px; margin: 0; }
+@supports (position-anchor: --a) {
+  .thread-rename {
+    position-anchor: --thread-renaming; left: anchor(left); top: anchor(top);
+    width: max(anchor-size(width), 180px); height: anchor-size(height);
+  }
+}
+.thread-rename input {
+  width: 100%; min-width: 180px; height: 100%; min-height: 28px; padding: 0 9px; font-size: 13px;
+  border: 1px solid var(--accent); border-radius: var(--radius); background: var(--bg); color: var(--ink);
+}
+@media (max-width: 500px) {
+  .thread-rename { position: static; flex: 1; width: auto; height: auto; }
+}
 @media (max-width: 760px) { .thread-tabs { padding-inline: 12px; } }
 
 /* ── the inspector: files, changes, checks, preview ────────────────────── */
