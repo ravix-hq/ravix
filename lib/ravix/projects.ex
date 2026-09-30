@@ -510,24 +510,35 @@ defmodule Ravix.Projects do
   end
 
   @doc """
-  The repositories `change_repository/3` could move the project to, by name,
-  for the Danger zone to suggest: the workspace's catalog without the ones
-  it already has projects for, or the owner's installations' repositories.
-  Owner only. Suggestions, not the check: `change_repository/3` asks again.
+  The repositories `change_repository/3` could move the project to, as
+  `%{repo: "owner/name", private: boolean}`, for the Danger zone's picker:
+  the workspace catalog's repositories without a project yet (the same list
+  New track's "Add a repository…" shows), or the repositories of the
+  owner's installations. Owner only. The offer, not the check:
+  `change_repository/3` asks GitHub again.
   """
-  @spec repository_choices(User.t(), String.t()) :: {:ok, [String.t()]} | {:error, reason()}
+  @spec repository_choices(User.t(), String.t()) ::
+          {:ok, [%{repo: String.t(), private: boolean()}]} | {:error, reason()}
   def repository_choices(%User{} = user, id) do
     with {:ok, project} <- Ravix.Accounts.Access.project_of(user, id),
-         {:ok, names} <- choices(user, project) do
+         {:ok, repos} <- choices(user, project) do
       current = Project.normalize_repo(project.repo_full_name)
-      {:ok, names |> Enum.reject(&(Project.normalize_repo(&1) == current)) |> Enum.uniq()}
+
+      {:ok,
+       repos
+       |> Enum.reject(&(Project.normalize_repo(&1.repo) == current))
+       |> Enum.uniq_by(&Project.normalize_repo(&1.repo))}
     end
   end
 
   defp choices(user, %Project{workspace_id: workspace_id} = project) do
     if workspace_repos?(project) do
       with {:ok, %{repos: repos}} <- Repositories.catalog(user, workspace_id) do
-        {:ok, for(%{repo: repo, project: nil} <- repos, do: repo.full_name)}
+        {:ok,
+         for(
+           %{repo: repo, project: nil} <- repos,
+           do: %{repo: repo.full_name, private: repo.private == true}
+         )}
       end
     else
       with {:ok, app} <- github(),
@@ -536,7 +547,7 @@ defmodule Ravix.Projects do
         {:ok,
          Enum.flat_map(installations, fn installation ->
            case Ravix.GitHub.repositories(app, token, installation.id) do
-             {:ok, repos} -> Enum.map(repos, & &1.full_name)
+             {:ok, repos} -> Enum.map(repos, &%{repo: &1.full_name, private: &1.private == true})
              {:error, _} -> []
            end
          end)}
