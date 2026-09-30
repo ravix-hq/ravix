@@ -474,7 +474,14 @@
             }
             refresh={@health_refresh}
           />
-          <p :for={person <- Enum.filter(@present, & &1.typing)} class="hint">
+          <%!-- Other people only: presence counts you too, and "@you is
+            typing…" was an `@` beside the composer's popovers (RAV-95). --%>
+          <p
+            :for={
+              person <- Enum.filter(@present, &(&1.typing and &1.login != @current_user.login))
+            }
+            class="hint"
+          >
             @{person.login} is typing…
           </p>
           <%!-- `phx-change` is what `allow_upload/3` needs to see an image
@@ -581,6 +588,9 @@
               </ul>
               <%!-- Ask mode's `@` files and `/` commands. The hook fills the
                 list, names it and opens it, so the server leaves it alone.
+                It scrolls past eight rows, so it is focusable, as a scroller
+                must be; while it is open the box keeps focus (Tab there
+                picks a row) and drives it by `aria-activedescendant`.
                 Open is `hidden` rather than a `data-` flag: a patch strips
                 any `data-` attribute from an ignored element that the
                 template does not have, and keeps the rest. --%>
@@ -590,6 +600,7 @@
                 class="mention-options composer-suggestions"
                 role="listbox"
                 aria-label="Suggestions"
+                tabindex="0"
                 phx-update="ignore"
                 hidden
                 data-composer-suggestions

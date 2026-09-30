@@ -42,6 +42,12 @@ test('@ mentions a file, / picks a command, and Ctrl+L focuses the composer', as
   await expect(page.locator('#composer-suggestions-status')).toHaveText(/files?\. Up and down to choose/);
   const first = await list.getByRole('option').first().getAttribute('id');
   await expect(message).toHaveAttribute('aria-activedescendant', first);
+  // RAV-95: on the composer's own edges, and no "@you is typing…" beside it.
+  const box = await page.locator('.composer-box').boundingBox();
+  const shown = await list.boundingBox();
+  expect(Math.abs(shown.x - box.x)).toBeLessThanOrEqual(0.5);
+  expect(Math.abs(shown.width - box.width)).toBeLessThanOrEqual(0.5);
+  await expect(page.getByText(/@mentioner is typing/)).toHaveCount(0);
   expect((await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa']).analyze()).violations).toEqual([]);
   await page.keyboard.press('ArrowDown');
   await page.keyboard.press('ArrowUp');
@@ -50,17 +56,45 @@ test('@ mentions a file, / picks a command, and Ctrl+L focuses the composer', as
   await expect(list).toBeHidden();
 
   // Escape closes the list and leaves the words.
-  await message.pressSequentially('and @');
+  await message.pressSequentially('and @zzqq');
+  await expect(list.locator('[aria-disabled=true]')).toHaveText('No files match');
+  await expect(list).not.toHaveAttribute('aria-busy', 'true');
+  for (let i = 0; i < 4; i++) await page.keyboard.press('Backspace');
   await expect(page.getByRole('listbox', { name: 'Files to mention' })).toBeVisible();
   await page.keyboard.press('Escape');
   await expect(page.locator('#composer-suggestions')).toBeHidden();
   await expect(message).toHaveValue('Look at @src/router.ts and @');
 
-  // `/`: the agent's commands, then Ravix's.
+  // `/`: the agent's commands, then Ravix's. Opening the list moves
+  // nothing behind it, and the row Enter would pick is highlighted.
   await message.fill('');
+  const transcript = page.locator('#transcript-scroll');
+  await transcript.evaluate(el => { el.scrollTop = el.scrollHeight; });
+  const scrolled = await transcript.evaluate(el => el.scrollTop);
   await message.pressSequentially('/');
   const commands = page.getByRole('listbox', { name: 'Commands' });
   await expect(commands.getByRole('option', { name: /\/review/ })).toBeVisible();
+  expect(await transcript.evaluate(el => el.scrollTop)).toBe(scrolled);
+  const top = commands.getByRole('option').first();
+  await expect(top).toHaveAttribute('aria-selected', 'true');
+  await expect(message).toHaveAttribute('aria-activedescendant', await top.getAttribute('id'));
+  await page.keyboard.press('ArrowDown');
+  await expect(commands.getByRole('option').nth(1)).toHaveAttribute('aria-selected', 'true');
+  await expect(top).toHaveAttribute('aria-selected', 'false');
+  await page.keyboard.press('ArrowUp');
+  // Skills read as their purpose, not "Use this skill when…".
+  await expect(commands.getByRole('option', { name: /\/sprite/ })).toContainText('Users are modifying system configuration');
+  await expect(commands).not.toContainText(/Use (this skill )?when\b/);
+  // Eight whole rows, then it scrolls; the eighth is not cut off.
+  const fit = await commands.evaluate(el => {
+    const rows = [...el.querySelectorAll('[role=option]')];
+    const list = el.getBoundingClientRect();
+    const eighth = rows[7].getBoundingClientRect();
+    return { rows: rows.length, scrolls: el.scrollHeight > el.clientHeight,
+      eighthInside: eighth.bottom <= list.bottom - 1, ninthBelow: rows[8].getBoundingClientRect().top >= list.bottom - 6 };
+  });
+  expect(fit).toEqual({ rows: fit.rows, scrolls: true, eighthInside: true, ninthBelow: true });
+  expect(fit.rows).toBeGreaterThan(8);
   await expect(commands.getByRole('option', { name: /\/changes.*Ravix/ })).toBeVisible();
   expect((await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa']).analyze()).violations).toEqual([]);
   await message.pressSequentially('rev');
