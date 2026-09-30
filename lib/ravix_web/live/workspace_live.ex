@@ -1371,6 +1371,12 @@ defmodule RavixWeb.WorkspaceLive do
   defp scratch_section?(section),
     do: Map.get(section, :scratch) == true or Map.get(section, :shared) == true
 
+  # A group has a header, and its projects sit a step in under it, once the
+  # person has sections of their own or the group is scratch or shared.
+  # Unsectioned projects with nothing else beside them need no label.
+  defp section_labelled?(section, sections),
+    do: not is_nil(section.id) or sections != [] or scratch_section?(section)
+
   defp section_key(%{scratch: true}), do: "scratch"
   defp section_key(%{shared: true}), do: "shared"
   defp section_key(%{id: nil}), do: "other"
