@@ -2121,7 +2121,7 @@ section.first-prompt#project-start { align-self: center; padding: 32px 24px; }
   .workspace-mobile-nav a:hover { color: var(--ink); background: var(--surface-hover); }
   /* RAV-37: New track, the phone's create action, looks like the sidebar's;
      it is the one on screen, so Home's own is not repeated under it. */
-  .workspace-mobile-nav > button.primary { gap: 4px; margin-left: auto; background: var(--accent-soft); border-color: var(--accent-line); color: var(--accent-ink); }
+  .workspace-mobile-nav > button.primary { gap: 4px; background: var(--accent-soft); border-color: var(--accent-line); color: var(--accent-ink); }
   #home-new-track { display: none; }
   .workspace-mobile-nav a[aria-current="page"] { color: var(--ink); background: var(--surface-active); border-color: var(--line-strong); font-weight: 600; }
   .crumbs { flex-wrap: wrap; row-gap: 6px; height: auto; min-height: 44px; padding: 8px 12px; }
