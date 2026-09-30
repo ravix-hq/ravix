@@ -2,7 +2,7 @@ import { test, expect } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
 import { signIn, connectClaude } from './sign-in.js';
 import { openRepositories } from './new-track.js';
-import { draftChoice } from './draft-runtime.js';
+import { draftChoice, newThread } from './draft-runtime.js';
 
 test('conversation tabs, project picker, settings gears and inspector at desktop and 500px', async ({ page }) => {
   test.setTimeout(120_000);
@@ -25,7 +25,7 @@ test('conversation tabs, project picker, settings gears and inspector at desktop
   const composer = page.getByRole('textbox', { name: 'Message', exact: true });
   await expect(composer).toBeEnabled({ timeout: 30_000 });
   for (let i = 0; i < 3; i++) {
-    await page.getByRole('button', { name: 'Add thread', exact: true }).click();
+    await newThread(page);
     const draft = page.locator('#draft-runtime');
     await expect(draftChoice(page, 'runtime')).toHaveValue('claude');
     // Long enough that four title-only tabs (RAV-82) still overrun the row:
@@ -51,7 +51,7 @@ test('conversation tabs, project picker, settings gears and inspector at desktop
       await expect(tabs.last()).toBeFocused();
       await expect(page.locator('[role=tab][tabindex="0"]')).toHaveCount(1);
       await expect(tabs.last()).toHaveAttribute('tabindex', '0');
-      expect(await page.locator('#thread-switcher').evaluate(el => el.scrollLeft)).toBeGreaterThan(0);
+      expect(await page.locator('#thread-tablist').evaluate(el => el.scrollLeft)).toBeGreaterThan(0);
       await tabs.last().press('ArrowRight');
       await expect(tabs.first()).toBeFocused();
       await tabs.first().press('Enter');

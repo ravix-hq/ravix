@@ -104,6 +104,8 @@ defmodule RavixWeb.TrackLive do
         thread_draft: nil,
         thread_connect: nil,
         thread_error: nil,
+        # The thread whose tab is a rename field now (RAV-97), or nil.
+        thread_renaming: nil,
         # Whether the composer's box is empty, as its `Composer` hook last
         # said (`composer-draft`): the text itself stays in the browser.
         composer_empty?: true,
@@ -271,6 +273,48 @@ defmodule RavixWeb.TrackLive do
         {:noreply, error(socket, reason)}
     end
   end
+
+  # RAV-97: a tab's title becomes a field in place (a double-click, F2, or
+  # the thread's ⋯). Saving is only for the thread still being renamed, so
+  # the blur that follows Enter or Escape, arriving after it, does nothing.
+  def handle_event("edit-thread-title", %{"thread_id" => id}, socket) when is_binary(id) do
+    case Access.thread_access(socket.assigns.current_user, socket.assigns.track_id, id, :write) do
+      {:ok, _} -> {:noreply, assign(socket, thread_renaming: id)}
+      {:error, reason} -> {:noreply, error(socket, reason)}
+    end
+  end
+
+  def handle_event(
+        "rename-thread",
+        %{"thread_id" => id, "title" => title},
+        %{assigns: %{thread_renaming: id}} = socket
+      )
+      when is_binary(title) do
+    title = String.trim(title)
+    shown = Enum.find(shown_threads(socket.assigns), &(&1.id == id))
+
+    if title == "" or (shown && shown.title == title) do
+      {:noreply, assign(socket, thread_renaming: nil)}
+    else
+      case Tracks.rename_thread(socket.assigns.current_user, socket.assigns.track_id, id, title) do
+        :ok ->
+          {:noreply,
+           socket
+           |> assign(thread_renaming: nil)
+           |> update(:threads, fn threads ->
+             Enum.map(threads, &if(&1.id == id, do: %{&1 | title: title}, else: &1))
+           end)}
+
+        {:error, reason} ->
+          {:noreply, socket |> assign(thread_renaming: nil) |> error(reason)}
+      end
+    end
+  end
+
+  def handle_event("rename-thread", _, socket), do: {:noreply, socket}
+
+  def handle_event("cancel-thread-rename", _, socket),
+    do: {:noreply, assign(socket, thread_renaming: nil)}
 
   def handle_event("dismiss-billing-notice", _, socket),
     do: {:noreply, assign(socket, billing_notice: nil)}
@@ -1794,6 +1838,7 @@ defmodule RavixWeb.TrackLive do
       thread_generation: socket.assigns.thread_generation + 1,
       threads: [],
       thread_states: %{},
+      thread_renaming: nil,
       file_index: nil,
       file_index_loading?: false,
       project_id: project.id,
@@ -2334,19 +2379,31 @@ defmodule RavixWeb.TrackLive do
   attr :enabled, :boolean, required: true
   attr :draft, :map, default: nil, doc: "this page's unsent thread, if it has one"
   attr :track_label, :string, default: nil, doc: "`Track.label/1`: the first thread's name"
+  attr :can_write, :boolean, default: false, doc: "may rename threads and open terminals"
+  attr :renaming, :string, default: nil, doc: "the thread whose title is a field now"
 
   @doc """
   The track's threads as a row of tabs above the conversation, with "+" at the
   end when threads can be added. A track with one thread that cannot gain
   another has nothing to switch between, so the row is not drawn at all.
 
-  A draft ("+" pressed, nothing sent yet) is the trailing tab, with its own
-  close button beside the row: a tablist holds tabs and nothing else.
+  A draft ("+" › New thread, nothing sent yet) is the trailing tab, with its
+  own close button beside the row: a tablist holds tabs and nothing else.
+  For the same reason everything else the strip offers (RAV-97) sits after
+  the tablist rather than inside a tab: "All threads", listing every tab
+  when they overrun the row; the shown thread's ⋯, with Rename; and "+", a
+  menu of New thread and New terminal. There is no close on a tab: Ravix
+  has no way to close one thread, only the whole track.
 
   A tab shows its thread's title and nothing else (RAV-82). Its agent, model
   and state are in its tooltip and accessible name; a dot is drawn only while
-  it is running or has failed. The track's first thread, which every track
-  has and which is stored as "Default", is named after the track.
+  it is running or has failed. The selected tab is underlined in the accent.
+  The track's first thread, which every track has and which is stored as
+  "Default", is named after the track until somebody renames it.
+
+  Renaming (a double-click, F2, or ⋯ › Rename) lays a field over the tab
+  rather than putting one in the tablist. Enter or leaving the field saves;
+  Escape cancels. See the `ThreadTabs` hook.
 
   Manual-activation tabs use roving focus, Enter/Space selection, and one
   associated transcript panel. Narrow screens use the native picker.
@@ -2355,11 +2412,13 @@ defmodule RavixWeb.TrackLive do
     drafting? = match?(%{selected?: true}, assigns.draft)
     shown = if drafting?, do: nil, else: assigns.thread_id
     threads = Enum.map(assigns.threads, &first_thread_named(&1, assigns.track_label))
+    renaming = assigns.can_write && Enum.find(threads, &(&1.id == assigns.renaming))
 
     assigns =
       assign(assigns,
         threads: threads,
         shown: shown,
+        renaming: renaming,
         draft_label: assigns.draft && draft_label(assigns.draft),
         working:
           Enum.filter(threads, fn thread ->
@@ -2374,6 +2433,9 @@ defmodule RavixWeb.TrackLive do
       class="thread-tabs"
       phx-hook="ThreadTabs"
       aria-label="Threads"
+      data-can-rename={@can_write}
+      data-renaming={@renaming && @renaming.id}
+      phx-mounted={JS.ignore_attributes(["data-overflow"])}
     >
       <form id="thread-picker-form" class="thread-picker" phx-change="select-thread">
         <label for="thread-picker" class="sr-only">Thread</label>
@@ -2397,6 +2459,7 @@ defmodule RavixWeb.TrackLive do
           phx-click="select-thread"
           phx-value-thread_id={thread.id}
           data-thread-id={thread.id}
+          style={if @renaming && @renaming.id == thread.id, do: "anchor-name: --thread-renaming"}
           title={thread.title <> " · " <> agent_model(Map.get(thread, :runtime), Map.get(thread, :model)) <> " · " <> tab_status(thread, @states)}
           aria-label={thread.title <> " · " <> agent_model(Map.get(thread, :runtime), Map.get(thread, :model)) <> " · " <> tab_status(thread, @states) <> if(thread.unread && thread.id != @shown, do: " (unread)", else: "")}
         >
@@ -2427,6 +2490,24 @@ defmodule RavixWeb.TrackLive do
           <span class="thread-tab-title">New thread</span>
         </button>
       </div>
+      <form
+        :if={@renaming}
+        id="thread-rename-form"
+        class="thread-rename"
+        phx-submit="rename-thread"
+        data-thread-id={@renaming.id}
+      >
+        <input type="hidden" name="thread_id" value={@renaming.id} />
+        <input
+          id="thread-rename-input"
+          name="title"
+          type="text"
+          value={@renaming.title}
+          maxlength="200"
+          autocomplete="off"
+          aria-label="Thread name"
+        />
+      </form>
       <button
         :if={@draft}
         type="button"
@@ -2438,17 +2519,146 @@ defmodule RavixWeb.TrackLive do
       >
         <.icon name="x" size={12} />
       </button>
-      <button
-        :if={@enabled}
-        type="button"
-        class="ghost thread-add"
-        aria-label="Add thread"
-        title="Add thread"
-        phx-click="draft-thread"
-        disabled={@adding}
+      <div :if={@enabled} id="thread-add" class="chip-menu thread-add" phx-hook="ChipMenu">
+        <button
+          type="button"
+          id="thread-add-trigger"
+          class="ghost"
+          popovertarget="thread-add-menu"
+          aria-haspopup="dialog"
+          aria-expanded="false"
+          aria-controls="thread-add-menu"
+          aria-label="New thread or terminal"
+          title="New thread or terminal"
+          disabled={@adding}
+          phx-mounted={JS.ignore_attributes(["aria-expanded"])}
+          style="anchor-name: --thread-add"
+        >
+          <.icon name="plus" size={14} />
+        </button>
+        <div
+          id="thread-add-menu"
+          class="chip-popover chip-popover-below chip-popover-end thread-menu"
+          popover
+          role="dialog"
+          aria-label="Add"
+          style="position-anchor: --thread-add"
+        >
+          <button type="button" class="account-item" data-chip-close phx-click="draft-thread">
+            <span class="menu-check" aria-hidden="true"><.icon name="sparkle" size={14} /></span>New thread
+          </button>
+          <%!-- The dock's own "New terminal", with its checks and its limit;
+            the Commands view is where it opens on a narrow screen. --%>
+          <button
+            :if={@can_write}
+            type="button"
+            class="account-item"
+            data-chip-close
+            phx-click={
+              JS.push("shell-new", target: ".machine-dock-host")
+              |> JS.push("narrow-view", value: %{name: "terminal"})
+            }
+          >
+            <span class="menu-check" aria-hidden="true"><.icon name="terminal" size={14} /></span>New terminal
+          </button>
+        </div>
+      </div>
+      <div id="thread-overflow" class="chip-menu thread-overflow" phx-hook="ChipMenu">
+        <button
+          type="button"
+          id="thread-overflow-trigger"
+          class="ghost icon-button"
+          popovertarget="thread-overflow-menu"
+          aria-haspopup="dialog"
+          aria-expanded="false"
+          aria-controls="thread-overflow-menu"
+          aria-label="All threads"
+          title="All threads"
+          phx-mounted={JS.ignore_attributes(["aria-expanded"])}
+          style="anchor-name: --thread-overflow"
+        >
+          <.icon name="chevron" size={12} open={true} />
+        </button>
+        <div
+          id="thread-overflow-menu"
+          class="chip-popover chip-popover-below chip-popover-end thread-menu"
+          popover
+          role="dialog"
+          aria-label="All threads"
+          style="position-anchor: --thread-overflow"
+        >
+          <button
+            :for={thread <- @threads}
+            type="button"
+            class="account-item"
+            data-chip-close
+            aria-current={if thread.id == @shown, do: "true"}
+            phx-click="select-thread"
+            phx-value-thread_id={thread.id}
+          >
+            <span class="menu-check" aria-hidden="true"><.icon
+              :if={thread.id == @shown}
+              name="check"
+              size={14}
+            /></span><span class="truncate">{thread.title}</span>
+          </button>
+          <button
+            :if={@draft}
+            type="button"
+            class="account-item"
+            data-chip-close
+            aria-current={if @draft.selected?, do: "true"}
+            phx-click="select-thread"
+            phx-value-thread_id="draft"
+          >
+            <span class="menu-check" aria-hidden="true"><.icon
+              :if={@draft.selected?}
+              name="check"
+              size={14}
+            /></span><span class="truncate">New thread</span>
+          </button>
+        </div>
+      </div>
+      <div
+        :if={(@can_write and @shown) && Enum.any?(@threads, &(&1.id == @shown))}
+        id="thread-more"
+        class="chip-menu thread-more"
+        phx-hook="ChipMenu"
       >
-        <.icon name="plus" size={14} />
-      </button>
+        <button
+          type="button"
+          id="thread-more-trigger"
+          class="ghost icon-button"
+          popovertarget="thread-more-menu"
+          aria-haspopup="dialog"
+          aria-expanded="false"
+          aria-controls="thread-more-menu"
+          aria-label="More for this thread"
+          title="More for this thread"
+          phx-mounted={JS.ignore_attributes(["aria-expanded"])}
+          style="anchor-name: --thread-more"
+        >
+          <.icon name="more" size={14} />
+        </button>
+        <div
+          id="thread-more-menu"
+          class="chip-popover chip-popover-below chip-popover-end thread-menu"
+          popover
+          role="dialog"
+          aria-label="More for this thread"
+          style="position-anchor: --thread-more"
+        >
+          <button
+            type="button"
+            class="account-item"
+            data-chip-close
+            phx-click="edit-thread-title"
+            phx-value-thread_id={@shown}
+          >
+            <span class="menu-check" aria-hidden="true"><.icon name="pencil" size={14} /></span>Rename thread<kbd class="menu-kbd">F2</kbd>
+          </button>
+        </div>
+      </div>
     </nav>
     <p :if={@working != []} id="threads-working" class="threads-working" role="status">
       {Enum.map_join(@working, "; ", fn thread ->
@@ -2457,6 +2667,10 @@ defmodule RavixWeb.TrackLive do
     </p>
     """
   end
+
+  # The tabs' titles, as the strip draws them.
+  defp shown_threads(%{threads: threads, track: track}),
+    do: Enum.map(threads, &first_thread_named(&1, track && Track.label(track)))
 
   defp first_thread_named(%{default: true, title: "Default"} = thread, label)
        when is_binary(label) and label != "",

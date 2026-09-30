@@ -200,6 +200,8 @@
           adding={@track.sandbox_layout == :dedicated and @track.sandbox_state != :ready}
           enabled={Ravix.Config.threads_enabled?()}
           track_label={Track.label(@track)}
+          can_write={@track.level != :read}
+          renaming={@thread_renaming}
         />
         <div
           id="transcript-scroll"

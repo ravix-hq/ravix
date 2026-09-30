@@ -2129,6 +2129,29 @@ defmodule Ravix.Tracks do
   end
 
   @doc """
+  Rename one thread's tab (RAV-97): its label, and only its label.
+
+  Anybody who can prompt on the track may name its threads. Unlike the
+  track's own name, a thread's appears in nobody's rail; it is a label in
+  the strip over a conversation they can already write to. A person's name
+  is `:manual`, so the automatic title (RAV-48) never replaces it.
+  """
+  @spec rename_thread(User.t(), String.t(), String.t(), String.t()) :: :ok | {:error, reason()}
+  def rename_thread(%User{} = user, track_id, thread_id, title) do
+    with {:ok, %{track: track, project: project, thread: thread}} <-
+           Access.thread_access(user, track_id, thread_id, :write),
+         title when is_binary(title) <-
+           text(title, 200) |> non_empty() ||
+             {:error, {:unprocessable, "no_title", "A thread needs a name."}},
+         :ok <- Store.rename_thread(track.id, thread.id, title) do
+      publish_tracks(project.id, track.id)
+    else
+      :stale -> {:error, :not_found}
+      error -> error
+    end
+  end
+
+  @doc """
   Close the track and take the worktree away.
 
   The branch is left alone unless `delete_branch: true`: it may be pushed,

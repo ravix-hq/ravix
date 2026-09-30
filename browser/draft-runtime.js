@@ -26,3 +26,9 @@ export async function chooseDraft(page, field, value) {
   if (field === 'runtime') await page.keyboard.press('Escape');
   await expect(menu(page)).toBeHidden();
 }
+
+// "+" is a menu (RAV-97): New thread opens the draft, New terminal a shell.
+export const newThread = async page => {
+  await page.locator('#thread-add-trigger').click();
+  await page.locator('#thread-add-menu').getByRole('button', { name: 'New thread', exact: true }).click();
+};
