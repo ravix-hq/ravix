@@ -1,5 +1,5 @@
 import {beforeEach, expect, test} from "bun:test"
-import {Composer, commandQuery, fileQuery, fuzzy, rankCommands, rankFiles, shortcutLabel} from "../js/hooks/composer.js"
+import {Composer, commandQuery, fileQuery, fuzzy, purpose, rankCommands, rankFiles, shortcutLabel} from "../js/hooks/composer.js"
 import {key, mountHook} from "./setup.js"
 
 const COMMANDS = [
@@ -157,7 +157,7 @@ test("Tab and a click also choose, and a file list that failed or was cut short 
   receive("composer:files", {paths: PATHS, truncated: true})
   expect(menu().querySelector("[aria-disabled=true]").textContent).toContain("Not every file was searched")
   type(hook.el, "@ @zzz")
-  expect(menu().querySelector("[aria-disabled=true]").textContent).toBe("No files match.")
+  expect(menu().querySelector("[aria-disabled=true]").textContent).toBe("No files match")
 
   type(hook.el, "@ @mix")
   key(hook.el, "Tab")
@@ -168,6 +168,13 @@ test("Tab and a click also choose, and a file list that failed or was cut short 
   shown()[0].querySelector("strong").dispatchEvent(down)
   expect(down.defaultPrevented).toBe(true)
   expect(hook.el.value).toBe("then @README.md ")
+
+  // The list's own edge keeps the caret in the box.
+  type(hook.el, "then @READ")
+  const edge = new MouseEvent("mousedown", {bubbles: true, cancelable: true})
+  menu().dispatchEvent(edge)
+  expect(edge.defaultPrevented).toBe(true)
+  expect(hook.el.value).toBe("then @READ")
 
   // The status line is not something to choose.
   type(hook.el, "@zzz")
@@ -292,4 +299,135 @@ test("⌘L or Ctrl+L focuses the box from the page, but not from the terminal", 
   // aborting happy-dom with one still queued leaves its timers stalled, and
   // every `setTimeout` in whichever test file runs next never fires.
   await new Promise(resolve => setTimeout(resolve))
+})
+
+// RAV-95 ─────────────────────────────────────────────────────────────────
+
+// Everything the page says, less what is typed in the box.
+function textOutsideTheBox() {
+  const copy = document.body.cloneNode(true)
+  for (const el of copy.querySelectorAll("textarea, [data-composer-announce]")) el.remove()
+  return copy.textContent
+}
+
+test("the @ that opens the list stays in the box: nothing outside it draws one, searching, found or on to /", () => {
+  const {hook, receive} = mountHook(Composer, "textarea")
+  expect(textOutsideTheBox()).not.toContain("@")
+  type(hook.el, "@")
+  expect(menu().hidden).toBe(false)
+  expect(textOutsideTheBox()).not.toContain("@")
+  receive("composer:files", {paths: PATHS, truncated: false})
+  type(hook.el, "@rout")
+  expect(shown().length).toBeGreaterThan(0)
+  expect(textOutsideTheBox()).not.toContain("@")
+  type(hook.el, "/")
+  expect(menu().getAttribute("aria-label")).toBe("Commands")
+  expect(textOutsideTheBox()).not.toContain("@")
+})
+
+test("searching shows a spinner and marks the list busy, then No files match once the files arrive", () => {
+  const {hook, receive} = mountHook(Composer, "textarea")
+  type(hook.el, "see @zzz")
+  const status = menu().querySelector("[aria-disabled=true]")
+  expect(status.textContent).toBe("Searching files…")
+  expect(status.querySelector(".suggestion-spinner[aria-hidden=true]")).not.toBeNull()
+  expect(menu().getAttribute("aria-busy")).toBe("true")
+
+  receive("composer:files", {paths: PATHS, truncated: false})
+  const done = menu().querySelector("[aria-disabled=true]")
+  expect(done.textContent).toBe("No files match")
+  expect(done.querySelector(".suggestion-spinner")).toBeNull()
+  expect(menu().hasAttribute("aria-busy")).toBe(false)
+  expect(announced()).toBe("No files match")
+
+  type(hook.el, "see ")
+  expect(menu().hidden).toBe(true)
+  expect(menu().hasAttribute("aria-busy")).toBe(false)
+})
+
+test("/ highlights its first row as it opens, and the arrow keys move the highlight and aria-activedescendant", () => {
+  const {hook} = mountHook(Composer, "textarea")
+  type(hook.el, "/")
+  const rows = shown()
+  expect(rows[0].getAttribute("aria-selected")).toBe("true")
+  expect(rows.slice(1).every(r => r.getAttribute("aria-selected") === "false")).toBe(true)
+  expect(hook.el.getAttribute("aria-activedescendant")).toBe(rows[0].id)
+
+  key(hook.el, "ArrowDown")
+  expect(selected().querySelector("strong").textContent).toBe("/compact")
+  expect(hook.el.getAttribute("aria-activedescendant")).toBe(selected().id)
+  expect(menu().querySelectorAll("[aria-selected=true]")).toHaveLength(1)
+  key(hook.el, "ArrowUp")
+  key(hook.el, "ArrowUp")
+  expect(selected().querySelector("strong").textContent).toBe("/changes")
+  expect(hook.el.getAttribute("aria-activedescendant")).toBe(selected().id)
+})
+
+test("moving the highlight scrolls the list, never the page around it", () => {
+  const {hook} = mountHook(Composer, "textarea")
+  const into = HTMLElement.prototype.scrollIntoView
+  let pageScrolls = 0
+  HTMLElement.prototype.scrollIntoView = () => pageScrolls++
+  try {
+    type(hook.el, "/")
+    // happy-dom lays nothing out: rows 30px apart in a 60px window.
+    Object.defineProperty(menu(), "clientHeight", {configurable: true, value: 60})
+    shown().forEach((row, i) => {
+      Object.defineProperty(row, "offsetTop", {configurable: true, value: i * 30})
+      Object.defineProperty(row, "offsetHeight", {configurable: true, value: 30})
+    })
+    key(hook.el, "ArrowDown")
+    expect(menu().scrollTop).toBe(0)
+    // The rows are drawn again on each move; the next ones get the same layout.
+    const layout = () => shown().forEach((row, i) => {
+      Object.defineProperty(row, "offsetTop", {configurable: true, value: i * 30})
+      Object.defineProperty(row, "offsetHeight", {configurable: true, value: 30})
+    })
+    layout()
+    menu().scrollTop = 0
+    key(hook.el, "ArrowDown")
+    layout()
+    key(hook.el, "ArrowDown")
+    layout()
+    key(hook.el, "ArrowUp")
+    key(hook.el, "ArrowDown")
+    expect(pageScrolls).toBe(0)
+  } finally {
+    HTMLElement.prototype.scrollIntoView = into
+  }
+})
+
+test("a command's own purpose: the first sentence, without the skill boilerplate, or else its name", () => {
+  expect(purpose("Use this skill when users are modifying system configuration, starting dev servers. Also use it for checkpoints.", "sprite"))
+    .toBe("Users are modifying system configuration, starting dev servers")
+  expect(purpose("Use when adding regression tests or raising coverage. Covers hooks.", "ravix-testing"))
+    .toBe("Adding regression tests or raising coverage")
+  expect(purpose("use this when, the build is red!", "fix")).toBe("The build is red")
+  expect(purpose("Use this skill when users want external APIs (GitHub, Slack, etc.) with keys. More.", "api"))
+    .toBe("Users want external APIs (GitHub, Slack, etc.) with keys")
+  expect(purpose("Summarise, e.g. a long thread. Then stop.", "compact")).toBe("Summarise, e.g. a long thread")
+  // Only those phrases; "whenever" is not "when".
+  expect(purpose("Use this skill whenever you draw a chart.", "dataviz")).toBe("Use this skill whenever you draw a chart")
+  expect(purpose("Review the changes on this branch", "review")).toBe("Review the changes on this branch")
+  expect(purpose("Use this skill when.", "empty")).toBe("empty")
+  expect(purpose("Use when:  …", "dots")).toBe("dots")
+  expect(purpose("", "bare")).toBe("bare")
+  expect(purpose(undefined, "bare")).toBe("bare")
+  expect(purpose("  Use   this skill  when   the\n  sky falls  ", "sky")).toBe("The sky falls")
+})
+
+test("/ rows show each command's purpose, keep the whole description in the title, and fall back to the name", () => {
+  document.querySelector("textarea").dataset.commands = JSON.stringify([
+    {name: "sprite", description: "Use this skill when users start dev servers. Also for checkpoints.", source: "agent"},
+    {name: "blank", description: "Use this skill when.", source: "agent"},
+    {name: "plain", source: "agent"},
+  ])
+  const {hook} = mountHook(Composer, "textarea")
+  type(hook.el, "/")
+  const [sprite, blank, plain] = shown()
+  expect(sprite.querySelector(".dim").textContent).toBe("Users start dev servers")
+  expect(sprite.title).toBe("Use this skill when users start dev servers. Also for checkpoints.")
+  expect(blank.querySelector(".dim").textContent).toBe("blank")
+  expect(plain.querySelector(".dim").textContent).toBe("")
+  expect(plain.hasAttribute("title")).toBe(false)
 })
