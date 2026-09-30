@@ -345,7 +345,10 @@ defmodule Ravix.Tracks.FollowerTest do
     assert {:error, :not_open} = Follower.subscribe(unopened.id)
   end
 
-  test "a title the runtime gives its session renames an automatically titled track", ctx do
+  # RAV-107: Fountain saves the harness title on the conversation, and
+  # `Ravix.Tracks.Titling` adopts it from the conversation list. The stream
+  # is not a second source.
+  test "a title the runtime gives its session on the stream titles nothing", ctx do
     track = insert_track(conversation_id: ctx.conversation_id, title: "Pull Latest Main")
 
     Repo.update_all(from(t in Ravix.Tracks.Track, where: t.id == ^track.id),
@@ -388,9 +391,11 @@ defmodule Ravix.Tracks.FollowerTest do
     assert {:ok, _follower} = subscribe(%{ctx | track_id: track.id}, client: client)
 
     id = track.id
-    assert_receive {:transcript, ^id, %Event{id: 1} = event}, 1_000
-    assert Event.session_title(event) == "Main branch pull"
-    assert_receive {:hub, %Ravix.Hub.Event{name: :tracks, track_id: ^id}}, 2_000
-    assert Repo.get!(Ravix.Tracks.Track, id).title == "Main branch pull"
+    # Titling used to run inline (tests titled in the caller) before this
+    # event was broadcast, so by now it would have written and published.
+    assert_receive {:transcript, ^id, %Event{id: 1}}, 1_000
+    refute_received {:hub, %Ravix.Hub.Event{name: :tracks}}
+    assert Repo.get!(Ravix.Tracks.Track, id).title == "Pull Latest Main"
+    assert Repo.get!(Ravix.Tracks.Thread, id).title == "Pull Latest Main"
   end
 end

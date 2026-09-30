@@ -754,11 +754,26 @@ defmodule Ravix.Tracks.Store do
     result
   end
 
-  @doc "The thread on this track that `conversation_id` belongs to."
-  @spec thread_by_conversation(String.t(), String.t()) :: Thread.t() | nil
-  def thread_by_conversation(track_id, conversation_id)
-      when is_binary(track_id) and is_binary(conversation_id),
-      do: Repo.get_by(Thread, track_id: track_id, conversation_id: conversation_id)
+  @doc """
+  The threads of `project_id` on any of `conversation_ids` that an automatic
+  title may still replace (no `title_source`, or `:auto`), each with its track.
+  """
+  @spec auto_titled_threads(String.t(), [String.t()]) :: [{Thread.t(), Track.t()}]
+  def auto_titled_threads(_project_id, []), do: []
+
+  def auto_titled_threads(project_id, conversation_ids)
+      when is_binary(project_id) and is_list(conversation_ids) do
+    Repo.all(
+      from(th in Thread,
+        join: t in Track,
+        on: t.id == th.track_id,
+        where:
+          t.project_id == ^project_id and th.conversation_id in ^conversation_ids and
+            (is_nil(th.title_source) or th.title_source == :auto),
+        select: {th, t}
+      )
+    )
+  end
 
   @doc """
   Give `thread` an automatic title, and its track the same one when this is

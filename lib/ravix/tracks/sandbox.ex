@@ -250,7 +250,6 @@ defmodule Ravix.Tracks.Sandbox do
       vault_id: op.resource_ids["vault_id"],
       sandbox_id: op.resource_ids["sandbox_id"],
       channel_id: op.resource_ids["channel_id"],
-      title: track.title,
       prompt: Spec.open_dedicated_prompt(project, track)
     }
 

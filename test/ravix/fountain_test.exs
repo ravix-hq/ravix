@@ -12,7 +12,7 @@ defmodule Ravix.FountainTest do
 
   defp fake(expectations, opts \\ []), do: FakeTransport.client(expectations, opts)
 
-  # All seven fields, spelled out, with the values that put nothing on the
+  # All six fields, spelled out, with the values that put nothing on the
   # wire; each test then names only the ones it is about. `struct!/2` and not
   # a map merge, so a field misspelled in a test raises here rather than
   # silently testing the default.
@@ -23,7 +23,6 @@ defmodule Ravix.FountainTest do
       vault_id: nil,
       sandbox_id: nil,
       channel_id: "ch",
-      title: nil,
       prompt: nil
     }
     |> struct!(fields)
@@ -575,7 +574,6 @@ defmodule Ravix.FountainTest do
         environment_id: "env-1",
         vault_id: "vault-1",
         sandbox_mode: "persistent",
-        title: "Fix the build",
         prompt: "Open the track.",
         channel_id: "ravix:p1:fix-the-build:1",
         fresh: true
@@ -594,7 +592,6 @@ defmodule Ravix.FountainTest do
                    agent_id: "agent-1",
                    environment_id: "env-1",
                    vault_id: "vault-1",
-                   title: "Fix the build",
                    channel_id: "ravix:p1:fix-the-build:1",
                    prompt: "Open the track."
                  )
@@ -623,7 +620,6 @@ defmodule Ravix.FountainTest do
                    agent_id: "agent-1",
                    environment_id: "env-1",
                    sandbox_id: "sb-1",
-                   title: "",
                    channel_id: "ravix:p1:next:1"
                  )
                )

@@ -411,7 +411,7 @@ defmodule Ravix.Fountain do
   A failed create with `Error.unknown_outcome?/1` must be reconciled before
   retrying: `fresh: true` does not make allocation idempotent.
 
-  `Ravix.Fountain.Launch` names all seven fields and enforces every one of
+  `Ravix.Fountain.Launch` names all six fields and enforces every one of
   them, including the ones that are optional *on the wire*: the identity
   rule above is only a rule if a caller cannot leave half of it out, and a
   map let them.
@@ -446,7 +446,6 @@ defmodule Ravix.Fountain do
       |> optional("environment_id", launch.environment_id)
       |> optional("vault_id", launch.vault_id)
       |> sandbox_identity(launch.sandbox_id)
-      |> optional("title", launch.title)
       |> optional("prompt", launch.prompt)
       |> optional("model", launch.model)
       |> optional("inference_credential_id", launch.inference_credential_id)
