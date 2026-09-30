@@ -34,6 +34,7 @@
 //   LocalTime       a timestamp in the viewer's own zone and locale
 //   SubmitOnEnter   the create dialog's first prompt: Enter creates, Shift+Enter is a new line
 //   HeaderFit       a track header's status chips: whole words or just their icons
+//   SharePopover    the Share popover placed under its button; Share again closes it
 //
 // Adding a hook is a product decision, not a convenience. Say why in its
 // file's header, and list it here.
@@ -61,6 +62,7 @@ import {SettingsSections} from "./hooks/settings_sections"
 import {ProjectSections} from "./hooks/project_sections"
 import {ProjectFormFocus} from "./hooks/project_form_focus"
 import {CopyCode} from "./hooks/copy_code"
+import {SharePopover} from "./hooks/share_popover"
 import {ShareMention} from "./hooks/share_mention"
 import {TurnTimer} from "./hooks/turn_timer"
 import {RelativeTime} from "./hooks/relative_time"
@@ -70,7 +72,7 @@ import {HeaderFit} from "./hooks/header_fit"
 
 
 
-const hooks = {ThreadTabs, AgentConfirmation, Theme, PanelResize, PanelToggle, TranscriptTail, Composer, Terminal, Notify, SettingsSections, ProjectTree, QuickJump, ProjectSections, CopyCode, ProjectFormFocus, ShareMention, TurnTimer, RelativeTime, SubmitOnEnter, Shell, HeaderFit, LocalTime}
+const hooks = {ThreadTabs, AgentConfirmation, Theme, PanelResize, PanelToggle, TranscriptTail, Composer, Terminal, Notify, SettingsSections, ProjectTree, QuickJump, ProjectSections, CopyCode, ProjectFormFocus, ShareMention, SharePopover, TurnTimer, RelativeTime, SubmitOnEnter, Shell, HeaderFit, LocalTime}
 
 const csrfToken = document.querySelector("meta[name='csrf-token']").getAttribute("content")
 clearTransportFallback(window)

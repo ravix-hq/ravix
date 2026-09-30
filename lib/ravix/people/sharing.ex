@@ -12,6 +12,10 @@ defmodule Ravix.People.Sharing do
       the project machine, which cannot be private (#299).
     * `manage_people` -- whoever may add and remove people, on a private
       track only; a workspace-visible track already reaches everyone.
+    * `general_level` -- the level everyone in the workspace reaches a
+      workspace-visible track at (the workspace's default, as
+      `Ravix.People.workspace_base/2` reports it); nil on a private track,
+      which gives nobody anything by general access.
     * `holders` -- the live workspace members it is shared with.
     * `access` -- everyone who reaches the track, with their level and
       where it comes from (RAV-75): `:owner` (the project's owner, or a
@@ -32,6 +36,7 @@ defmodule Ravix.People.Sharing do
     :workspace,
     :visibility,
     :private_allowed,
+    :general_level,
     :set_visibility,
     :manage_people,
     :holders,
@@ -46,6 +51,7 @@ defmodule Ravix.People.Sharing do
           workspace: String.t(),
           visibility: :project | :private,
           private_allowed: boolean(),
+          general_level: Ravix.Accounts.Access.level() | nil,
           set_visibility: boolean(),
           manage_people: boolean(),
           holders: [Ravix.People.Profile.t()],
