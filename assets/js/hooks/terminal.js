@@ -26,6 +26,11 @@
 //   "exec"   %{"command" => "git status"}   on Enter, with a non-empty line
 //   "clear"  %{}                             on Ctrl+L or Cmd+L
 //
+// Ctrl+` anywhere on the page opens a new interactive terminal: it clicks
+// the dock menu's "New terminal" item (`#dock-shell-new`), so the server's
+// own event, limit and permission apply, and nothing happens when that item
+// is not there (a Read member) or is disabled (the tab limit).
+//
 // The output follows itself: after every patch the scroller goes to the
 // bottom, unless the reader has scrolled up to read back through a long
 // build's output, in which case being yanked to the bottom by its last line
@@ -79,7 +84,21 @@ export const Terminal = {
     this.el.addEventListener("input", e => {
       if (e.target === this.input()) this.cursor = null
     })
+    this.onShortcut = e => {
+      if (!e.ctrlKey || e.metaKey || e.altKey || (e.key !== "`" && e.code !== "Backquote")) return
+      const item = document.getElementById("dock-shell-new")
+      if (!item || item.disabled) return
+      e.preventDefault()
+      item.click()
+    }
+    // Capture, so a focused xterm, which stops the keys it handles, does not
+    // swallow it.
+    window.addEventListener("keydown", this.onShortcut, true)
     this.stick()
+  },
+
+  destroyed() {
+    window.removeEventListener("keydown", this.onShortcut, true)
   },
 
   updated() {

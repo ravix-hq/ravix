@@ -3484,6 +3484,13 @@ defmodule RavixWeb.TrackLiveTest do
     end
   end
 
+  test "Checks with no runs says so directly under the Git rows", ctx do
+    stub(Tracks, :checks, fn _, _ -> {:ok, %{checks_fixture(:open) | runs: []}} end)
+    render_click(ctx.view, "panel", %{name: "checks"})
+    render_async(ctx.view)
+    assert has_element?(ctx.view, "#checks-empty.empty.pane.checks-empty")
+  end
+
   test "untracked files are listed as new, and one too large to show says so", ctx do
     untracked =
       "diff --git a/notes.md b/notes.md\nnew file mode 100644\n--- /dev/null\n" <>
@@ -3684,8 +3691,18 @@ defmodule RavixWeb.TrackLiveTest do
 
     assert has_element?(ctx.view, "#inspector-toggle .label-show", "Show inspector")
 
-    button = "nav[aria-label='Inspector panels'] button.panel-refresh[aria-label=Refresh]"
-    assert has_element?(ctx.view, "#{button} svg")
+    # Labelled, and its tooltip says which tab it reads again (RAV-101).
+    button = "nav[aria-label='Inspector panels'] button.panel-refresh"
+
+    assert has_element?(
+             ctx.view,
+             "#{button}[aria-label='Refresh files'][title='Refresh files'] svg"
+           )
+
+    render_click(ctx.view, "panel", %{name: "checks"})
+    assert has_element?(ctx.view, "#{button}[aria-label='Refresh checks']")
+    render_click(ctx.view, "panel", %{name: "files"})
+    render_async(ctx.view)
     refute has_element?(ctx.view, ".workspace-panel button", "Refresh")
 
     expect(Tracks, :files, fn _, _, nil ->
@@ -5109,7 +5126,22 @@ defmodule RavixWeb.TrackLiveTest do
     assert rendered =~ "32.0 MB"
     assert rendered =~ "12%"
     refute rendered =~ "33554432"
-    assert has_element?(ctx.view, ~s(meter[aria-label="CPU in use"][value="0.12"]))
+    # A 6px bar drawn by the page, still a meter to assistive tech.
+    assert has_element?(
+             ctx.view,
+             ~s(.stat-bar[role=meter][aria-label="CPU in use"][aria-valuenow="12"][aria-valuetext="12%"])
+           )
+
+    assert has_element?(ctx.view, ~s(.stat-bar > span[style="width: 12.0%"]))
+    # When the readings were taken, kept current by `RelativeTime`.
+    assert has_element?(ctx.view, "#machine-stats-updated", "Updated")
+    assert has_element?(ctx.view, "#machine-stats-updated-at[phx-hook=RelativeTime]", "just now")
+
+    assert has_element?(
+             ctx.view,
+             "#machine-stats-updated button[aria-label='Refresh machine stats']"
+           )
+
     # A reading the machine could not give is left out, not drawn as a blank
     # row: `mem_total_bytes` is nil and no "Memory total" appears.
     refute rendered =~ "Memory total"

@@ -898,8 +898,8 @@
             class={["ghost panel-refresh", @panel.busy? && "busy"]}
             phx-click="refresh-panel"
             disabled={@panel.busy?}
-            aria-label="Refresh"
-            title="Refresh"
+            aria-label={refresh_label(@panel.tab)}
+            title={refresh_label(@panel.tab)}
           >
             <.icon name="refresh" size={14} />
           </button>

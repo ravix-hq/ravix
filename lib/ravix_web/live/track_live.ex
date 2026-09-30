@@ -2855,6 +2855,12 @@ defmodule RavixWeb.TrackLive do
     """
   end
 
+  # The toolbar's one icon says what it refreshes.
+  defp refresh_label(:files), do: "Refresh files"
+  defp refresh_label(:changes), do: "Refresh changes"
+  defp refresh_label(:checks), do: "Refresh checks"
+  defp refresh_label(:preview), do: "Refresh preview"
+
   # Nothing running and nothing failed: the Preview tab is its empty state.
   defp preview_idle?(preview), do: preview.state == :stopped and !preview.error
 
