@@ -1,6 +1,7 @@
 import { test, expect } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
 import { signIn, connectClaude } from './sign-in.js';
+import { chooseDraft, draftChoice, draftModelLabel, draftModels, draftPill } from './draft-runtime.js';
 
 // RAV-30: "+" adds a draft tab on the person's default agent and model; the
 // first message creates the thread and sends that prompt as one step.
@@ -34,7 +35,10 @@ test('a draft thread becomes a real thread with its first message running, wide 
     const draft = page.locator('#draft-runtime');
     await expect(page.locator('#new-thread-dialog')).toHaveCount(0);
     await expect(page.locator('#draft-thread-empty')).toContainText('Your first message starts this thread.');
-    await expect(draft.getByLabel('Agent', { exact: true })).toHaveValue('claude');
+    await expect(draftChoice(page, 'runtime')).toHaveValue('claude');
+    // RAV-80: one model control, the composer's pill, and no native selects.
+    await expect(page.locator('#composer-form select')).toHaveCount(0);
+    await expect(page.locator('#composer-form [aria-haspopup="dialog"]')).toHaveCount(1);
     if (width === 1280) {
       await expect(tabs.locator('#thread-tab-draft')).toHaveAttribute('aria-selected', 'true');
       await expect(tabs.locator('#thread-tab-draft')).toContainText('New thread');
@@ -44,13 +48,12 @@ test('a draft thread becomes a real thread with its first message running, wide 
     }
     await accessible();
     // Change the model: the draft names the new one before anything is sent.
-    const models = draft.getByLabel('Model', { exact: true });
-    const current = await models.inputValue();
-    const values = await models.locator('option').evaluateAll(nodes => nodes.map(n => n.value));
-    const next = values.find(value => value !== current);
+    const current = await draftChoice(page, 'model').inputValue();
+    const next = (await draftModels(page)).find(value => value !== current);
     expect(next).toBeTruthy();
-    await models.selectOption(next);
-    const label = (await models.locator(`option[value="${next}"]`).textContent()).trim();
+    const label = (await draftModelLabel(page, next)).trim();
+    await chooseDraft(page, 'model', next);
+    await expect(draftPill(page)).toContainText(label);
     await expect(page.locator('#thread-picker option[value="draft"]')).toContainText(label);
     await composer.fill(prompt);
     await page.getByRole('button', { name: 'Send', exact: true }).click();
@@ -69,7 +72,7 @@ test('a draft thread becomes a real thread with its first message running, wide 
     await expect(page.locator('.workspace-turn').filter({ hasText: prompt }).locator('.agent-terminal-output > div > .md'))
       .toContainText('There is one TODO worth doing here', { timeout: 20_000 });
     await expect(page.locator('#model-trigger')).toBeEnabled({ timeout: 30_000 });
-    await expect(page.locator('#thread_draft-runtime')).toHaveCount(0);
+    await expect(draftPill(page)).toHaveCount(0);
     await expect(composer).toHaveValue('');
     await accessible();
   }

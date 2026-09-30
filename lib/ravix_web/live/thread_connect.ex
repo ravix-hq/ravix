@@ -41,6 +41,10 @@ defmodule RavixWeb.Live.ThreadConnect do
   attr :current_user, :any, required: true
   attr :session_hash, :string, required: true
 
+  attr :buttons, :boolean,
+    default: true,
+    doc: "the Connect buttons; false where the agent menu offers them (RAV-80)"
+
   def panel(assigns) do
     ~H"""
     <div :if={@options && @options.owner?} class="thread-connections">
@@ -56,7 +60,7 @@ defmodule RavixWeb.Live.ThreadConnect do
       </p>
       <button
         :for={choice <- @options.runtimes}
-        :if={choice.enabled && !choice.connected}
+        :if={@buttons && choice.enabled && !choice.connected}
         type="button"
         class="secondary"
         phx-click="connect-thread-agent"

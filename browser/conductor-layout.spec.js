@@ -2,6 +2,7 @@ import { test, expect } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
 import { signIn, connectClaude } from './sign-in.js';
 import { openRepositories } from './new-track.js';
+import { draftChoice } from './draft-runtime.js';
 
 test('conversation tabs, project picker, settings gears and inspector at desktop and 500px', async ({ page }) => {
   test.setTimeout(120_000);
@@ -26,7 +27,7 @@ test('conversation tabs, project picker, settings gears and inspector at desktop
   for (let i = 0; i < 3; i++) {
     await page.getByRole('button', { name: 'Add thread', exact: true }).click();
     const draft = page.locator('#draft-runtime');
-    await expect(draft.getByLabel('Agent', { exact: true })).toHaveValue('claude');
+    await expect(draftChoice(page, 'runtime')).toHaveValue('claude');
     await composer.fill(`Layout thread ${i + 1}`);
     await page.getByRole('button', { name: 'Send', exact: true }).click();
     await expect(draft).not.toBeVisible();

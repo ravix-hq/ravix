@@ -702,7 +702,7 @@ test('project, track, streaming, image upload, reconnect, and revocation', async
   // the panel, so the row is named by its own text and not by the panel alone.
   await composer.fill('Explain the queued project for the browser smoke test');
   await composer.press('Enter');
-  const queued = page.locator('.workspace-queue > div')
+  const queued = page.locator('.workspace-queue > li')
     .filter({ hasText: 'Explain the queued project for the browser smoke test' });
   await expect(queued).toHaveCount(1);
   // The status chip is what makes this the queue rather than the transcript.

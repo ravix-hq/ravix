@@ -26,8 +26,11 @@ test('@ mentions a file, / picks a command, and Ctrl+L focuses the composer', as
   await expect(message).not.toBeFocused();
   await page.keyboard.press('Control+l');
   await expect(message).toBeFocused();
-  // The hint is for wide screens: on a narrow track it would wrap the
-  // composer's row and take room from the transcript.
+  // The hint is for reaching the box, so it goes once the box has focus
+  // (RAV-94), and it is for wide screens: on a narrow track it would wrap
+  // the composer's row and take room from the transcript.
+  await expect(page.locator('#composer-shortcut')).toBeHidden();
+  await message.blur();
   await expect(page.locator('#composer-shortcut')).toBeVisible();
   await page.setViewportSize({ width: 535, height: 900 });
   await expect(page.locator('#composer-shortcut')).toBeHidden();

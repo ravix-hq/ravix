@@ -404,6 +404,38 @@ defmodule Ravix.Projects.Store do
     :ok
   end
 
+  @doc """
+  Point a project's row at another repository (RAV-76), or back at the one
+  it had. `fields` are the repository columns: `repo_full_name`,
+  `repo_private`, `default_branch`, `installation_id`, and for a workspace
+  project `workspace_installation_id` and `github_repo_id`. The comparison
+  name is derived here. `{:error, :taken}` when the workspace already has a
+  project for it (`projects_workspace_repo`). Unscoped, as `rename/2`.
+  """
+  @spec change_repository(String.t(), map()) :: {:ok, Project.t()} | {:error, :taken | :not_found}
+  def change_repository(id, fields) do
+    case Repo.get(Project, id) do
+      nil ->
+        {:error, :not_found}
+
+      project ->
+        project
+        |> Ecto.Changeset.change(
+          Map.put(
+            fields,
+            :normalized_repo_full_name,
+            Project.normalize_repo(fields.repo_full_name)
+          )
+        )
+        |> Ecto.Changeset.unique_constraint(:repo_full_name, name: :projects_workspace_repo)
+        |> Repo.update()
+        |> case do
+          {:ok, project} -> {:ok, project}
+          {:error, _changeset} -> {:error, :taken}
+        end
+    end
+  end
+
   defp update_fields(id, fields) do
     from(p in Project, where: p.id == ^id) |> Repo.update_all(set: fields)
     :ok
