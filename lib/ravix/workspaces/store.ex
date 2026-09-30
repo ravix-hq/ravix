@@ -679,7 +679,8 @@ defmodule Ravix.Workspaces.Store do
   def direct_member_ids([]), do: %{}
 
   def direct_member_ids(project_ids) do
-    # ownership: as `projects/1`, for the projects it answered.
+    # ownership: `Workspaces.projects/2` admitted a live member through
+    # `Access.workspace_access/2`; these are the grants on the projects it listed.
     Repo.all(
       from pm in Ravix.Projects.ProjectMember,
         where: pm.project_id in ^project_ids,
