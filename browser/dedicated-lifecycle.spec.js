@@ -53,7 +53,10 @@ test('a flagged track copies secrets, becomes ready, and deletes its own machine
   // A long name and every header button must not widen the track past its
   // column: the pinned inspector would cover Close and the composer's edge,
   // and its resize handle would swallow clicks on Add thread.
-  await expect(page.locator('.track-crumbs').getByRole('button', { name: 'Rebuild machine', exact: true })).toBeVisible();
+  // Rebuild sits with the machine's state at the end of the dock's tab row
+  // (RAV-82), not in the header.
+  await expect(page.locator('#dock-machine').getByRole('button', { name: 'Rebuild machine', exact: true })).toBeVisible();
+  await expect(page.locator('.track-crumbs').getByRole('button', { name: 'Rebuild machine', exact: true })).toHaveCount(0);
   const layout = await page.evaluate(() => {
     const right = sel => document.querySelector(sel).getBoundingClientRect().right;
     return {

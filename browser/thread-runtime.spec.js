@@ -49,11 +49,12 @@ test('cohort threads attach the other runtime to the home disk and reuse its pro
         await connections.getByLabel('API key', { exact: true }).fill('mock-inline-thread-key');
         await connections.getByRole('button', { name: 'Connect Codex', exact: true }).click();
         await expect(form.getByLabel('Agent', { exact: true })).toHaveValue('codex');
-        await expect(draftTab).toContainText('Codex');
+        await expect(draftTab).toHaveAttribute('aria-label', /Codex/);
       }
       await form.getByLabel('Agent', { exact: true }).selectOption(guest);
       // Model options arrive with the server's runtime patch, after selectOption returns.
-      await expect(draftTab).toContainText(guest === 'codex' ? 'Codex · ' : 'Claude Code · ');
+      // A tab shows only its title (RAV-82); the agent is in its name.
+      await expect(draftTab).toHaveAttribute('aria-label', guest === 'codex' ? /Codex · / : /Claude Code · /);
       const models = form.getByLabel('Model', { exact: true });
       const model = await models.locator('option').last().getAttribute('value');
       await models.selectOption(model);
@@ -62,7 +63,7 @@ test('cohort threads attach the other runtime to the home disk and reuse its pro
       await expect(form).toHaveCount(0);
       await expect(draftTab).toHaveCount(0);
       await expect(page.locator('.composer-model')).toContainText(guest === 'codex' ? 'Codex · ' : 'Claude Code · ');
-      await expect(page.locator('.thread-tab[aria-selected=true] .thread-tab-agent')).toContainText(guest === 'codex' ? 'Codex · ' : 'Claude Code · ');
+      await expect(page.locator('.thread-tab[aria-selected=true]')).toHaveAttribute('aria-label', guest === 'codex' ? /Codex · / : /Claude Code · /);
       await expect(page.locator('.thread-tab[aria-selected=true] .thread-tab-title')).toHaveText(`Guest Thread ${n}`);
       if (home === 'claude' && n === 1) {
         const homeTab = page.locator('.thread-tab').first();

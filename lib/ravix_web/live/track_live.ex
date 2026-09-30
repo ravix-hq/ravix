@@ -1966,8 +1966,10 @@ defmodule RavixWeb.TrackLive do
 
   defp billing_notice(socket, _track), do: socket
 
-  # "Paid by …" beside the model picker and in the header (ADR 0009 phase 6):
-  # the creator of a creator-billed track sees themselves, everybody else
+  # "Paid by …" beside the model picker (ADR 0009 phase 6), and only there:
+  # the header said it too until RAV-82, and "Runs on @owner's agent" beside
+  # it for an owner-billed track, which was the same fact in other words.
+  # The creator of a creator-billed track sees themselves, everybody else
   # sees who; an owner-billed track names its project's owner.
   defp payer_label(%{payer?: true}), do: "Paid by you"
 
@@ -1975,10 +1977,6 @@ defmodule RavixWeb.TrackLive do
     do: "Paid by @#{login}"
 
   defp payer_label(%{owner_login: login}), do: "Paid by @#{login}"
-
-  defp agent_owner_label(project, track),
-    do:
-      "Runs on @#{project.owner_login}'s #{RavixWeb.AgentName.label(track.runtime || project.runtime)}"
 
   defp machine_scope(%{sandbox_layout: :dedicated}), do: "Own machine"
   defp machine_scope(_track), do: "Shared machine"
@@ -2303,6 +2301,10 @@ defmodule RavixWeb.TrackLive do
   A draft ("+" pressed, nothing sent yet) is the trailing tab, with its own
   close button beside the row: a tablist holds tabs and nothing else.
 
+  A tab shows its thread's title and nothing else (RAV-82). Its agent, model
+  and state are in its tooltip and accessible name; a dot is drawn only while
+  it is not idle, so a running or failed thread still shows from the row.
+
   Manual-activation tabs use roving focus, Enter/Space selection, and one
   associated transcript panel. Narrow screens use the native picker.
   """
@@ -2350,14 +2352,14 @@ defmodule RavixWeb.TrackLive do
           phx-click="select-thread"
           phx-value-thread_id={thread.id}
           data-thread-id={thread.id}
-          title={thread.title <> " · " <> agent_model(Map.get(thread, :runtime), Map.get(thread, :model))}
+          title={thread.title <> " · " <> agent_model(Map.get(thread, :runtime), Map.get(thread, :model)) <> " · " <> thread_status(thread, @states)}
           aria-label={thread.title <> " · " <> agent_model(Map.get(thread, :runtime), Map.get(thread, :model)) <> " · " <> thread_status(thread, @states) <> if(thread.unread && thread.id != @shown, do: " (unread)", else: "")}
         >
-          <.status_dot status={String.downcase(thread_status(thread, @states))} />
-          <span class="thread-tab-title">{thread.title}</span><span class="thread-tab-agent"> · {agent_model(
-            Map.get(thread, :runtime),
-            Map.get(thread, :model)
-          )}</span><span class="thread-tab-state"> · {thread_status(thread, @states)}</span><span
+          <.status_dot
+            :if={thread_status(thread, @states) != "Idle"}
+            status={String.downcase(thread_status(thread, @states))}
+          />
+          <span class="thread-tab-title">{thread.title}</span><span
             :if={thread.unread && thread.id != @shown}
             class="thread-unread"
           ><span class="sr-only">(unread)</span></span>
@@ -2377,10 +2379,7 @@ defmodule RavixWeb.TrackLive do
           title={@draft_label}
           aria-label={@draft_label <> " · Not started"}
         >
-          <span class="thread-tab-title">New thread</span><span
-            :if={@draft.runtime}
-            class="thread-tab-agent"
-          > · {agent_model(@draft.runtime, @draft.model)}</span>
+          <span class="thread-tab-title">New thread</span>
         </button>
       </div>
       <button
@@ -2923,7 +2922,7 @@ defmodule RavixWeb.TrackLive do
 
   attr :machine, :map, required: true
 
-  # The header's state chip, and the page's one live region for the machine's
+  # The dock's state chip, and the page's one live region for the machine's
   # state. Only the word is announced: the detail can tick (a retry
   # countdown), so it describes the chip rather than announcing.
   defp machine_chip(assigns) do
@@ -2935,7 +2934,7 @@ defmodule RavixWeb.TrackLive do
       aria-live="polite"
       aria-describedby={@machine.detail && "track-machine-detail"}
       title={@machine.detail || MachineState.label(@machine.state)}
-    ><.status_dot status={to_string(@machine.state)} /><span class="chip-label" data-fit-label>{MachineState.label(
+    ><.status_dot status={to_string(@machine.state)} /><span class="chip-label">{MachineState.label(
       @machine.state
     )}</span></span>
     <span :if={@machine.detail} id="track-machine-detail" class="sr-only">{@machine.detail}</span>

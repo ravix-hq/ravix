@@ -87,16 +87,20 @@ defmodule RavixWeb.CreatorBillingLiveTest do
     pause
   end
 
+  # Once, beside the model picker: the header no longer says it (RAV-82).
   test "collaborators see who pays; the creator sees that they do", ctx do
     {_parent, view} = open_track(ctx, ctx.collab)
-    assert has_element?(view, "#track-payer", "Paid by @#{ctx.creator.login}")
     assert has_element?(view, "#composer-payer", "Paid by @#{ctx.creator.login}")
-    refute has_element?(view, "#track-agent-owner")
+    assert paid_by_count(view) == 1
 
     {_parent, view} = open_track(ctx, ctx.creator)
-    assert has_element?(view, "#track-payer", "Paid by you")
     assert has_element?(view, "#composer-payer", "Paid by you")
+    assert paid_by_count(view) == 1
+    refute has_element?(view, ".track-crumbs", "Paid by")
   end
+
+  defp paid_by_count(view),
+    do: view |> render() |> String.split("Paid by ") |> length() |> Kernel.-(1)
 
   test "the draft picker disables a harness the creator has not connected, for collaborators",
        ctx do

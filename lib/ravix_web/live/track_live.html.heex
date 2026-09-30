@@ -23,15 +23,17 @@
     <button class="primary" phx-click="retry-load">Try again</button>
   </div>
   <div :if={@track} class="track-workspace-body" data-narrow-view={@narrow_view}>
-    <%!-- Two groups either side of the spacer: what the track is on the
-      left, how it is on the right beside the actions. The status half is
-      where anything that arrives late (the plan chip) or changes length
-      (the machine's state) lives, so it grows into the spacer and never
-      moves the title. When the strip is short the status chips give way
-      first, down to their icon or count, and the title last; see "the
-      track's own header" in app.css, and HeaderFit for why a chip's words
-      show whole or not at all. The track is named by `Track.label/1` alone:
-      its branch is in the ribbon below, not repeated here (RAV-83). --%>
+    <%!-- The header is the track's title and Share (RAV-82): the plan chip,
+      when the track carries plan items, is all that sits between them, and
+      Close is the one icon after Share. The machine's state, scope and
+      Rebuild are at the end of the dock's tab row, who pays is beside the
+      model picker in the composer, and a private track has a lock after its
+      title, as its row in the rail does.
+      The plan chip arrives late, so it grows into the spacer and never moves
+      the title; when the strip is short it gives way to its count, and the
+      title last. See "the track's own header" in app.css, and HeaderFit for
+      why a chip's words show whole or not at all. The track is named by
+      `Track.label/1` alone: its branch is in the ribbon below (RAV-83). --%>
     <header id="track-header" class="crumbs track-crumbs" phx-hook="HeaderFit">
       <div class="track-header-path">
         <.link
@@ -59,6 +61,15 @@
           class={["track-title-crumb", !fits?(Track.label(@track), 16) && "long"]}
           title={Track.tooltip(@track)}
         >{Track.label(@track)}</strong>
+        <%!-- As on the track's row in the rail: a lock, not a chip. --%>
+        <span
+          :if={@track.visibility == :private}
+          id="track-private"
+          class="track-private"
+          title="Private: only its creator and the people they invite"
+        >
+          <.icon name="lock" size={12} /><span class="sr-only">Private</span>
+        </span>
       </div>
       <span class="spacer"></span>
       <div class="track-header-status">
@@ -70,32 +81,6 @@
           track_id={@track.id}
           summary={@assigned_plan}
         />
-        <span :if={@track.visibility == :private} class="chip" title="Private">
-          <.icon name="lock" /><span class="chip-label" data-fit-label>Private</span>
-        </span>
-        <.machine_chip machine={
-          probed(machine(@track, @threads, @thread_states, @setup_now), @machine_probe, @track)
-        } />
-        <span class="chip" id="track-machine-scope" title={machine_scope_title(@track)}><.icon
-          name="machine"
-          size={12}
-        /><span class="chip-label" data-fit-label>{machine_scope(@track)}</span></span>
-        <span
-          :if={@track.billing == :creator}
-          id="track-payer"
-          class="dim status-note"
-          title={payer_label(@track)}
-        >
-          {payer_label(@track)}
-        </span>
-        <span
-          :if={@track.billing != :creator && @project.role != :owner}
-          id="track-agent-owner"
-          class="dim status-note"
-          title={agent_owner_label(@project, @track)}
-        >
-          {agent_owner_label(@project, @track)}
-        </span>
       </div>
       <button
         :if={
@@ -119,16 +104,6 @@
         aria-label={"Track sharing (#{length(@present)} viewing now)"}
         title={"Track sharing (#{length(@present)} viewing now)"}
       ><.icon name="add-person" size={15} /><span>{length(@present)}</span></button>
-      <button
-        :if={rebuildable?(@current_user, @track)}
-        class="ghost icon-button"
-        aria-label="Rebuild machine"
-        title="Rebuild machine"
-        phx-click={JS.push_focus() |> JS.push("dialog")}
-        phx-value-name="rebuild"
-      >
-        <.icon name="refresh" size={15} />
-      </button>
       <button
         :if={owner_or_creator?(@current_user, @track)}
         class="ghost icon-button"
@@ -1102,23 +1077,63 @@
             <a href={@pull.url} target="_blank" rel="noreferrer">View pull request ↗</a>
           </p>
         </div>
-        <.live_component
-          module={RavixWeb.Live.MachineDock}
-          id="machine-dock-panel"
-          lifecycle={
-            if @track.sandbox_layout == :dedicated,
-              do: {@track.conversation_id, @track.sandbox_state}
-          }
-          track_id={@track_id}
-          workdir={@track.workdir}
-          current_user={@current_user}
-          session_hash={@session_hash}
-          can_write={@track.level != :read}
-          asleep={
-            probed(machine(@track, @threads, @thread_states, @setup_now), @machine_probe, @track).state ==
-              :asleep
-          }
-        />
+        <%!-- The machine's state and scope sit at the end of the dock's tab
+          row, beside the panels that act on the machine, rather than in the
+          track's header (RAV-82). They are drawn here and not by the dock:
+          the state's detail ticks while the machine sets up, and every
+          update of the dock re-reads the track's access. The frame's grid
+          puts them on the dock's first row; see "the dock" in app.css. --%>
+        <div class="machine-dock-frame">
+          <.live_component
+            module={RavixWeb.Live.MachineDock}
+            id="machine-dock-panel"
+            lifecycle={
+              if @track.sandbox_layout == :dedicated,
+                do: {@track.conversation_id, @track.sandbox_state}
+            }
+            track_id={@track_id}
+            workdir={@track.workdir}
+            current_user={@current_user}
+            session_hash={@session_hash}
+            can_write={@track.level != :read}
+            asleep={
+              probed(
+                machine(@track, @threads, @thread_states, @setup_now),
+                @machine_probe,
+                @track
+              ).state ==
+                :asleep
+            }
+          />
+          <div id="dock-machine" class="dock-machine">
+            <.machine_chip machine={
+              probed(
+                machine(@track, @threads, @thread_states, @setup_now),
+                @machine_probe,
+                @track
+              )
+            } />
+            <%!-- The scope is its icon: the words would take the room of the
+              dock's own tabs. They are its tooltip and its name. --%>
+            <span
+              class="chip dock-machine-scope"
+              id="track-machine-scope"
+              title={machine_scope(@track) <> ": " <> machine_scope_title(@track)}
+            ><.icon name="machine" size={12} /><span class="sr-only">{machine_scope(@track)}</span></span>
+            <button
+              :if={rebuildable?(@current_user, @track)}
+              id="track-rebuild"
+              type="button"
+              class="ghost icon-button"
+              aria-label="Rebuild machine"
+              title="Rebuild machine"
+              phx-click={JS.push_focus() |> JS.push("dialog")}
+              phx-value-name="rebuild"
+            >
+              <.icon name="refresh" size={13} />
+            </button>
+          </div>
+        </div>
       </aside>
     </div>
     <.dialog :if={@dialog == :rename} id="rename-dialog" title="Rename track" on_close="dismiss">
