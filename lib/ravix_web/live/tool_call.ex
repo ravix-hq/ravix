@@ -158,10 +158,14 @@ defmodule RavixWeb.Live.ToolCall do
   end
 
   # The Claude adapter titles a shell call with its command in backticks and
-  # a read with "Read <path>"; either is still better than an empty row.
+  # a read with "Read <path>"; either is still better than an empty row. The
+  # titles it gives a call before its input has streamed in say nothing
+  # about it, and are never shown as though they did (RAV-92).
+  @placeholders ["Preparing file…", "Terminal"]
+
   defp from_name(name, label) when is_binary(name) do
     trimmed = name |> String.trim() |> String.trim("`")
-    if trimmed != "" and trimmed != label, do: trimmed
+    if trimmed not in ["", label | @placeholders], do: trimmed
   end
 
   defp from_name(_name, _label), do: nil
@@ -181,12 +185,29 @@ defmodule RavixWeb.Live.ToolCall do
     {relative(first, workdir), length(rest)}
   end
 
-  defp relative(text, workdir) when is_binary(workdir) and workdir != "" do
-    prefix = String.trim_trailing(workdir, "/") <> "/"
-    if String.starts_with?(text, prefix), do: String.replace_prefix(text, prefix, ""), else: text
+  @doc """
+  `text` with the track's directory taken out wherever it names it: a path
+  under it becomes relative, the directory itself becomes `.`, and a
+  leading `cd <dir> &&`, which is where the agent already is, goes. The
+  sandbox's absolute paths are the machine's business, not the reader's.
+  """
+  @spec relative(String.t(), String.t() | nil) :: String.t()
+  def relative(text, workdir) when is_binary(workdir) do
+    case String.trim_trailing(workdir, "/") do
+      "" ->
+        text
+
+      root ->
+        dir = Regex.escape(root)
+
+        text
+        |> String.replace(~r/\Acd\s+(['"]?)#{dir}\/?\1\s*(?:&&|;)\s*/, "")
+        |> String.replace(~r/(?<![\w.\/-])#{dir}\/(?=[^\s\/])/, "")
+        |> String.replace(~r/(?<![\w.\/-])#{dir}\/?(?![\w.\/-])/, ".")
+    end
   end
 
-  defp relative(text, _workdir), do: text
+  def relative(text, _workdir), do: text
 
   @doc """
   The arguments the body does not already draw in its own shape, sorted by
@@ -208,14 +229,20 @@ defmodule RavixWeb.Live.ToolCall do
   The Claude adapter titles a call with its own command or "Read <path>",
   which the row already shows, so those are left out.
   """
-  @spec note(Tool.t()) :: String.t() | nil
-  def note(%Tool{name: name, detail: %{input: input}} = tool) do
+  @spec note(Tool.t(), String.t() | nil) :: String.t() | nil
+  def note(%Tool{name: name, detail: %{input: input}} = tool, workdir \\ nil) do
     # A title is only ever the target when nothing else was, so a title
-    # implies a target to compare it with.
+    # implies a target to compare it with. The adapter names a path in a
+    # title relative to its own directory, so both forms are compared.
     title = from_name(name, label(tool))
+    target = target(tool)
 
     present(input["description"]) ||
-      if(title && !String.contains?(title, target(tool)), do: title)
+      if(
+        title && !String.contains?(title, target) &&
+          !String.contains?(title, relative(target, workdir)),
+        do: title
+      )
   end
 
   # What a screen reader announces for the row, which otherwise would be
@@ -248,7 +275,7 @@ defmodule RavixWeb.Live.ToolCall do
         write?: label == "Write",
         structured?: shape == :other,
         rest: if(shape == :other, do: [], else: rest(tool)),
-        note: note(tool),
+        note: note(tool, workdir),
         named: accessible_name(label, tool.status, line)
       )
 
@@ -267,7 +294,7 @@ defmodule RavixWeb.Live.ToolCall do
         <p :if={!@shell? && !@structured? && @target && @block.detail.paths == []}>
           <code>{@target}</code>
         </p>
-        <p :for={path <- @block.detail.paths}><code>{path}</code></p>
+        <p :for={path <- @block.detail.paths}><code>{relative(path, @workdir)}</code></p>
         <dl :if={@rest != []} class="tool-args">
           <%= for {key, value} <- @rest do %>
             <dt>{key}</dt>
@@ -276,7 +303,7 @@ defmodule RavixWeb.Live.ToolCall do
         </dl>
         <pre :if={@structured? && @block.detail.input != %{}}>{Jason.encode!(@block.detail.input, pretty: true)}</pre>
         <div :for={edit <- @block.detail.edits}>
-          <strong>{edit.path}</strong><pre><span :for={line <- edit.lines} class={"diff-#{line.kind}"}>{line.text}{"\n"}</span></pre>
+          <strong>{relative(edit.path, @workdir)}</strong><pre><span :for={line <- edit.lines} class={"diff-#{line.kind}"}>{line.text}{"\n"}</span></pre>
         </div>
         <pre
           :if={@write? && @block.detail.edits == [] && is_binary(@block.detail.input["content"])}

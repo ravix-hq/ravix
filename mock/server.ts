@@ -665,6 +665,37 @@ async function act(prompt: string, emit: Emit, say: Say, conv: Conv, disk: Disk,
     return;
   }
 
+  // Calls as claude-agent-acp 0.81.2 streams them (RAV-92): the tool_call goes
+  // out when the tool_use starts, before any input, titled "Preparing file…"
+  // or "Terminal"; refining tool_call_updates with no status then carry the
+  // input, and only the last update has a status.
+  if (prompt.endsWith("Demonstrate a streamed write")) {
+    const slug = parseChannel(conv.channel_id)?.trackSlug;
+    const home = slug ? `${WORK_ROOT}/${slug}` : WORK_ROOT;
+    const file = `${home}/src/lib/day.ts`;
+    const body = "export const localDay = (d: Date) =>\n  Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()) / 86400000;\n";
+    const out = (data: string) => emit({ kind: "output", stream: "acp", data });
+    const step = pause.bind(null, 700);
+    out(acp({ sessionUpdate: "tool_call", toolCallId: "w1", name: "Write", status: "pending", title: "Preparing file…", kind: "edit", rawInput: {}, content: [], locations: [] }));
+    await step();
+    out(acp({ sessionUpdate: "tool_call_update", toolCallId: "w1", rawInput: { file_path: file, content: body }, title: "Write src/lib/day.ts", kind: "edit", locations: [{ path: file }] }));
+    out(acp({
+      sessionUpdate: "tool_call_update", toolCallId: "w1", rawInput: { file_path: file, content: body }, title: "Write src/lib/day.ts", kind: "edit",
+      content: [{ type: "diff", path: file, oldText: null, newText: body }], locations: [{ path: file }],
+    }));
+    out(acp({ sessionUpdate: "tool_call_update", toolCallId: "w1", status: "completed" }));
+    const command = `cd ${home} && bun test src/lib/day.test.ts --reporter=verbose`;
+    out(acp({ sessionUpdate: "tool_call", toolCallId: "b1", name: "Bash", status: "pending", title: "Terminal", kind: "execute", rawInput: {}, content: [] }));
+    await step();
+    out(acp({ sessionUpdate: "tool_call_update", toolCallId: "b1", rawInput: { command, description: "Run the day tests" }, title: command, kind: "execute" }));
+    await step();
+    const wide = `${home}/src/lib/day.test.ts:12:  expect(localDay(new Date("2026-03-08T12:00:00-05:00"))).toBe(localDay(new Date("2026-03-08T00:00:00-05:00"))) ✓ same calendar day either side of the spring-forward transition`;
+    const lines = [`bun test v1.3.11`, "", wide, ...Array.from({ length: 40 }, (_, i) => ` ✓ day ${i + 1} of the transition window`), "", " 41 pass", " 0 fail"];
+    out(toolDone("b1", lines.join("\n")));
+    await say("`localDay` is written and its tests pass.");
+    return;
+  }
+
   const dir = /\/home\/sprite\/work\/[A-Za-z0-9._-]+/.exec(prompt)?.[0] ?? null;
 
   if (prompt.startsWith("[ravix] Open this track") && dir) {
