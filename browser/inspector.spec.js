@@ -141,11 +141,22 @@ test('a diff opens wide and wraps a line longer than the pane', async ({ page })
   const long = diff.locator('.diff-line code', { hasText: 'A line longer than any inspector' });
   await expect(long).toBeVisible();
   const box = await diff.boundingBox();
+  // Every visible character, one at a time: a space at a wrap point hangs
+  // past the line box under `pre-wrap`, and is not something to read.
   const words = await long.evaluate(code => {
+    const text = code.firstChild;
     const range = document.createRange();
-    range.selectNodeContents(code);
-    const rects = [...range.getClientRects()];
-    return { right: Math.max(...rects.map(r => r.right)), lines: rects.length };
+    const tops = new Set();
+    let right = 0;
+    for (let i = 0; i < text.length; i++) {
+      if (/\s/.test(text.data[i])) continue;
+      range.setStart(text, i);
+      range.setEnd(text, i + 1);
+      const rect = range.getBoundingClientRect();
+      tops.add(Math.round(rect.top));
+      right = Math.max(right, rect.right);
+    }
+    return { right, lines: tops.size };
   });
   expect(words.lines).toBeGreaterThan(1);
   expect(words.right).toBeLessThanOrEqual(box.x + box.width + 1);
