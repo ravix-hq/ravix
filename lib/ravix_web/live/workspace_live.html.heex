@@ -981,6 +981,22 @@
         phx-change="edit"
       >
         <.input
+          field={f[:prompt]}
+          id="new-track-prompt"
+          type="textarea"
+          label="What do you want to work on?"
+          rows="3"
+          maxlength="100000"
+          phx-hook="SubmitOnEnter"
+          phx-debounce="300"
+          placeholder="Optional. Sent to the agent once setup is ready."
+          aria-describedby="new-track-prompt-hint"
+          disabled={@busy}
+        />
+        <p id="new-track-prompt-hint" class="hint">
+          Enter creates the track; Shift+Enter adds a line.
+        </p>
+        <.input
           field={f[:visibility]}
           type="select"
           label="Sharing"

@@ -33,8 +33,13 @@ test('project run script is inherited: run, ready, restart, stop and plain overr
   await restart.click();
   await expect(restart).toBeEnabled();
   await expect(status).toHaveText('Status: ready');
-  await page.locator('button[phx-value-action="logs"]').click();
-  await expect(page.locator('#preview-logs pre')).toContainText('VITE');
+  // Logs are read once per click, and "ready" above can still be the run
+  // before the restart: the new process may not have printed yet. Ask again
+  // until its output arrives rather than reading one early snapshot.
+  await expect(async () => {
+    await page.locator('button[phx-value-action="logs"]').click();
+    await expect(page.locator('#preview-logs pre')).toContainText('VITE', { timeout: 2_000 });
+  }).toPass({ timeout: 20_000 });
   await stop.click();
   await expect(status).toHaveText('Status: stopped');
 

@@ -27,6 +27,7 @@
 //   CopyCode        copy a Help example exactly, with success or failure feedback
 //   TurnTimer       a running turn's elapsed time, ticking without a round-trip
 //   RelativeTime    a sidebar row's "22h" age, kept current without server ticks
+//   SubmitOnEnter   the create dialog's first prompt: Enter creates, Shift+Enter is a new line
 //
 // Adding a hook is a product decision, not a convenience. Say why in its
 // file's header, and list it here.
@@ -55,8 +56,9 @@ import {CopyCode} from "./hooks/copy_code"
 import {ShareMention} from "./hooks/share_mention"
 import {TurnTimer} from "./hooks/turn_timer"
 import {RelativeTime} from "./hooks/relative_time"
+import {SubmitOnEnter} from "./hooks/submit_on_enter"
 
-const hooks = {ThreadTabs, AgentConfirmation, Theme, PanelResize, PanelToggle, TranscriptTail, Composer, Terminal, Notify, SettingsSections, ProjectTree, QuickJump, ProjectSections, CopyCode, ProjectFormFocus, ShareMention, TurnTimer, RelativeTime}
+const hooks = {ThreadTabs, AgentConfirmation, Theme, PanelResize, PanelToggle, TranscriptTail, Composer, Terminal, Notify, SettingsSections, ProjectTree, QuickJump, ProjectSections, CopyCode, ProjectFormFocus, ShareMention, TurnTimer, RelativeTime, SubmitOnEnter}
 
 const csrfToken = document.querySelector("meta[name='csrf-token']").getAttribute("content")
 clearTransportFallback(window)

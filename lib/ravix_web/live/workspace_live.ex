@@ -796,10 +796,14 @@ defmodule RavixWeb.WorkspaceLive do
       model: params["model"]
     }
 
+    prompt = params["prompt"] || ""
+
     {:noreply,
      socket
      |> assign(busy: true, track_form: Form.new(:new_track, params))
-     |> traced_async(:create_track, fn -> created(Tracks.open(user, id, attrs), user) end)}
+     |> traced_async(:create_track, fn ->
+       created(open_track(user, id, attrs, prompt), user)
+     end)}
   end
 
   @impl true
@@ -888,8 +892,11 @@ defmodule RavixWeb.WorkspaceLive do
      result(
        assign(socket, busy: false),
        response,
-       fn s, {t, rail} ->
-         s |> apply_rail(rail) |> push_patch(to: "/p/#{t.project_id}/t/#{t.id}")
+       fn s, {{t, queued}, rail} ->
+         s
+         |> apply_rail(rail)
+         |> first_prompt_refused(queued)
+         |> push_patch(to: "/p/#{t.project_id}/t/#{t.id}")
        end,
        :track_form
      )}
@@ -1423,6 +1430,32 @@ defmodule RavixWeb.WorkspaceLive do
   # and arrives in the same answer. Off this process, as every rail read
   # is, and in hand before the patch, which a `reload_async/1` could
   # not promise.
+  # A prompt typed into the create dialog is the track's first message: it
+  # goes through the same queue as one sent from the composer, on the
+  # default thread, and waits there until setup is ready. The track is
+  # already open by then, so a refused prompt does not undo it; the page
+  # opens the track and says the prompt was not queued.
+  defp open_track(user, project_id, attrs, prompt) do
+    with {:ok, track} <- Tracks.open(user, project_id, attrs) do
+      if String.trim(prompt) == "",
+        do: {:ok, {track, :none}},
+        else:
+          {:ok,
+           {track,
+            Tracks.prompt(user, track.id, %{prompt: prompt, request_id: Ecto.UUID.generate()})}}
+    end
+  end
+
+  defp first_prompt_refused(socket, {:error, reason}),
+    do:
+      put_flash(
+        socket,
+        :error,
+        "The track opened, but its first prompt was not queued. #{RavixWeb.Error.from(reason).message}"
+      )
+
+  defp first_prompt_refused(socket, _queued), do: socket
+
   defp created({:ok, value}, user), do: {:ok, {value, read_rail(user)}}
   defp created(response, _user), do: response
 
