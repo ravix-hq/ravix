@@ -108,6 +108,13 @@ defmodule Ravix.PromptQueue do
     end
   end
 
+  @doc """
+  Why a prompt waits when all it waits for is the turn already running: the
+  ordinary wait, which a page may say in its own words (RAV-94).
+  """
+  @spec busy_wait() :: String.t()
+  def busy_wait, do: "Waiting for the current turn to finish"
+
   @doc "A `QueuedPrompt` from a summary, for `role` and the person looking."
   @spec present(Store.summary(), :owner | :member, User.t()) :: View.t()
   def present(row, role, %User{id: user_id}) do

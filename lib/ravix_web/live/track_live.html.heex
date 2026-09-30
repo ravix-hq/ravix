@@ -334,55 +334,66 @@
             </div>
           </div>
         </div>
-        <%!-- RAV-94: each waiting prompt is one compact row above the
-          composer --- its state, its first lines, and why it waits --- with
-          its actions at the end, rather than a loose stack of each. --%>
+        <%!-- RAV-94: a waiting prompt is drawn as its bubble will be, muted,
+          with what it is waiting for above it and Edit / Cancel below. Edit
+          takes it off the queue through the same `queue` event and access
+          check as Cancel, and puts its words back in the box. --%>
         <ol
           :if={!@thread_draft[:selected?] && @queue != []}
           class="workspace-queue"
           aria-label="Queued prompts"
         >
-          <li :for={item <- @queue} class="queue-item">
-            <span class="chip">{queue_label(item.status)}</span>
-            <div class="queue-body">
-              <div :if={item.prompt} class="queue-prompt md">
-                {queue_prompt_html(item.prompt)}
-              </div>
-              <p
+          <li :for={item <- @queue} class="queue-item said">
+            <p class="speaker queue-label">
+              <span class="queue-state">{queue_label(item.status)}</span><span :if={
+                item.status == :queued and @track.setup_state == "ready" and
+                  is_nil(queue_feedback(item, @track.runtime || @project.runtime))
+              }> · sends when the agent is free</span><span
                 :if={
                   item.status == :queued and @track.setup_state != "ready" and
                     is_nil(queue_feedback(item, @track.runtime || @project.runtime))
                 }
                 class="queue-starts"
-              >
-                Starts when setup is ready
-              </p>
-              <p
-                :if={queue_feedback(item, @track.runtime || @project.runtime)}
-                class="queue-feedback"
-              >
-                {queue_feedback(item, @track.runtime || @project.runtime)}
-              </p>
-              <p :if={item.error && item.status != :queued} class="queue-error">{item.error}</p>
+              > · starts when setup is ready</span>
+            </p>
+            <div :if={item.prompt} class="workspace-prompt queue-prompt md">
+              {queue_prompt_html(item.prompt)}
             </div>
-            <button
-              :if={item.can_cancel}
-              class="ghost"
-              phx-click="queue"
-              phx-value-action="cancel"
-              phx-value-id={item.id}
+            <p
+              :if={queue_feedback(item, @track.runtime || @project.runtime)}
+              class="queue-feedback"
             >
-              Cancel
-            </button>
-            <button
-              :if={item.can_cancel && item.status in [:failed, :unconfirmed]}
-              class="ghost"
-              phx-click="queue"
-              phx-value-action="retry"
-              phx-value-id={item.id}
-            >
-              Retry
-            </button>
+              {queue_feedback(item, @track.runtime || @project.runtime)}
+            </p>
+            <p :if={item.error && item.status != :queued} class="queue-error">{item.error}</p>
+            <div :if={item.can_cancel} class="queue-actions">
+              <button
+                :if={item.status == :queued && item.image_count == 0 && item.prompt}
+                class="ghost"
+                phx-click="queue"
+                phx-value-action="edit"
+                phx-value-id={item.id}
+              >
+                Edit
+              </button>
+              <button
+                :if={item.status in [:failed, :unconfirmed]}
+                class="ghost"
+                phx-click="queue"
+                phx-value-action="retry"
+                phx-value-id={item.id}
+              >
+                Retry
+              </button>
+              <button
+                class="ghost"
+                phx-click="queue"
+                phx-value-action="cancel"
+                phx-value-id={item.id}
+              >
+                Cancel
+              </button>
+            </div>
           </li>
         </ol>
         <%!-- The one thing a reader who is not looking should hear: a turn
@@ -752,8 +763,11 @@
                   }
                   id="composer-payer"
                   class="dim composer-payer"
+                  title={payer_label(@track)}
                 >
-                  {payer_label(@track)}
+                  <.icon name="card" size={14} /><span class="composer-payer-label">{payer_label(
+                    @track
+                  )}</span>
                 </span>
                 <.model_menu
                   :if={!@thread_draft[:selected?] && @composer_mode == :ask}

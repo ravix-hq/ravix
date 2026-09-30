@@ -96,6 +96,11 @@ defmodule RavixWeb.CreatorBillingLiveTest do
     {_parent, view} = open_track(ctx, ctx.creator)
     assert has_element?(view, "#track-payer", "Paid by you")
     assert has_element?(view, "#composer-payer", "Paid by you")
+
+    # RAV-94: below 1360px the words collapse to the card icon; they stay in
+    # the title and in their own span for screen readers.
+    assert has_element?(view, "#composer-payer[title='Paid by you'] svg")
+    assert has_element?(view, "#composer-payer .composer-payer-label", "Paid by you")
   end
 
   test "the draft picker disables a harness the creator has not connected, for collaborators",

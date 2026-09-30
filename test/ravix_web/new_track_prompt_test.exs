@@ -86,7 +86,7 @@ defmodule RavixWeb.NewTrackPromptTest do
     render_async(child, 5_000)
     render_async(child, 5_000)
     assert has_element?(child, ".workspace-queue", "Fix the flaky login test")
-    assert has_element?(child, ".workspace-queue .chip", "Waiting")
+    assert has_element?(child, ".workspace-queue .queue-state", "Queued")
     assert has_element?(child, "#track-setup-status", "Prompts will wait until setup is ready.")
   end
 

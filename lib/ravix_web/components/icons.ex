@@ -92,6 +92,9 @@ defmodule RavixWeb.Icons do
     "machine" =>
       ~S(<rect x="3" y="5" width="18" height="11" rx="2" /><path d="M8.5 20h7M12 16v4" />),
     "person" => ~S(<circle cx="12" cy="8" r="3.5" /><path d="M5.5 20a6.5 6.5 0 0 1 13 0" />),
+    # A payment card: who pays for the agent (RAV-94).
+    "card" =>
+      ~S(<rect x="3" y="5.5" width="18" height="13" rx="2" /><path d="M3 10h18M7 15h4" />),
     # A door with an arrow leaving through it.
     "sign-out" =>
       ~S(<path d="M14 4h4.5A1.5 1.5 0 0 1 20 5.5v13a1.5 1.5 0 0 1-1.5 1.5H14" /><path d="m9.5 8-4 4 4 4M5.5 12H15" />),

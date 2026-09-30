@@ -710,7 +710,7 @@ test('project, track, streaming, image upload, reconnect, and revocation', async
     .filter({ hasText: 'Explain the queued project for the browser smoke test' });
   await expect(queued).toHaveCount(1);
   // The status chip is what makes this the queue rather than the transcript.
-  await expect(queued.locator('.chip')).toHaveCount(1);
+  await expect(queued.locator('.queue-state')).toHaveCount(1);
   // The prompt's own bubble, not just the page: the mock's reply quotes the
   // prompt back, so the transcript contains these words even when the prompt
   // never arrived. It reaches the live page on the turn's opening event, which
