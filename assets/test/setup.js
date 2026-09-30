@@ -36,6 +36,12 @@ export function key(el, name, options = {}) {
 }
 
 afterEach(async () => {
+  // happy-dom runs every zero-delay timeout of a tick from one native timer,
+  // and `abort()` cancels that timer without forgetting the group: a test
+  // that left one pending (a blur's deferred check) would leave every later
+  // `setTimeout(fn)` in the run queued behind a timer that never fires. One
+  // zero-delay wait joins and flushes the group before the abort.
+  await new Promise(resolve => setTimeout(resolve))
   for (const hook of hooks.splice(0)) hook.destroyed?.()
   // A zero-delay timer still pending at abort leaves happy-dom's timers dead
   // for every later file in the run, so let those run first.
