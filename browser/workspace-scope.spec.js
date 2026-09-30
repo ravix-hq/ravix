@@ -84,7 +84,8 @@ test('the switcher scopes the app to the current workspace, and remembers it', a
   await expect(page.locator(`#search-project-link-${personalId}`)).toHaveCount(0);
   await page.keyboard.press('Escape');
 
-  // The gear beside the name opens settings and members.
+  // The workspace menu opens settings and members.
+  await page.locator('#workspace-switcher-trigger').click();
   await page.getByRole('link', { name: 'Settings and members of Scope Team', exact: true }).click();
   await expect(page).toHaveURL(new RegExp(`/w/${teamId}$`));
   await expect(page.getByRole('heading', { level: 1 })).toHaveText('Scope Team');

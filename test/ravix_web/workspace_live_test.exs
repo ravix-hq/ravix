@@ -1220,8 +1220,18 @@ defmodule RavixWeb.WorkspaceLiveTest do
   test "an empty inbox carries no count", %{conn: conn} do
     user = insert_user()
     insert_project(user: user)
-    {:ok, view, _} = live(log_in_user(conn, user), "/inbox")
+    conn = log_in_user(conn, user)
+
+    # Before the rail is read nothing is known: skeletons, not an empty inbox.
+    dead = get(conn, "/inbox")
+    html = html_response(dead, 200)
+    assert html =~ ~s(id="inbox-loading")
+    assert html =~ "inbox-item-skeleton"
+    refute html =~ "all caught up"
+
+    {:ok, view, _} = live(dead)
     render_async(view)
+    refute has_element?(view, "#inbox-loading")
 
     assert render(view) =~ "You&#39;re all caught up"
     refute has_element?(view, "a.yard-item .badge")
