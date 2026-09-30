@@ -17,6 +17,58 @@ defmodule RavixWeb.ComponentsTest do
   alias RavixWeb.CoreComponents
   alias RavixWeb.Layouts
 
+  describe "icon_button/1" do
+    test "its label is both its name and its tooltip, with the shortcut beside it" do
+      html =
+        render_component(&CoreComponents.icon_button/1,
+          icon: "search",
+          label: "Search",
+          shortcut: "⌘K",
+          keys: "Meta+K",
+          class: "ghost",
+          id: "find",
+          "phx-click": "search"
+        )
+
+      doc = LazyHTML.from_fragment(html)
+      button = LazyHTML.query(doc, "button#find.ghost[type=button]")
+      assert LazyHTML.attribute(button, "aria-label") == ["Search"]
+      assert LazyHTML.attribute(button, "data-tip") == ["Search"]
+      assert LazyHTML.attribute(button, "data-tip-kbd") == ["⌘K"]
+      assert LazyHTML.attribute(button, "aria-keyshortcuts") == ["Meta+K"]
+      assert LazyHTML.attribute(button, "phx-click") == ["search"]
+      assert Enum.count(LazyHTML.query(doc, "button > svg[aria-hidden=true]")) == 1
+    end
+
+    test "a tip says more than the name, and no shortcut writes no shortcut" do
+      html =
+        render_component(&CoreComponents.icon_button/1,
+          icon: "settings",
+          label: "Manage sections",
+          tip: "Organize projects into sections"
+        )
+
+      assert html =~ ~s(aria-label="Manage sections")
+      assert html =~ ~s(data-tip="Organize projects into sections")
+      refute html =~ "data-tip-kbd"
+      refute html =~ "aria-keyshortcuts"
+    end
+
+    test "a path makes it a link, labelled the same way" do
+      html =
+        render_component(&CoreComponents.icon_button/1,
+          icon: "settings",
+          label: "Settings",
+          navigate: "/settings"
+        )
+
+      doc = LazyHTML.from_fragment(html)
+      link = LazyHTML.query(doc, "a[href='/settings'][aria-label=Settings][data-tip=Settings]")
+      assert Enum.count(link) == 1
+      assert Enum.count(LazyHTML.query(doc, "button")) == 0
+    end
+  end
+
   describe "icon/1" do
     test "draws a 24-grid stroke path by name" do
       html = render_component(&CoreComponents.icon/1, name: "machine", size: 20)

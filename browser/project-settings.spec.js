@@ -23,7 +23,7 @@ test('Machine saves everything behind one Save & rebuild; old tabs land on their
 
   // The entry points: the header's Settings, and the ⋯ menu without a hover.
   await expect(page.locator('#crumb-settings')).toHaveAttribute('href', `${projectPath}/settings/general`);
-  const more = page.locator('#yard .workspace-project.current button[title="More"]');
+  const more = page.locator('#yard .workspace-project.current button[data-tip="More"]');
   await page.mouse.move(900, 600);
   await expect(more).toHaveCSS('opacity', '1');
   await more.click();

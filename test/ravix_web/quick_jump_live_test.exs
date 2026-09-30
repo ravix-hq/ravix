@@ -35,7 +35,7 @@ defmodule RavixWeb.QuickJumpLiveTest do
 
       assert has_element?(
                view,
-               "#quick-jump-trigger[title='Search projects, tracks and plans (#{label})'][aria-keyshortcuts='#{keys}']"
+               "#quick-jump-trigger[data-tip='Search projects, tracks and plans'][data-tip-kbd='#{label}'][aria-keyshortcuts='#{keys}']"
              )
     end
   end

@@ -4,7 +4,7 @@ import { expect } from '@playwright/test';
 // The row's gear opens the first; the frame's nav moves between them.
 // RAV-74: the pages are general, access, agent, machine and danger.
 export async function openProjectSettings(page, section = 'general') {
-  await page.locator('#yard .workspace-project.current button[title="Project settings"]').click();
+  await page.locator('#yard .workspace-project.current button[data-tip="Project settings"]').click();
   await expect(page).toHaveURL(/\/p\/[^/]+\/settings\/general$/);
   const settings = page.locator('#settings-page');
   if (section !== 'general') {

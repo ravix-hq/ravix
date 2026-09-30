@@ -730,7 +730,7 @@ defmodule RavixWeb.WorkspaceLiveTest do
 
     assert has_element?(
              view,
-             ~s|#account-trigger[aria-label="You, #{count} new in What's new"][title="You · #{count} new in What's new"]|
+             ~s|#account-trigger[aria-label="You, #{count} new in What's new"][data-tip="You · #{count} new in What's new"]|
            )
 
     view |> element("#open-changes") |> render_click()
@@ -738,7 +738,7 @@ defmodule RavixWeb.WorkspaceLiveTest do
     # Opening it is the acknowledgement: the count goes, and stays gone.
     refute has_element?(view, "#open-changes .badge")
     refute has_element?(view, "#account-unseen")
-    assert has_element?(view, ~s|#account-trigger[aria-label="You"][title="You"]|)
+    assert has_element?(view, ~s|#account-trigger[aria-label="You"][data-tip="You"]|)
     assert Repo.get!(Ravix.Accounts.User, early.id).changes_seen_at
     {:ok, again, _} = live(log_in_user(conn, early), "/home")
     render_async(again)
@@ -1412,7 +1412,7 @@ defmodule RavixWeb.WorkspaceLiveTest do
     closed = "#yard [data-project-id='#{other.id}']"
     refute has_element?(view, "#{closed}.current")
     assert has_element?(view, "#{closed} a.project-add")
-    assert has_element?(view, "#{closed} button[title='Project settings']")
+    assert has_element?(view, "#{closed} button[data-tip='Project settings']")
     # The nested links under the open project are gone.
     refute has_element?(view, ".project-links")
 
@@ -1437,7 +1437,7 @@ defmodule RavixWeb.WorkspaceLiveTest do
        }}
     end)
 
-    view |> element("#{row} button[title='Project settings']") |> render_click()
+    view |> element("#{row} button[data-tip='Project settings']") |> render_click()
     assert_patch(view, "/p/#{mine.id}/settings/general")
     render_async(view)
     assert has_element?(view, "#settings-page")
@@ -1626,7 +1626,7 @@ defmodule RavixWeb.WorkspaceLiveTest do
     # It hides the whole sidebar, and says so with its shortcut (RAV-96).
     assert has_element?(
              view,
-             ~s|#yard-toggle[phx-hook=PanelToggle][aria-controls=yard][aria-expanded=true][data-shortcut=b][aria-keyshortcuts="Control+B"][title="Hide sidebar (Ctrl+B)"][data-show-label="Show sidebar (Ctrl+B)"]|,
+             ~s|#yard-toggle[phx-hook=PanelToggle][aria-controls=yard][aria-expanded=true][data-shortcut=b][aria-keyshortcuts="Control+B"][data-tip="Hide sidebar"][data-tip-kbd="Ctrl+B"][data-show-label="Show sidebar"]|,
              "Hide sidebar"
            )
 
@@ -1914,7 +1914,7 @@ defmodule RavixWeb.WorkspaceLiveTest do
     People.add_project_member(project.id, user.id, owner.id)
     {:ok, view, _} = live(log_in_user(conn, user), "/p/#{project.id}")
     render_async(view)
-    refute has_element?(view, "#yard button[title='Project settings']")
+    refute has_element?(view, "#yard button[data-tip='Project settings']")
     People.remove_project_member(project.id, user.id)
     Hub.publish(project.id, :people)
     # `:people` is one of the three that can change which projects exist at
@@ -2270,7 +2270,7 @@ defmodule RavixWeb.WorkspaceLiveTest do
     render_async(view)
 
     view
-    |> element("#yard .workspace-project.current button[title='Project settings']")
+    |> element("#yard .workspace-project.current button[data-tip='Project settings']")
     |> render_click()
 
     render_patch(view, "/p/#{project.id}/settings/machine")

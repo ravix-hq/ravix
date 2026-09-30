@@ -1832,13 +1832,13 @@ defmodule RavixWeb.TrackLiveTest do
       for id <- [ctx.track.id, ctx.thread.id] do
         assert has_element?(
                  ctx.view,
-                 "#thread-tab-#{id} .thread-tab-close[aria-hidden=true][title='Close thread'][phx-click='close-thread'][phx-value-thread_id='#{id}']"
+                 "#thread-tab-#{id} .thread-tab-close[aria-hidden=true][data-tip='Close thread'][data-tip-kbd='Del'][phx-click='close-thread'][phx-value-thread_id='#{id}']"
                )
       end
 
       assert has_element?(
                ctx.view,
-               "#thread-tab-#{ctx.track.id} .thread-tab-rename[title='Rename thread']"
+               "#thread-tab-#{ctx.track.id} .thread-tab-rename[data-tip='Rename thread'][data-tip-kbd='F2']"
              )
 
       refute has_element?(ctx.view, "#thread-tab-#{ctx.thread.id} .thread-tab-rename")
@@ -3590,7 +3590,7 @@ defmodule RavixWeb.TrackLiveTest do
 
     assert has_element?(
              ctx.view,
-             ".track-plan-toggle[aria-expanded=false][title='#{plan.title}']",
+             ".track-plan-toggle[aria-expanded=false][data-tip='#{plan.title}']",
              "Plan: #{plan.title}"
            )
 
@@ -4241,7 +4241,7 @@ defmodule RavixWeb.TrackLiveTest do
 
     assert has_element?(
              ctx.view,
-             "#{button}[aria-label='Refresh files'][title='Refresh files'] svg"
+             "#{button}[aria-label='Refresh files'][data-tip='Refresh files'] svg"
            )
 
     render_click(ctx.view, "panel", %{name: "checks"})
@@ -4595,7 +4595,12 @@ defmodule RavixWeb.TrackLiveTest do
 
   test "Show ignored files is an icon toggle in the inspector's toolbar, on Files only", ctx do
     toggle = "nav[aria-label='Inspector panels'] button#toggle-ignored[phx-click=toggle-ignored]"
-    assert has_element?(ctx.view, "#{toggle}[aria-pressed=false][title='Show ignored files'] svg")
+
+    assert has_element?(
+             ctx.view,
+             "#{toggle}[aria-pressed=false][data-tip='Show ignored files'] svg"
+           )
+
     assert has_element?(ctx.view, "#{toggle} .sr-only", "Show ignored files")
     # Beside Refresh, and no longer a button in the tree.
     assert has_element?(ctx.view, "#{toggle} + button.panel-refresh")
@@ -4725,7 +4730,12 @@ defmodule RavixWeb.TrackLiveTest do
       settle(ctx.view)
 
       button = "#composer-form button[aria-label='Send']"
-      assert has_element?(ctx.view, button <> "[type='submit'][title='Send']")
+
+      assert has_element?(
+               ctx.view,
+               button <> "[type='submit'][data-tip='Send'][data-tip-kbd='↵']"
+             )
+
       refute has_element?(ctx.view, button, "Send")
       assert has_element?(ctx.view, button <> " svg[width='16'][height='16'] path")
       refute has_element?(ctx.view, button <> "[phx-disable-with]")
@@ -6435,11 +6445,11 @@ defmodule RavixWeb.TrackLiveTest do
     refute render(header.(ctx.view)) =~ ~r/>\s*(New track|Settings)\s*</
 
     refute has_element?(ctx.view, ".track-crumbs button[title='Project settings']")
-    assert has_element?(ctx.view, ".track-crumbs button[title='Rename track']")
+    assert has_element?(ctx.view, ".track-crumbs button[data-tip='Rename track']")
 
     assert has_element?(
              ctx.view,
-             ".track-crumbs button[aria-label^='Track sharing'][title$='viewing now)']"
+             ".track-crumbs button[aria-label^='Track sharing'][data-tip$='viewing now)']"
            )
 
     refute has_element?(ctx.view, "#track-actions-menu")
@@ -6462,7 +6472,7 @@ defmodule RavixWeb.TrackLiveTest do
       |> LazyHTML.query(
         "header > button, .track-header-path > button, .track-header-status > button, #track-more > button"
       )
-      |> LazyHTML.attribute("title")
+      |> LazyHTML.attribute("data-tip")
 
     assert top_level == ["Rename track", "Track sharing (0 viewing now)", "More for this track"]
     refute has_element?(ctx.view, ".track-crumbs > button[aria-label='Close track']")
@@ -6898,7 +6908,7 @@ defmodule RavixWeb.TrackLiveTest do
 
     assert has_element?(
              ctx.view,
-             ".track-crumbs button[aria-label='Track sharing (1 viewing now)'][title='Track sharing (1 viewing now)']",
+             ".track-crumbs button[aria-label='Track sharing (1 viewing now)'][data-tip='Track sharing (1 viewing now)']",
              "1"
            )
 

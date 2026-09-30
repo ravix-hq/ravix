@@ -96,7 +96,7 @@ defmodule RavixWeb.Live.TrackPlanItems do
         :if={@summary.plan && @items == []}
         navigate={@summary.plan.url}
         class="chip track-plan-chip"
-        title={@summary.plan.title}
+        data-tip={"Plan: " <> @summary.plan.title}
       ><.icon name="document" size={12} /><span class="truncate" data-fit-label>Plan: {@summary.plan.title}</span></.link>
       <button
         :if={@items != []}
@@ -104,7 +104,7 @@ defmodule RavixWeb.Live.TrackPlanItems do
         class="chip track-plan-chip track-plan-toggle"
         phx-click="toggle"
         phx-target={@myself}
-        title={@summary.plan && @summary.plan.title}
+        data-tip={@summary.plan && @summary.plan.title}
         aria-label={"#{chip_label(@summary)} · #{count(@items)}"}
         aria-expanded={to_string(@expanded)}
         aria-controls={"#{@id}-panel"}

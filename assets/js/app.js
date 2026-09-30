@@ -6,8 +6,9 @@
 // scroll position, a drag, the palette painted before the first frame. Those
 // live in `hooks/`, one file each, and this file registers them. The
 // page_loading helper also reflects pending navigation in the shared status
-// indicator, dialog_escape tells a keydown whether a dialog was open, and the
-// connect params carry the browser's time zone. There is
+// indicator, dialog_escape tells a keydown whether a dialog was open, tooltip
+// draws the one tooltip every `data-tip` control shares, and the connect
+// params carry the browser's time zone. There is
 // no framework, and one library beyond Phoenix's own:
 // xterm.js, vendored, which is its own bundle (`xterm.js`) loaded by the Shell
 // hook the first time a terminal is opened, so it costs this file nothing.
@@ -47,6 +48,7 @@ import "phoenix_html"
 import {clearTransportFallback, LONG_POLL_FALLBACK_MS} from "./transport"
 import {trackPageLoading} from "./page_loading"
 import {watchDialogs} from "./dialog_escape"
+import {installTooltips} from "./tooltip"
 import {browserTimeZone} from "./timezone"
 import {macPlatform} from "./platform"
 import {Socket} from "phoenix"
@@ -92,6 +94,7 @@ const liveSocket = new LiveSocket("/live", Socket, {
 })
 
 trackPageLoading(window)
+installTooltips(window)
 liveSocket.connect()
 
 // For the console: `liveSocket.enableDebug()`, `liveSocket.enableLatencySim(1000)`.

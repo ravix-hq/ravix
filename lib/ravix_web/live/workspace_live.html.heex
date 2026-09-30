@@ -65,7 +65,8 @@
           id="quick-jump-trigger"
           type="button"
           class="ghost"
-          title={"Search projects, tracks and plans (#{if @mac, do: "⌘K", else: "Ctrl K"})"}
+          data-tip="Search projects, tracks and plans"
+          data-tip-kbd={if @mac, do: "⌘K", else: "Ctrl K"}
           aria-keyshortcuts={if @mac, do: "Meta+K", else: "Control+K"}
           data-quick-jump-trigger
           phx-click={JS.push_focus() |> JS.push("dialog")}
@@ -80,21 +81,26 @@
           class="ghost panel-toggle"
           data-panel="yard"
           data-key="ravix.panel.yard"
-          data-hide-label={"Hide sidebar (#{sidebar_shortcut(@mac)})"}
-          data-show-label={"Show sidebar (#{sidebar_shortcut(@mac)})"}
+          data-hide-label="Hide sidebar"
+          data-show-label="Show sidebar"
           data-shortcut="b"
           aria-controls="yard"
           aria-expanded="true"
           aria-keyshortcuts={if @mac, do: "Meta+B", else: "Control+B"}
-          title={"Hide sidebar (#{sidebar_shortcut(@mac)})"}
+          data-tip="Hide sidebar"
+          data-tip-kbd={sidebar_shortcut(@mac)}
         >
           <.icon name="panel-left" size={16} />
           <span class="sr-only label-hide">Hide sidebar</span>
           <span class="sr-only label-show">Show sidebar</span>
         </button>
-        <button type="button" class="x yard-close" phx-click="yard-close" aria-label="Close menu">
-          <.icon name="x" size={16} />
-        </button>
+        <.icon_button
+          icon="x"
+          size={16}
+          label="Close menu"
+          class="x yard-close"
+          phx-click="yard-close"
+        />
       </div>
       <div id="account-menu" class="account-menu" popover aria-label="You">
         <%!-- Quick toggles, then Settings (RAV-77): Profile, Agents,
@@ -195,7 +201,7 @@
             id="manage-sections"
             class="section-action"
             aria-label="Manage sections"
-            title="Organize projects into sections"
+            data-tip="Organize projects into sections"
             phx-click={JS.push_focus() |> JS.push("dialog")}
             phx-value-name="sections"
           >
@@ -286,6 +292,7 @@
                       class="ghost project-collapse"
                       data-collapse={project.id}
                       aria-label={"Tracks in #{project.display_name}"}
+                      data-tip="Show or hide tracks"
                       aria-expanded="true"
                       aria-controls={"project-tracks-#{project.id}"}
                     >
@@ -323,7 +330,7 @@
                         if @live_action == :plans && @project && @project.id == project.id,
                           do: "page"
                       }
-                      title="Plans"
+                      data-tip="Plans"
                     >
                       <.icon name="document" size={13} />
                     </.link>
@@ -332,7 +339,7 @@
                       type="button"
                       class="project-action"
                       aria-label={"Project settings for #{project.display_name}"}
-                      title="Project settings"
+                      data-tip="Project settings"
                       phx-click={JS.push_focus() |> JS.push("project-settings")}
                       phx-value-project={project.id}
                     >
@@ -346,7 +353,7 @@
                       aria-label={"More for #{project.display_name}"}
                       aria-haspopup="menu"
                       aria-expanded="false"
-                      title="More"
+                      data-tip="More"
                       popovertarget={"project-menu-#{project.id}"}
                     >
                       <.icon name="more" size={13} />
@@ -438,7 +445,7 @@
                       phx-click={JS.push_focus()}
                       class="project-action project-add"
                       aria-label={"New track in #{project.display_name}"}
-                      title="New track"
+                      data-tip="New track"
                     >
                       <.icon name="plus" size={13} />
                     </.link>
@@ -562,7 +569,7 @@
           id="account-trigger"
           class="yard-account"
           aria-label={"You" <> unseen_note(@changes_unseen, ", ")}
-          title={"You" <> unseen_note(@changes_unseen, " · ")}
+          data-tip={"You" <> unseen_note(@changes_unseen, " · ")}
           popovertarget="account-menu"
         >
           <%!-- The gear's dot (RAV-96): What's new has entries this person

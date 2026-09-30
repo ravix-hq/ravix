@@ -669,6 +669,7 @@ defmodule RavixWeb.Live.WorkspaceSettings do
                     navigate={Settings.section_path(:project, project.id, "general")}
                     class="ghost"
                     aria-label={"Settings of #{project.name}"}
+                    data-tip={"Settings of #{project.name}"}
                   >
                     <.icon name="settings" size={14} />
                   </.link>
