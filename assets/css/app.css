@@ -2184,6 +2184,9 @@ body:has(.phx-error) #request-progress { display: none; }
    unsaved-changes bar sits at the foot of the page while there is
    something to save. */
 
+/* A page component's root, between the stage's tab panel and the frame:
+   it passes the panel's height on, so the frame is what scrolls. */
+.settings-host { display: flex; flex-direction: column; flex: 1; min-height: 0; min-width: 0; }
 .settings-page { overflow-y: auto; flex: 1; min-height: 0; width: 100%; padding: 22px 32px 0; }
 .settings-crumbs ol { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 18px; padding: 0; list-style: none; color: var(--dim); font-size: 12px; }
 .settings-crumbs li + li::before { content: "›"; margin-right: 6px; color: var(--dimmer); }

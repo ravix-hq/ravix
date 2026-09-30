@@ -18,7 +18,7 @@ beforeEach(() => {
     <section data-settings-panel="general"><form><input id="name" value="Original"><input id="secret-value" type="password"><button class="primary">Save general</button></form></section>
     <section data-settings-panel="agent" hidden><form><select id="settings-runtime"><option selected>claude</option><option>codex</option></select><select id="settings-model"></select><button data-save-agent class="primary">Save agent</button><button data-switch-agent class="primary" hidden>Switch and rebuild</button></form></section>
     <section data-settings-panel="danger" hidden><form><input id="confirm"></form></section>
-    </div></div><a id="outside" href="/elsewhere">Outside</a>`
+    </div></div><h1 id="settings-title" tabindex="-1">General</h1><a id="outside" href="/elsewhere">Outside</a>`
 })
 
 const edit = id => document.querySelector(id).dispatchEvent(new Event('input', {bubbles: true}))
@@ -45,7 +45,7 @@ test('input marks the section dirty, says so, and tells UnsavedChanges; discard 
   document.querySelector('[data-settings-discard]').click()
   expect(document.querySelector('#name').value).toBe('Original')
   expect(document.querySelector('[data-settings-discard]').hidden).toBe(true)
-  expect(document.activeElement.id).toBe('name')
+  expect(document.activeElement.id).toBe('settings-title')
   expect(said).toEqual(['dirty', 'clean'])
 })
 

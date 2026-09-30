@@ -78,6 +78,9 @@ export const UnsavedChanges = {
     if (!link || !this.leaves(link, event)) return
     event.preventDefault()
     event.stopImmediatePropagation()
+    // A menu item that would leave (the switcher's) shuts its menu, or the
+    // menu would sit over the question in the top layer.
+    link.closest('[popover]')?.hidePopover?.()
     this.pending = link
     this.dialog.hidden = false
     this.dialog.querySelector('[data-unsaved-stay]').focus()

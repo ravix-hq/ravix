@@ -59,5 +59,5 @@ test('add one of your GitHub accounts to a workspace from its empty state', asyn
   await expect(page.locator('#github-empty')).toHaveCount(0);
   await expect(page.locator('#available-installations')).toHaveCount(0);
   await expect(page.locator('#workspace-catalog')).toContainText('mockuser/atlas-api');
-  expect(new URL(page.url()).pathname).toMatch(/^\/w\/[^/]+$/);
+  expect(new URL(page.url()).pathname).toMatch(/^\/w\/[^/]+\/settings\/members$/);
 });

@@ -88,7 +88,9 @@ export const SettingsSections = {
     this.show()
     this.feedback('Changes discarded.')
     this.el.dispatchEvent(new CustomEvent('unsaved:clean', {bubbles: true}))
-    panel.querySelector('input, select, textarea, button')?.focus()
+    // Not a field: LiveView leaves a focused input's value alone, and the
+    // server is about to draw the saved one back into it.
+    document.getElementById('settings-title')?.focus()
   },
   feedback(text) {
     this.el.querySelector('[data-settings-feedback]').textContent = text

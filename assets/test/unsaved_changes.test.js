@@ -18,7 +18,7 @@ beforeEach(() => {
       <a id="plain" href="/api/auth/install">Repository access</a>
       <a id="hash" href="#workspace-github">GitHub</a>
       <a id="blank" href="/elsewhere" target="_blank">New tab</a>
-      <button id="switch" type="button" data-leaves-page>Other workspace</button>
+      <div id="menu-popover" popover><button id="switch" type="button" data-leaves-page>Other workspace</button></div>
       <button id="menu" type="button">Menu</button>
     </nav>
     <div id="unsaved" data-saved="0" data-discard-event="discard-general" data-discard-target="3">
@@ -118,7 +118,10 @@ test('Escape keeps editing; other links and data-leaves-page ask; new tabs and a
   expect(key(window, 'Escape').defaultPrevented).toBe(true)
   expect(asking()).toBe(false)
   expect(key(window, 'Escape').defaultPrevented).toBe(false)
+  let hidden = 0
+  document.querySelector('#menu-popover').hidePopover = () => hidden++
   expect(click('#switch').defaultPrevented).toBe(true)
+  expect(hidden).toBe(1)
   document.querySelector('[data-unsaved-stay]').click()
   expect(click('#hash').defaultPrevented).toBe(false)
   expect(click('#blank').defaultPrevented).toBe(false)

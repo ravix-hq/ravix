@@ -659,7 +659,7 @@ defmodule RavixWeb.Live.ProjectSettings do
       assign(assigns, :runtime, assigns[:settings_form] && assigns.settings_form[:runtime].value)
 
     ~H"""
-    <div>
+    <div class="settings-host">
       <Settings.frame
         :if={@settings}
         kind={:project}

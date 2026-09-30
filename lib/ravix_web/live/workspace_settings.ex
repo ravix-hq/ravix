@@ -339,7 +339,7 @@ defmodule RavixWeb.Live.WorkspaceSettings do
       )
 
     ~H"""
-    <div id="workspace-settings-content" class="workspace-settings">
+    <div id="workspace-settings-content" class="settings-host">
       <Settings.frame
         kind={:workspace}
         section={@section}

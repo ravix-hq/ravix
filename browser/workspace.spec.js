@@ -952,11 +952,14 @@ test('project settings navigate, warn before discarding, and save sections acces
   await settings.getByLabel('Readiness path (optional)', { exact: true }).fill('/health');
   await settings.getByRole('button', { name: 'Save defaults', exact: true }).click();
   await expect(settings.getByRole('status')).toHaveText('Saved.');
+  // Each section opens at its top, wherever the last one was scrolled to.
   const body = settings.locator('.settings-body');
-  const top = (await body.boundingBox()).y;
+  let top;
   for (const section of ['environment', 'secrets', 'danger']) {
     await settings.locator(`#settings-nav-${section}`).click();
     await expect(page).toHaveURL(new RegExp(`/settings/${section}$`));
+    await expect.poll(() => settings.evaluate(el => el.scrollTop)).toBe(0);
+    top ??= (await body.boundingBox()).y;
     expect((await body.boundingBox()).y).toBeCloseTo(top, 0);
     await accessible(page);
   }
@@ -982,10 +985,12 @@ test('project settings navigate, warn before discarding, and save sections acces
   await expect(settings.getByLabel('Instructions', { exact: true })).toHaveValue('Explain changes and run focused tests.');
   await accessible(page);
   await capture(page, 'settings-mobile');
-  const mobileTop = (await body.boundingBox()).y;
+  let mobileTop;
   for (const section of ['general', 'environment', 'secrets', 'danger', 'agent']) {
     await settings.locator(`#settings-nav-${section}`).click();
     await expect(page).toHaveURL(new RegExp(`/settings/${section}$`));
+    await expect.poll(() => settings.evaluate(el => el.scrollTop)).toBe(0);
+    mobileTop ??= (await body.boundingBox()).y;
     expect((await body.boundingBox()).y).toBeCloseTo(mobileTop, 0);
     await fitsViewport(page);
   }

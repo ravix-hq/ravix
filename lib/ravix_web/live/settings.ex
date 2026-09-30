@@ -261,7 +261,13 @@ defmodule RavixWeb.Live.Settings do
     assigns = assign(assigns, title: label(assigns.kind, assigns.section))
 
     ~H"""
-    <div id={@id} class="settings-page" data-kind={@kind} data-section={@section}>
+    <div
+      id={@id}
+      class="settings-page"
+      phx-hook="SettingsFrame"
+      data-kind={@kind}
+      data-section={@section}
+    >
       <nav class="settings-crumbs" aria-label="Breadcrumb">
         <ol>
           <li :for={crumb <- @crumbs}>{crumb}</li>
@@ -293,10 +299,10 @@ defmodule RavixWeb.Live.Settings do
             </ul>
           </div>
         </nav>
-        <section class="settings-body" aria-labelledby="settings-title">
-          <h1 id="settings-title">{@title}</h1>
+        <div class="settings-body">
+          <h1 id="settings-title" tabindex="-1">{@title}</h1>
           {render_slot(@inner_block)}
-        </section>
+        </div>
       </div>
     </div>
     """

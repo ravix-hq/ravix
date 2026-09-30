@@ -22,7 +22,7 @@ defmodule RavixWeb.Live.PersonalSettings do
   @impl true
   def render(assigns) do
     ~H"""
-    <div id="personal-settings">
+    <div id="personal-settings" class="settings-host">
       <Settings.frame
         kind={:personal}
         section={@section}
