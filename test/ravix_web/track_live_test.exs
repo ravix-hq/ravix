@@ -685,7 +685,7 @@ defmodule RavixWeb.TrackLiveTest do
   end
 
   for {raw, label} <- [
-        {"2026-10-01T09:00:00Z", "Oct 01 at 09:00 UTC"},
+        {"2026-10-01T09:00:00Z", RavixWeb.LocalTime.short(~U[2026-10-01 09:00:00Z], nil)},
         {"unknown reset", "unknown reset"}
       ] do
     test "spent ChatGPT usage shows #{label} to owners and members", ctx do
@@ -5632,7 +5632,7 @@ defmodule RavixWeb.TrackLiveTest do
     assert has_element?(
              ctx.view,
              ~s|#turns-turn .turn-footer time[datetime="2026-09-26T13:02:05Z"]|,
-             "13:02 UTC"
+             RavixWeb.LocalTime.short(~U[2026-09-26 13:02:05Z], nil)
            )
 
     assert has_element?(ctx.view, ~s|#turns-turn .turn-copy[data-copy="**Done**"]|)
@@ -5644,6 +5644,68 @@ defmodule RavixWeb.TrackLiveTest do
     assert has_element?(ctx.view, "#turns-turn .turn-file", "+2 −1")
     # A turn still running has no footer yet.
     refute has_element?(ctx.view, "#turns-live .turn-footer")
+  end
+
+  test "a turn footer and a comment are written in the zone the browser reported, never as UTC",
+       ctx do
+    {:ok, comment} = Ravix.Comments.post(ctx.user, ctx.track.id, nil, "A note")
+
+    chunk = %{
+      "id" => 1,
+      "turn_id" => "turn",
+      "kind" => "output",
+      "stream" => "acp",
+      "ts" => "2026-09-26T13:00:10Z",
+      "data" =>
+        Jason.encode!(%{
+          jsonrpc: "2.0",
+          method: "session/update",
+          params: %{
+            update: %{
+              sessionUpdate: "agent_message_chunk",
+              content: %{type: "text", text: "Done"}
+            }
+          }
+        })
+    }
+
+    completed = %{
+      "id" => 99,
+      "turn_id" => "turn",
+      "kind" => "stage",
+      "stage" => "turn",
+      "state" => "completed",
+      "ts" => "2026-09-26T13:02:05Z"
+    }
+
+    started = Map.put(opened(0, "turn", "Change things"), "ts", "2026-09-26T13:00:00Z")
+    page = Transcript.page([started, chunk, completed], "claude")
+    stub(Tracks, :events, fn _, _, _thread_opts -> {:ok, page} end)
+
+    conn = put_connect_params(ctx.conn, %{"timezone" => "America/New_York"})
+    {:ok, parent, _} = live(conn, "/p/#{ctx.project.id}/t/#{ctx.track.id}")
+    view = find_live_child(parent, "track-host")
+    settle(view)
+
+    # 13:02 UTC is 9:02 in the morning in New York: the server's fallback is
+    # already the viewer's, and the hook rewrites it in the browser's locale.
+    ended = ~s|#turns-turn .turn-footer time[phx-hook=LocalTime][datetime="2026-09-26T13:02:05Z"]|
+    assert has_element?(view, ended, "9:02 AM")
+    assert has_element?(view, ~s|#{ended}[title^="Ended Sat, Sep 26, 2026, 9:02 AM EDT"]|)
+    assert has_element?(view, "#turns-turn .turn-footer", "2m 5s")
+
+    at = "#comment-#{comment.id}-at[phx-hook=LocalTime]"
+    iso = DateTime.to_iso8601(comment.inserted_at)
+    assert has_element?(view, ~s|#{at}[datetime="#{iso}"]|)
+
+    assert has_element?(
+             view,
+             at,
+             RavixWeb.LocalTime.short(comment.inserted_at, "America/New_York")
+           )
+
+    refute view |> element("#turns-turn .turn-footer") |> render() =~ "UTC"
+    refute view |> element("#comment-#{comment.id}") |> render() =~ "UTC"
   end
 
   test "a running turn's elapsed time ticks in the browser until the server's duration replaces it",

@@ -1519,6 +1519,11 @@ button.primary.home-action .ico { color: inherit; }
 .inbox-item strong { font-size: 14px; font-weight: 600; overflow-wrap: anywhere; }
 .inbox-item time { font-size: 11px; flex-shrink: 0; }
 .inbox-item code { overflow-wrap: anywhere; }
+/* The opening of the agent's reply: two lines at most, whatever it said. */
+.inbox-excerpt {
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2;
+  overflow: hidden; overflow-wrap: anywhere;
+}
 .inbox-empty { padding: 48px 0; }
 
 /* ── toasts ────────────────────────────────────────────────────────────── */

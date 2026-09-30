@@ -77,6 +77,7 @@ defmodule Ravix.Tracks do
     Names,
     Opening,
     Origin,
+    Reply,
     Runtime,
     Setup,
     Sleep,
@@ -245,9 +246,63 @@ defmodule Ravix.Tracks do
             activity_at(row, [view.last_active_at | Enum.map(conversations, & &1.last_active_at)]),
           unread: Enum.any?(threads, & &1.unread),
           reply_unread: Enum.any?(threads, & &1.reply_unread),
+          reply: reply_of(threads),
           mention: threads |> Enum.map(& &1.mention) |> Enum.reject(&is_nil/1) |> newest()
       }
     end)
+  end
+
+  # The Inbox card's excerpt: the newest unread reply among the threads
+  # that kept one. Nil when none did yet, and the card says so generically.
+  defp reply_of(threads) do
+    threads
+    |> Enum.filter(&(&1.reply_unread and is_binary(&1.reply_excerpt)))
+    |> Enum.max_by(& &1.reply_at, DateTime, fn -> nil end)
+    |> case do
+      nil -> nil
+      thread -> %{excerpt: thread.reply_excerpt, at: thread.reply_at}
+    end
+  end
+
+  @doc """
+  Whether any unread thread on `user`'s own `views` has a newer reply than
+  the excerpt it kept, so that `backfill_replies/2` has something to fetch.
+  Reads nothing: the page asks this on every redraw of its Inbox, and
+  `backfill_replies/2` admits the tracks before it fetches.
+  """
+  @spec stale_replies?(User.t(), [View.t()]) :: boolean()
+  def stale_replies?(%User{}, views), do: stale_replies(views) != []
+
+  @doc """
+  Fetch the reply excerpt of every unread thread on `views` whose kept one
+  is older than its conversation (`Ravix.Tracks.Reply.backfill/2`), for the
+  Inbox, which is the one page that shows them. It waits on Fountain, so a
+  page calls it from `start_async`; the `:reply` each fill publishes redraws
+  the cards. The tracks are admitted again through `Access.open_tracks/2`.
+  """
+  @spec backfill_replies(User.t(), [View.t()]) :: :ok
+  def backfill_replies(%User{} = user, views) do
+    stale = stale_replies(views)
+
+    if stale != [] do
+      projects = stale |> Enum.map(&elem(&1, 0).project_id) |> Enum.uniq()
+      admitted = user |> Access.open_tracks(projects) |> MapSet.new(fn {row, _} -> row.id end)
+
+      stale
+      |> Enum.filter(fn {view, _thread} -> MapSet.member?(admitted, view.id) end)
+      |> Enum.map(&elem(&1, 1))
+      |> Reply.backfill()
+    end
+
+    :ok
+  end
+
+  defp stale_replies(views) do
+    for view <- views,
+        thread <- view.threads,
+        Map.get(thread, :reply_unread) == true,
+        Reply.stale?(thread),
+        do: {view, thread}
   end
 
   defp newest([]), do: nil
@@ -433,6 +488,9 @@ defmodule Ravix.Tracks do
           model: (conversation && conversation.model) || thread.model || project.model,
           default: thread.id == track_id,
           conversation_id: thread.conversation_id,
+          reply_excerpt: thread.reply_excerpt,
+          reply_at: thread.reply_at,
+          last_active_at: conversation && conversation.last_active_at,
           status:
             if(conversation && conversation.status in [:running, :pending, :failed],
               do: conversation.status,

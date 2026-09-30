@@ -4,7 +4,10 @@
 // skew, so a reload mid-turn resumes from the real start and a fast or slow
 // laptop clock does not shift it. Nothing is pushed: a tick is presentation,
 // and the server replaces this element with the final duration on settling.
-// Formatted as `RavixWeb.TrackLive.duration/1` formats it.
+// Formatted as `RavixWeb.TrackLive.duration/1` formats it. The tooltip's
+// start time is the viewer's own, as `LocalTime` writes it.
+import {fullTime} from './local_time.js'
+
 export function formatDuration(seconds) {
   const s = Math.max(Math.floor(seconds), 0)
   if (s < 60) return `${s}s`
@@ -36,6 +39,7 @@ export const TurnTimer = {
     const now = Date.parse(this.el.dataset.now)
     this.skew = Number.isNaN(now) ? 0 : now - Date.now()
     if (Number.isNaN(this.started)) return
+    this.el.title = `Running since ${fullTime(this.started)}`
     this.tick(this.generation)
   },
   // Wake on the next whole second of elapsed time rather than every 1000ms

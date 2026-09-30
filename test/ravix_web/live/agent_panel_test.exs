@@ -144,9 +144,9 @@ defmodule RavixWeb.Live.AgentPanelTest do
   end
 
   for {raw, label} <- [
-        {"2026-09-22T09:00:00Z", "Sep 22 at 09:00 UTC"},
+        {"2026-09-22T09:00:00Z", RavixWeb.LocalTime.short(~U[2026-09-22 09:00:00Z], nil)},
         {"unknown reset", "unknown reset"},
-        {"2026-09-22T11:00:00+02:00", "Sep 22 at 09:00 UTC"}
+        {"2026-09-22T11:00:00+02:00", RavixWeb.LocalTime.short(~U[2026-09-22 09:00:00Z], nil)}
       ] do
     test "a ChatGPT subscription reset shows #{raw}", %{conn: conn} do
       user = insert_user(agent: :codex, credential_kind: :subscription, credential_set_id: "s")
@@ -172,7 +172,7 @@ defmodule RavixWeb.Live.AgentPanelTest do
 
       assert has_element?(
                view,
-               ~s(#chatgpt-subscription time[datetime="#{unquote(raw)}"]),
+               ~s(#chatgpt-subscription time[datetime="#{instant(unquote(raw))}"]),
                unquote(label)
              )
 
@@ -685,5 +685,13 @@ defmodule RavixWeb.Live.AgentPanelTest do
     render_async(view)
     assert has_element?(view, "#link-error", "ChatGPT refused the code")
     refute has_element?(view, "#chatgpt-conflict")
+  end
+
+  # A reset Fountain dated is written as the UTC instant it names.
+  defp instant(raw) do
+    case DateTime.from_iso8601(raw) do
+      {:ok, at, _offset} -> DateTime.to_iso8601(at)
+      {:error, _} -> raw
+    end
   end
 end

@@ -51,21 +51,49 @@ defmodule RavixWeb.CoreComponents do
     """
   end
 
-  @doc "A provider timestamp in UTC, preserving unknown formats as supplied."
+  @doc """
+  A moment in the viewer's own time zone. The server writes it in `zone`
+  (see `RavixWeb.LocalTime`); the `LocalTime` hook rewrites the text and
+  the `title` in the browser's zone and locale. `title_prefix` goes before
+  the full date in the tooltip.
+  """
+  attr :id, :string, required: true
+  attr :at, DateTime, required: true
+  attr :zone, :string, default: nil
+  attr :title_prefix, :string, default: ""
+  attr :class, :any, default: nil
+
+  def local_time(assigns) do
+    ~H"""
+    <time
+      id={@id}
+      class={@class}
+      phx-hook="LocalTime"
+      datetime={DateTime.to_iso8601(@at)}
+      data-title-prefix={@title_prefix}
+      title={@title_prefix <> RavixWeb.LocalTime.full(@at, @zone)}
+    >{RavixWeb.LocalTime.short(@at, @zone)}</time>
+    """
+  end
+
+  @doc "A provider timestamp in the viewer's zone, preserving unknown formats as supplied."
+  attr :id, :string, required: true
   attr :value, :string, required: true
 
   def provider_time(assigns) do
-    label =
-      case DateTime.from_iso8601(assigns.value) do
-        {:ok, dt, _offset} -> Calendar.strftime(dt, "%b %d at %H:%M UTC")
-        {:error, _} -> assigns.value
-      end
+    case DateTime.from_iso8601(assigns.value) do
+      {:ok, at, _offset} ->
+        assigns = assign(assigns, :at, at)
 
-    assigns = assign(assigns, :label, label)
+        ~H"""
+        <.local_time id={@id} at={@at} />
+        """
 
-    ~H"""
-    <time datetime={@value}>{@label}</time>
-    """
+      {:error, _} ->
+        ~H"""
+        <time datetime={@value}>{@value}</time>
+        """
+    end
   end
 
   @doc "Visible, politely announced feedback for work awaiting a response."

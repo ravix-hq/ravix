@@ -620,7 +620,8 @@
             session: %{
               "session_token" => @session_token,
               "track_id" => @track_id,
-              "project_id" => @project.id
+              "project_id" => @project.id,
+              "timezone" => @timezone
             }
           )}
         </div>
@@ -756,9 +757,11 @@
             >
               <div class="row">
                 <span class="chip">Access removed</span>
-                <span class="spacer"></span><time datetime={DateTime.to_iso8601(notice.at)}>
-                  {Calendar.strftime(notice.at, "%b %-d, %H:%M UTC")}
-                </time>
+                <span class="spacer"></span><.local_time
+                  id={"access-notice-#{notice.id}-at"}
+                  at={notice.at}
+                  zone={@timezone}
+                />
               </div>
               <strong>{notice.track_title}</strong>
               <span :if={notice.revoked != []} class="dim">
@@ -801,13 +804,17 @@
                       true -> "Unread reply"
                     end}
                   </span>
-                  <span class="dim"><.project_name project={project} /></span><span class="spacer"></span><time
-                    :if={inbox_time(track)}
-                    datetime={DateTime.to_iso8601(inbox_time(track))}
-                  >{Calendar.strftime(inbox_time(track), "%b %-d, %H:%M UTC")}</time>
+                  <span class="dim"><.project_name project={project} /></span><span class="spacer"></span><.inbox_age
+                    id={"inbox-age-#{track.id}"}
+                    at={inbox_time(track)}
+                    zone={@timezone}
+                  />
                 </div>
                 <strong>{track.title}</strong>
-                <span :if={track.visibility == :private}><.icon name="lock" /> Private</span><code class="dimmer">{track.branch}</code>
+                <span :if={track.visibility == :private}><.icon name="lock" /> Private</span><code
+                  :if={track.branch != track.title}
+                  class="dimmer"
+                >{track.branch}</code>
                 <span class="dim">
                   <%= cond do %>
                     <% billing_attention?(track) -> %>
@@ -818,6 +825,8 @@
                       The agent needs a hand. Open the conversation to see what happened.
                     <% track.mention -> %>
                       @{track.mention.author_login} mentioned you in a comment.
+                    <% track.reply -> %>
+                      <span class="inbox-excerpt" id={"inbox-excerpt-#{track.id}"}>{track.reply.excerpt}</span>
                     <% true -> %>
                       The agent finished. Open the conversation to read its reply.
                   <% end %>

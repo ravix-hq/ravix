@@ -218,6 +218,7 @@
               comment={comment}
               current_user={@current_user}
               editing={@comment_editing}
+              zone={@timezone}
             />
           </div>
           <div :if={!@thread_draft[:selected?]} id="transcript-turns" phx-update="stream">
@@ -257,14 +258,21 @@
                   phx-click="retry-turn"
                   phx-value-turn={turn.id}
                 >Retry message</button>
-                <.turn_footer :if={turn.settled?} turn={turn} workdir={@track.workdir} />
-                <.turn_timer :if={!turn.settled?} turn={turn} />
+                <.turn_footer
+                  :if={turn.settled?}
+                  id={dom_id}
+                  turn={turn}
+                  workdir={@track.workdir}
+                  zone={@timezone}
+                />
+                <.turn_timer :if={!turn.settled?} turn={turn} zone={@timezone} />
               </section>
               <.thread_comment
                 :for={comment <- comments_after(@comments, turn.id)}
                 comment={comment}
                 current_user={@current_user}
                 editing={@comment_editing}
+                zone={@timezone}
               />
             </article>
           </div>
