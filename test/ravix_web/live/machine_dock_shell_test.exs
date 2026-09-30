@@ -482,7 +482,9 @@ defmodule RavixWeb.Live.MachineDockShellTest do
       assert has_element?(view, "#{empty}.busy", "Waking the machine…")
       send(probe, :go)
       render_async(view, 5_000)
-      assert_receive {SpritesFake, :exec, {:spawn, %{"cols" => "80"}}}
+      # The spawn follows the wake on a later async step, so it can land
+      # after render_async returns: wait for the message, as for the probe.
+      assert_receive {SpritesFake, :exec, {:spawn, %{"cols" => "80"}}}, 2_000
       assert await_output(view, id, "$ ")
       refute has_element?(view, empty)
     end
