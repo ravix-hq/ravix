@@ -34,7 +34,12 @@ for (const width of [1280, 500]) {
     await expect(chip).toHaveAttribute('role', 'status');
     await expect(chip).toHaveAttribute('aria-live', 'polite');
     await expect(chip).toHaveText('Idle', { timeout: 30_000 });
-    await expect(page.locator('#track-machine-status')).toHaveText('Idle.');
+    // The chip is the one live region for the machine's state.
+    await expect(page.locator('#track-machine-status')).toHaveCount(0);
+    await expect(page.locator('.machine-dock-host > [role=status]')).toHaveCount(0);
+    const scope = page.locator('#track-machine-scope');
+    await expect(scope).toHaveText('Shared machine');
+    await expect(scope).toHaveAttribute('title', "Used by all of this project's tracks");
     expect((await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa']).analyze()).violations).toEqual([]);
 
     const composer = page.getByRole('textbox', { name: 'Message', exact: true });
