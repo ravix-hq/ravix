@@ -103,15 +103,8 @@ defmodule RavixWeb.WorkspaceManagementTest do
 
     models = Enum.map(labels, &elem(&1, 0))
     catalog = %{Catalog.empty() | runtimes: ["claude"], models: %{"claude" => models}}
-    settings(ctx, catalog: catalog, model: hd(models))
+    settings(ctx, [catalog: catalog, model: hd(models)], "agent")
     render_async(ctx.view, 1000)
-
-    html = render(ctx.view) |> LazyHTML.from_document()
-
-    [encoded] =
-      html |> LazyHTML.query("#settings-sections") |> LazyHTML.attribute("data-model-labels")
-
-    assert Jason.decode!(encoded) == Map.new(labels)
 
     for {id, label} <- labels do
       assert has_element?(ctx.view, "#settings-model option[value='#{id}']", label)
@@ -351,7 +344,7 @@ defmodule RavixWeb.WorkspaceManagementTest do
   end
 
   test "secrets are scoped and values are absent from the rendered page", ctx do
-    settings(ctx)
+    settings(ctx, [], "machine")
 
     assert render(ctx.view) =~
              "Vault secrets are inserted into outgoing requests and stay off the machine."
@@ -362,27 +355,29 @@ defmodule RavixWeb.WorkspaceManagementTest do
       assert {user.id, id} == {ctx.user.id, ctx.project.id}
 
       assert attrs == %{
-               secret: %{"store" => "vault", "key" => "TOKEN", "value" => "private-value"}
+               "secret" => %{"store" => "vault", "key" => "TOKEN", "value" => "private-value"}
              }
 
-      :ok
+      {:ok, %{rev: 2}}
     end)
 
-    ctx.view
-    |> form("#secret-form", secret: [store: "vault", key: "TOKEN", value: "private-value"])
-    |> render_submit()
+    expect(Projects, :rebuild, fn _, _ -> {:ok, %Rebuild{removed: ["agent"], failed: []}} end)
+    add_secret(ctx.view)
 
     # The write is a Fountain round trip and runs off the page, and the
-    # dialog hands its sentence to the page one message after the answer.
-    render_async(ctx.view, 1000)
+    # page hands its sentence on one message after the answer.
+    save_machine(ctx.view,
+      secrets: %{"1" => %{store: "vault", key: "TOKEN", value: "private-value"}}
+    )
+
     html = render(ctx.view)
-    assert html =~ "Secret updated"
+    assert html =~ "Machine settings saved"
     refute html =~ "private-value"
   end
 
   test "owner confirms a pending secret change explicitly and the form disappears", ctx do
     {:ok, generation} = Projects.Store.begin_secret_change(ctx.project.id)
-    settings(ctx, secrets_pending: true, secrets_generation: generation)
+    settings(ctx, [secrets_pending: true, secrets_generation: generation], "machine")
     assert has_element?(ctx.view, "#secret-confirmation-form", "Values cannot be checked here")
     reject(&Projects.update_settings/3)
     ctx.view |> form("#secret-confirmation-form") |> render_submit()
@@ -414,18 +409,22 @@ defmodule RavixWeb.WorkspaceManagementTest do
   end
 
   test "a failed secret save immediately exposes confirmation without keeping its value", ctx do
-    settings(ctx)
+    settings(ctx, [], "machine")
 
     expect(Projects, :update_settings, fn _, id, _ ->
       {:ok, _} = Projects.Store.begin_secret_change(id)
       {:error, {:unavailable, "The service did not confirm the change."}}
     end)
 
-    ctx.view
-    |> form("#secret-form", secret: [store: "vault", key: "TOKEN", value: "never-render-me"])
-    |> render_submit()
+    # Nothing was saved, so nothing is rebuilt.
+    reject(&Projects.rebuild/2)
+    add_secret(ctx.view)
 
-    render_async(ctx.view)
+    save_machine(ctx.view,
+      secrets: %{"1" => %{store: "vault", key: "TOKEN", value: "never-render-me"}}
+    )
+
+    assert render(ctx.view) =~ "Could not save secret TOKEN"
 
     assert has_element?(
              ctx.view,
@@ -438,7 +437,7 @@ defmodule RavixWeb.WorkspaceManagementTest do
 
   test "secret confirmation refuses stale forms and lost ownership", ctx do
     {:ok, generation} = Projects.Store.begin_secret_change(ctx.project.id)
-    settings(ctx, secrets_pending: true, secrets_generation: generation)
+    settings(ctx, [secrets_pending: true, secrets_generation: generation], "machine")
     :ok = Projects.Store.finish_secret_change(ctx.project.id, generation)
     {:ok, _} = Projects.Store.begin_secret_change(ctx.project.id)
     ctx.view |> form("#secret-confirmation-form", confirmed: "true") |> render_submit()
@@ -458,7 +457,13 @@ defmodule RavixWeb.WorkspaceManagementTest do
       live(Plug.Test.init_test_session(ctx.conn, session_token: token), "/p/#{ctx.project.id}")
 
     {:ok, generation} = Projects.Store.begin_secret_change(ctx.project.id)
-    settings(%{ctx | view: view}, secrets_pending: true, secrets_generation: generation)
+
+    settings(
+      %{ctx | view: view},
+      [secrets_pending: true, secrets_generation: generation],
+      "machine"
+    )
+
     Repo.delete!(session)
     reject(&Projects.confirm_secret_change/3)
 
@@ -468,7 +473,7 @@ defmodule RavixWeb.WorkspaceManagementTest do
     assert Projects.Store.live_project(ctx.project.id).secrets_pending
   end
 
-  test "saving settings runs off the page, with the button disabled until Fountain answers",
+  test "saving settings runs off the page, and the page still answers until Fountain does",
        ctx do
     settings(ctx)
     parent = self()
@@ -487,15 +492,13 @@ defmodule RavixWeb.WorkspaceManagementTest do
     ctx.view |> form("#settings-form", settings: [name: "Renamed"]) |> render_submit()
 
     assert_receive {:saving, saving}, 1000
-    assert has_element?(ctx.view, "#settings-form button[disabled]")
-    # The secret form is not the one that is out, and the page still answers.
-    refute has_element?(ctx.view, "#secret-form button[disabled]")
+    # A second Save while the first is out starts nothing.
+    ctx.view |> form("#settings-form", settings: [name: "Again"]) |> render_submit()
     assert render_patch(ctx.view, "/p/#{ctx.project.id}/settings/general") =~ "settings-form"
 
     send(saving, :finish)
     render_async(ctx.view, 1000)
     assert render(ctx.view) =~ "Settings saved"
-    refute has_element?(ctx.view, "#settings-form button[disabled]")
   end
 
   @tag capture_log: true
@@ -507,7 +510,6 @@ defmodule RavixWeb.WorkspaceManagementTest do
 
     render_async(ctx.view, 1000)
     assert render(ctx.view) =~ "The operation could not finish"
-    refute has_element?(ctx.view, "#settings-form button[disabled]")
     # What was typed is still there to try again with.
     assert has_element?(ctx.view, "#settings-name[value=Renamed]")
   end
@@ -519,7 +521,7 @@ defmodule RavixWeb.WorkspaceManagementTest do
     closed |> Ecto.Changeset.change(closed_at: DateTime.utc_now()) |> Repo.update!()
     insert_track()
     stub(Ravix.MachineCache, :conversations, fn _, _, _ -> {:ok, []} end)
-    settings(ctx)
+    settings(ctx, [], "agent")
     parent = self()
 
     expect(Projects, :update_settings, fn caller, id, attrs ->
@@ -552,7 +554,7 @@ defmodule RavixWeb.WorkspaceManagementTest do
     {token, session} = insert_session(ctx.user)
     conn = Plug.Test.init_test_session(ctx.conn, session_token: token)
     {:ok, view, _} = live(conn, "/p/#{ctx.project.id}")
-    settings(%{ctx | view: view})
+    settings(%{ctx | view: view}, [], "agent")
     reject(&Projects.update_settings/3)
     view |> form("#agent-settings-form") |> render_submit(%{settings: %{runtime: "codex"}})
     render_async(view)
@@ -565,7 +567,7 @@ defmodule RavixWeb.WorkspaceManagementTest do
 
   test "an owner without Codex gets a Harness field error without a provider mutation", ctx do
     catalog = %Catalog{runtimes: ["claude", "codex"], models: %{"codex" => ["openai/test-model"]}}
-    settings(ctx, catalog: catalog)
+    settings(ctx, [catalog: catalog], "agent")
     stub(Ravix.MachineCache, :conversations, fn _, _, _ -> {:ok, []} end)
     stub(Ravix.Fountain, :client, fn -> Client.new("https://fountain.test", "key") end)
     expect(Ravix.Fountain, :catalog, fn _ -> {:ok, catalog} end)
@@ -586,7 +588,7 @@ defmodule RavixWeb.WorkspaceManagementTest do
   end
 
   test "an unavailable harness is refused on the box it is about", ctx do
-    settings(ctx)
+    settings(ctx, [], "agent")
 
     # `validate_harness/3` answers two codes now, because they are about two
     # inputs: a runtime the catalog does not offer makes every model wrong
@@ -619,8 +621,8 @@ defmodule RavixWeb.WorkspaceManagementTest do
     end
   end
 
-  test "a bad secret name is refused on the name, and the value never comes back", ctx do
-    settings(ctx)
+  test "a bad secret name is refused, the name kept, and the value never comes back", ctx do
+    settings(ctx, [], "machine")
 
     # `Ravix.Projects.Settings.validate_key/1` is the authority and has its
     # own coverage in `projects_test.exs`; it is stubbed here because this
@@ -631,30 +633,31 @@ defmodule RavixWeb.WorkspaceManagementTest do
       {:error, {:unprocessable, "bad_key", "A secret name is letters, digits and underscores."}}
     end)
 
-    ctx.view
-    |> form("#secret-form", secret: [store: "env", key: "not a key", value: "private-value"])
-    |> render_submit()
+    reject(&Projects.rebuild/2)
+    add_secret(ctx.view)
 
-    render_async(ctx.view, 1000)
+    save_machine(ctx.view,
+      secrets: %{"1" => %{store: "env", key: "not a key", value: "private-value"}}
+    )
 
-    assert has_element?(
-             ctx.view,
-             "#secret-form .field p.error",
-             "letters, digits and underscores"
-           )
+    assert render(ctx.view) =~ "letters, digits and underscores"
 
     # The key is kept so it can be corrected. The value is not: it is
     # write-only, and rendering it back into the page is the one thing this
     # form must never do, refusal or no refusal.
-    assert has_element?(ctx.view, "#secret-key[value='not a key']")
+    assert has_element?(ctx.view, "#secret-key-1[value='not a key']")
     refute render(ctx.view) =~ "private-value"
   end
 
-  test "run scripts can be saved and cleared", ctx do
-    settings(ctx)
+  test "run scripts can be saved and cleared, and need no rebuild", ctx do
+    settings(ctx, [], "machine")
+    # A run script alone is not what a machine is built from.
+    reject(&Projects.rebuild/2)
+    reject(&Projects.update_settings/3)
+
     # Exercise actual scoped persistence and config validation.
     ctx.view
-    |> form("#preview-defaults-form",
+    |> form("#machine-form",
       preview_defaults: [
         directory: ".",
         command: "PORT=$PORT mix phx.server",
@@ -664,17 +667,36 @@ defmodule RavixWeb.WorkspaceManagementTest do
     )
     |> render_submit()
 
+    render_async(ctx.view, 1000)
+    assert has_element?(ctx.view, "#machine-review", "Save these changes?")
+    assert has_element?(ctx.view, "#machine-review li", "run script edited")
+    assert has_element?(ctx.view, "#confirm-machine", "Save")
+    refute has_element?(ctx.view, "#machine-review-closing")
+
+    ctx.view |> form("#machine-form") |> put_submitter("#confirm-machine") |> render_submit()
+    render_async(ctx.view, 1000)
+
     assert {:ok, %{readiness_path: nil, stop_command: "mix stop_worker"}} =
              Previews.defaults(ctx.user, ctx.project.id)
 
-    ctx.view |> form("#preview-defaults-form") |> render_submit(%{clear: "true"})
+    save_machine(ctx.view, preview_defaults: [command: ""])
+    assert Previews.defaults(ctx.user, ctx.project.id) == {:ok, nil}
+    assert render(ctx.view) =~ "Machine settings saved."
+  end
+
+  test "a refused run script lands on its field and nothing after it runs", ctx do
+    settings(ctx, [], "machine")
+    reject(&Projects.rebuild/2)
+    save_machine(ctx.view, preview_defaults: [directory: "../outside", command: "run"])
+    assert has_element?(ctx.view, "#machine-form .field p.error")
+    assert render(ctx.view) =~ "Could not save the run script"
     assert Previews.defaults(ctx.user, ctx.project.id) == {:ok, nil}
   end
 
   for action <- ~w(rebuild delete) do
     @action action
     test "#{action} requires the typed project name", ctx do
-      settings(ctx)
+      settings(ctx, [], "danger")
 
       expect(Projects, if(@action == "rebuild", do: :rebuild, else: :destroy), fn user, id ->
         assert {user.id, id} == {ctx.user.id, ctx.project.id}
@@ -824,7 +846,7 @@ defmodule RavixWeb.WorkspaceManagementTest do
   end
 
   test "the dialog's own busy flag disables its two irreversible buttons", ctx do
-    settings(ctx)
+    settings(ctx, [], "danger")
     parent = self()
 
     # `busy` used to be one boolean for the whole page, written by three
@@ -855,7 +877,7 @@ defmodule RavixWeb.WorkspaceManagementTest do
   end
 
   test "a rebuild reports what it could not stop, rather than throwing the report away", ctx do
-    settings(ctx)
+    settings(ctx, [], "danger")
 
     # Retiring the agent is the removal that has to work, and it did, so this
     # is `{:ok, _}`. Terminating the live conversations first is best-effort,
@@ -886,7 +908,7 @@ defmodule RavixWeb.WorkspaceManagementTest do
   end
 
   test "a rebuild that stopped everything says nothing extra", ctx do
-    settings(ctx)
+    settings(ctx, [], "danger")
     stub(Projects, :rebuild, fn _, _ -> {:ok, %Rebuild{removed: ["agent"], failed: []}} end)
 
     ctx.view
@@ -899,7 +921,7 @@ defmodule RavixWeb.WorkspaceManagementTest do
   end
 
   test "a rebuild that crashes re-enables the buttons and says so", ctx do
-    settings(ctx)
+    settings(ctx, [], "danger")
     stub(Projects, :rebuild, fn _, _ -> raise "provisioning fell over" end)
     ctx.view |> form("#project-rebuild-form", confirm: ctx.project.name) |> render_change()
 
@@ -915,22 +937,18 @@ defmodule RavixWeb.WorkspaceManagementTest do
     refute has_element?(ctx.view, "button[value=rebuild][disabled]")
   end
 
-  for {form_id, params, expected} <- [
-        {"settings-form", %{name: "Only a name"}, %{"name" => "Only a name"}},
-        {"agent-settings-form", %{runtime: "claude", model: "model", instructions: "Be clear"},
-         %{"runtime" => "claude", "model" => "model", "instructions" => "Be clear"}},
-        {"environment-settings-form",
-         %{setup_script: "npm ci", apt: "git,curl", pip: "", npm: ""},
-         %{
-           "setup_script" => "npm ci",
-           "packages" => %{"apt" => ["git", "curl"], "pip" => [], "npm" => []}
-         }}
+  for {section, form_id, params, expected} <- [
+        {"general", "settings-form", %{name: "Only a name"}, %{"name" => "Only a name"}},
+        {"agent", "agent-settings-form",
+         %{runtime: "claude", model: "model", instructions: "Be clear"},
+         %{"runtime" => "claude", "model" => "model", "instructions" => "Be clear"}}
       ] do
+    @section section
     @form_id form_id
     @params params
     @expected expected
     test "#{form_id} saves only its own fields and reports success", ctx do
-      settings(ctx)
+      settings(ctx, [], @section)
 
       expect(Projects, :update_settings, fn _, _, attrs ->
         assert attrs == @expected
@@ -938,20 +956,178 @@ defmodule RavixWeb.WorkspaceManagementTest do
       end)
 
       ctx.view |> form("##{@form_id}", settings: @params) |> render_submit()
-      assert render_async(ctx.view, 1000) =~ "Saved."
+      assert settled(ctx.view) =~ "Settings saved."
     end
 
     test "#{form_id} retains inputs on provider failure", ctx do
-      settings(ctx)
+      settings(ctx, [], @section)
       expect(Projects, :update_settings, fn _, _, _ -> {:error, {:unavailable, "Try later"}} end)
       ctx.view |> form("##{@form_id}", settings: @params) |> render_submit()
-      assert render_async(ctx.view, 1000) =~ "Could not save"
-      assert render(ctx.view) =~ "Try later"
+      assert settled(ctx.view) =~ "Try later"
+      refute render(ctx.view) =~ "Settings saved."
     end
   end
 
+  test "the machine saves only what changed, then rebuilds, after saying so", ctx do
+    insert_track(project: ctx.project)
+    stub(Ravix.MachineCache, :conversations, fn _, _, _ -> {:ok, []} end)
+
+    settings(
+      ctx,
+      [packages: %{"apt" => ["curl"]}, env_vars: %{"KEEP" => "1", "OLD" => "x"}],
+      "machine"
+    )
+
+    # Each is expected once, below, after the Cancel: a write before then
+    # would use it up.
+
+    ctx.view
+    |> form("#machine-form",
+      settings: [setup_script: "npm ci", apt: "curl jq"],
+      env_vars: %{"0" => %{key: "KEEP", value: "1"}, "1" => %{key: "OLD", value: "y"}}
+    )
+    |> render_submit()
+
+    render_async(ctx.view, 1000)
+    assert has_element?(ctx.view, "#machine-review", "Save and rebuild the machine?")
+
+    for line <- ["+jq in apt", "setup script edited", "1 variable changed"],
+        do: assert(has_element?(ctx.view, "#machine-review li", line))
+
+    assert has_element?(ctx.view, "#machine-review-closing", "Rebuild closes 1 open track")
+    # Cancel writes nothing and keeps what was typed.
+    ctx.view |> element("#machine-review button", "Cancel") |> render_click()
+    refute has_element?(ctx.view, "#machine-review")
+    assert has_element?(ctx.view, "#packages-apt[value='curl jq']")
+
+    parent = self()
+
+    expect(Projects, :update_settings, fn user, id, attrs ->
+      assert {user.id, id} == {ctx.user.id, ctx.project.id}
+
+      assert attrs == %{
+               "setup_script" => "npm ci",
+               "packages" => %{"apt" => ["curl", "jq"], "pip" => [], "npm" => []},
+               "env_vars" => %{"KEEP" => "1", "OLD" => "y"},
+               "expected_env_vars" => %{"KEEP" => "1", "OLD" => "x"}
+             }
+
+      send(parent, :saved)
+      {:ok, %{rev: 2}}
+    end)
+
+    expect(Projects, :rebuild, fn _, _ ->
+      send(parent, :rebuilt)
+      {:ok, %Rebuild{removed: ["agent"], failed: []}}
+    end)
+
+    ctx.view |> element("#machine-form") |> render_submit()
+    render_async(ctx.view, 1000)
+    ctx.view |> form("#machine-form") |> put_submitter("#confirm-machine") |> render_submit()
+    render_async(ctx.view, 1000)
+    assert render(ctx.view) =~ "Machine settings saved. The machine is being rebuilt."
+    refute has_element?(ctx.view, "#machine-review")
+    # Everything is saved before the machine it builds is rebuilt.
+    assert_received first when first in [:saved, :rebuilt]
+    assert first == :saved
+    assert_received :rebuilt
+  end
+
+  test "a machine save that fails part-way says what went in and does not rebuild", ctx do
+    settings(ctx, [], "machine")
+    reject(&Projects.rebuild/2)
+
+    expect(Projects, :update_settings, 2, fn
+      _, _, %{"setup_script" => "make"} -> {:ok, %{rev: 2}}
+      _, _, %{"secret" => _} -> {:error, {:unavailable, "Try later"}}
+    end)
+
+    add_secret(ctx.view)
+
+    save_machine(ctx.view,
+      settings: [setup_script: "make"],
+      secrets: %{"1" => %{store: "env", key: "API", value: "v"}}
+    )
+
+    html = render(ctx.view)
+    assert html =~ "Saved the setup, packages and variables. Could not save secret API: Try later"
+    # The secret stays to be tried again; its value was never drawn.
+    assert has_element?(ctx.view, "#secret-key-1[value=API]")
+    refute html =~ ~s(value="v")
+  end
+
+  test "a rebuild the machine refuses after a save says the save went in", ctx do
+    settings(ctx, [], "machine")
+    expect(Projects, :update_settings, fn _, _, _ -> {:ok, %{rev: 2}} end)
+
+    expect(Projects, :rebuild, fn _, _ ->
+      {:error, {:conflict, "dedicated_lifecycle_pending", "Not available yet."}}
+    end)
+
+    save_machine(ctx.view, settings: [setup_script: "make"])
+
+    assert render(ctx.view) =~
+             "Saved the setup, packages and variables. The machine was not rebuilt: Not available yet."
+  end
+
+  test "a machine whose tracks all have their own saves without a rebuild", ctx do
+    settings(ctx, [default_only: true, shared_tracks: 0], "machine")
+    assert has_element?(ctx.view, "#project-machine-bar button[data-unsaved-save]", "Save")
+    refute has_element?(ctx.view, "#project-machine-bar", "rebuild")
+    reject(&Projects.rebuild/2)
+    expect(Projects, :update_settings, fn _, _, _ -> {:ok, %{rev: 2}} end)
+    ctx.view |> form("#machine-form", settings: [setup_script: "make"]) |> render_submit()
+    render_async(ctx.view, 1000)
+    assert has_element?(ctx.view, "#machine-review", "No project machine to rebuild")
+    ctx.view |> form("#machine-form") |> put_submitter("#confirm-machine") |> render_submit()
+    assert render_async(ctx.view, 1000) =~ "Machine settings saved."
+  end
+
+  test "nothing changed is nothing to save, and a bad list is refused before any write", ctx do
+    settings(ctx, [], "machine")
+    reject(&Projects.update_settings/3)
+    reject(&Projects.rebuild/2)
+    ctx.view |> form("#machine-form") |> render_submit()
+    assert render(ctx.view) =~ "Nothing to save"
+    refute has_element?(ctx.view, "#machine-review")
+
+    ctx.view |> element("button", "Add variable") |> render_click()
+    ctx.view |> form("#machine-form") |> render_submit()
+    assert render(ctx.view) =~ "Use a name of at most 200 bytes"
+
+    add_secret(ctx.view)
+
+    ctx.view
+    |> form("#machine-form",
+      secrets: %{"1" => %{key: "NO_VALUE"}},
+      env_vars: %{"0" => %{key: "A", value: ""}}
+    )
+    |> render_submit()
+
+    assert render(ctx.view) =~ "Enter a value for each secret you set."
+    refute has_element?(ctx.view, "#machine-review")
+  end
+
+  test "a confirmed save whose form no longer matches the summary is asked again", ctx do
+    settings(ctx, [], "machine")
+    reject(&Projects.update_settings/3)
+    reject(&Projects.rebuild/2)
+    ctx.view |> form("#machine-form", settings: [setup_script: "one"]) |> render_submit()
+    render_async(ctx.view, 1000)
+    assert has_element?(ctx.view, "#machine-review li", "setup script edited")
+
+    # A forged confirmation with more in it than the owner was shown.
+    render_submit(ctx.view |> element("#machine-form"), %{
+      "settings" => %{"setup_script" => "one", "apt" => "sl"},
+      "machine_confirm" => "true"
+    })
+
+    render_async(ctx.view, 1000)
+    assert has_element?(ctx.view, "#machine-review li", "+sl in apt")
+  end
+
   test "destructive actions have independent confirmations that disable again when edited", ctx do
-    settings(ctx)
+    settings(ctx, [], "danger")
 
     for action <- ~w(rebuild delete) do
       assert has_element?(ctx.view, "#project-#{action}-form button[disabled]")
@@ -971,7 +1147,7 @@ defmodule RavixWeb.WorkspaceManagementTest do
   test "settings offers the same agent products as creation and retains a saved legacy agent",
        ctx do
     catalog = %{Catalog.empty() | runtimes: ~w(claude codex gemini opencode acp)}
-    settings(ctx, catalog: catalog, runtime: "gemini")
+    settings(ctx, [catalog: catalog, runtime: "gemini"], "agent")
     assert has_element?(ctx.view, "#settings-agent-claude", "Claude Code")
     assert has_element?(ctx.view, "#settings-agent-codex", "Codex")
     assert has_element?(ctx.view, "#settings-runtime[value=gemini]")
@@ -981,7 +1157,7 @@ defmodule RavixWeb.WorkspaceManagementTest do
   end
 
   test "all-dedicated agent settings explain defaults and hide project rebuild", ctx do
-    settings(ctx, default_only: true, shared_tracks: 0)
+    settings(ctx, [default_only: true, shared_tracks: 0], "agent")
 
     assert has_element?(
              ctx.view,
@@ -989,12 +1165,13 @@ defmodule RavixWeb.WorkspaceManagementTest do
              "Changes the default agent for new threads. Existing threads keep their agent."
            )
 
-    refute has_element?(ctx.view, "#project-rebuild-form")
     refute has_element?(ctx.view, "#settings-section-agent", "Switching agents rebuilds")
+    render_patch(ctx.view, "/p/#{ctx.project.id}/settings/danger")
+    refute has_element?(ctx.view, "#project-rebuild-form")
   end
 
   test "mixed settings name the shared tracks before destructive switching", ctx do
-    settings(ctx, default_only: false, shared_tracks: 2)
+    settings(ctx, [default_only: false, shared_tracks: 2], "agent")
 
     assert has_element?(
              ctx.view,
@@ -1002,11 +1179,12 @@ defmodule RavixWeb.WorkspaceManagementTest do
              "2 tracks still share the project machine"
            )
 
+    render_patch(ctx.view, "/p/#{ctx.project.id}/settings/danger")
     assert has_element?(ctx.view, "#project-rebuild-form")
   end
 
   test "one shared track uses singular wording", ctx do
-    settings(ctx, default_only: false, shared_tracks: 1)
+    settings(ctx, [default_only: false, shared_tracks: 1], "agent")
 
     assert has_element?(
              ctx.view,
@@ -1018,7 +1196,7 @@ defmodule RavixWeb.WorkspaceManagementTest do
   end
 
   test "danger actions require the exact project name", ctx do
-    settings(ctx)
+    settings(ctx, [], "danger")
     assert has_element?(ctx.view, "#delete-confirm[required]")
     reject(&Projects.destroy/2)
 
@@ -1030,18 +1208,60 @@ defmodule RavixWeb.WorkspaceManagementTest do
   end
 
   test "secret removal sends an empty value without retaining a value", ctx do
-    settings(ctx)
+    settings(ctx, [env_keys: ["TOKEN"]], "machine")
 
-    expect(Projects, :update_settings, fn _, _, %{secret: secret} ->
+    expect(Projects, :update_settings, fn _, _, %{"secret" => secret} ->
       assert secret == %{"store" => "env", "key" => "TOKEN", "value" => ""}
-      :ok
+      {:ok, %{rev: 2}}
     end)
 
-    ctx.view
-    |> form("#secret-form", secret: [store: "env", key: "TOKEN", value: ""])
-    |> render_submit()
+    expect(Projects, :rebuild, fn _, _ -> {:ok, %Rebuild{removed: [], failed: []}} end)
 
-    assert render_async(ctx.view, 1000) =~ "Secret updated"
+    ctx.view
+    |> element(~s(button[aria-label="Remove Environment secret TOKEN"]))
+    |> render_click()
+
+    assert has_element?(ctx.view, "#secret-key-env-TOKEN", "Removed on save")
+    ctx.view |> form("#machine-form") |> render_submit()
+    render_async(ctx.view, 1000)
+    assert has_element?(ctx.view, "#machine-review li", "1 secret removed")
+    ctx.view |> form("#machine-form") |> put_submitter("#confirm-machine") |> render_submit()
+    assert render_async(ctx.view, 1000) =~ "Machine settings saved"
+  end
+
+  test "only a held key can be replaced or removed, and only once a save", ctx do
+    settings(ctx, [env_keys: ["TOKEN"], vault_keys: ["SHARED"]], "machine")
+    remove_vault = ~s(button[aria-label="Remove Vault secret SHARED"])
+
+    # Forged events, on a button there is: a key in the other store, a key
+    # nobody holds, a store there is not, an action there is not.
+    for forged <- [
+          %{store: "vault", key: "TOKEN", action: "remove"},
+          %{store: "env", key: "OTHER", action: "remove"},
+          %{store: "elsewhere", key: "TOKEN", action: "remove"},
+          %{store: "env", key: "TOKEN", action: "rename"}
+        ] do
+      ctx.view |> element(remove_vault) |> render_click(forged)
+    end
+
+    refute has_element?(ctx.view, ".secret-row")
+
+    ctx.view
+    |> element(~s(button[aria-label="Replace Environment secret TOKEN"]))
+    |> render_click()
+
+    assert has_element?(ctx.view, "label[for=secret-value-1]", "New value for TOKEN")
+    # The key has its row: its buttons are gone, and a second row for it is
+    # refused even when asked for.
+    refute has_element?(ctx.view, ~s(button[aria-label="Remove Environment secret TOKEN"]))
+
+    ctx.view
+    |> element(remove_vault)
+    |> render_click(%{store: "env", key: "TOKEN", action: "remove"})
+
+    refute has_element?(ctx.view, "#secret-row-2")
+    ctx.view |> element("#secret-row-1 button", "Undo") |> render_click()
+    refute has_element?(ctx.view, ".secret-row")
   end
 
   test "a delayed settings save rechecks the session before returning data", ctx do
@@ -1072,49 +1292,54 @@ defmodule RavixWeb.WorkspaceManagementTest do
 
   test "stored secrets are listed by key name only, with a way to replace or remove each",
        ctx do
-    settings(ctx, env_keys: ["API_TOKEN"], vault_keys: ["GITHUB_TOKEN"])
+    settings(ctx, [env_keys: ["API_TOKEN"], vault_keys: ["GITHUB_TOKEN"]], "machine")
 
     for {store, label, key} <- [
           {"env", "Environment", "API_TOKEN"},
           {"vault", "Vault", "GITHUB_TOKEN"}
         ],
-        action <- ["replace", "remove"] do
-      assert has_element?(
-               ctx.view,
-               ~s(button[data-secret-store="#{store}"][data-secret-key="#{key}"][data-secret-action="#{action}"]),
-               String.capitalize(action)
-             )
+        action <- ["Replace", "Remove"] do
+      assert has_element?(ctx.view, "#secret-key-#{store}-#{key}", key)
 
       assert has_element?(
                ctx.view,
-               ~s(button[aria-label="#{String.capitalize(action)} #{label} secret #{key}"])
+               ~s(#secret-key-#{store}-#{key} button[aria-label="#{action} #{label} secret #{key}"]),
+               action
              )
     end
 
-    assert has_element?(ctx.view, "#secret-value[type=password]")
-    refute has_element?(ctx.view, "#secret-value[value]")
+    ctx.view
+    |> element(~s(button[aria-label="Replace Vault secret GITHUB_TOKEN"]))
+    |> render_click()
+
+    assert has_element?(ctx.view, "#secret-key-vault-GITHUB_TOKEN", "Replaced on save")
+    assert has_element?(ctx.view, "#secret-value-1[type=password]")
+    refute has_element?(ctx.view, "#secret-value-1[value]")
   end
 
   test "a settings event after the owner lost the project is refused before any write", ctx do
-    settings(ctx)
+    settings(ctx, [], "machine")
     # Settle the initial rail before removing access: otherwise that earlier read
-    # can dismiss the dialog before the test submits the event it is exercising.
+    # can dismiss the page before the test submits the event it is exercising.
     render_async(ctx.view, 1_000)
-    assert has_element?(ctx.view, "#secret-form")
+    add_secret(ctx.view)
     reject(&Projects.update_settings/3)
+    reject(&Projects.rebuild/2)
 
     ctx.project
     |> Ecto.Changeset.change(archived_at: DateTime.utc_now())
     |> Repo.update!()
 
     ctx.view
-    |> form("#secret-form", secret: [store: "env", key: "TOKEN", value: "never-sent"])
+    |> form("#machine-form",
+      secrets: %{"1" => %{store: "env", key: "TOKEN", value: "never-sent"}}
+    )
     |> render_submit()
 
     html = render(ctx.view)
     assert html =~ "No such thing here."
     refute html =~ "never-sent"
-    refute html =~ "Secret updated"
+    refute html =~ "Machine settings saved"
   end
 
   test "a second section's save is not started while the first is still out", ctx do
@@ -1134,6 +1359,7 @@ defmodule RavixWeb.WorkspaceManagementTest do
 
     ctx.view |> form("#settings-form", settings: [name: "First"]) |> render_submit()
     assert_receive {:saving, saving}, 1000
+    render_patch(ctx.view, "/p/#{ctx.project.id}/settings/agent")
 
     ctx.view
     |> form("#agent-settings-form", settings: [instructions: "Second"])
@@ -1142,78 +1368,95 @@ defmodule RavixWeb.WorkspaceManagementTest do
     # The second form keeps what was typed, so nothing is lost by waiting.
     assert has_element?(ctx.view, "#settings-instructions", "Second")
     send(saving, :finish)
-    assert render_async(ctx.view, 1000) =~ "Saved."
+    assert settled(ctx.view) =~ "Settings saved."
   end
 
   test "preview defaults that cannot be read open on the usual starting values", ctx do
     stub(Previews, :defaults, fn _, _ -> {:error, {:unavailable, "Try later"}} end)
-    settings(ctx)
+    settings(ctx, [], "machine")
 
     assert has_element?(ctx.view, "#default-directory[value='.']")
     assert has_element?(ctx.view, "#default-readiness[value='']")
   end
 
   describe "a session that went without notice" do
-    # The dialog is a `live_component`, and the page's session hooks never
+    # The page is a `live_component`, and the page's session hooks never
     # see a component's events: without the wrapping in
     # `RavixWeb.Live.Hooks`, a revoked session could keep saving settings
     # and deleting projects until the page happened to receive a message.
-    setup ctx do
-      {token, session} = insert_session(ctx.user)
-      conn = Plug.Test.init_test_session(ctx.conn, session_token: token)
-      {:ok, view, _} = live(conn, "/p/#{ctx.project.id}")
-      settings(%{ctx | view: view})
-      Repo.delete!(session)
-      %{view: view}
-    end
-
-    test "cannot save settings through the dialog", ctx do
+    test "cannot save settings through the page", ctx do
+      view = revoked(ctx, "general")
       reject(&Projects.update_settings/3)
 
       assert {:error, {:redirect, %{to: "/login"}}} =
-               ctx.view |> form("#settings-form", settings: [name: "Renamed"]) |> render_submit()
+               view |> form("#settings-form", settings: [name: "Renamed"]) |> render_submit()
     end
 
-    for id <- ["agent-settings-form", "environment-settings-form", "preview-defaults-form"] do
+    for {section, id} <- [{"agent", "agent-settings-form"}, {"machine", "machine-form"}] do
+      @section section
       @id id
       test "revoked session cannot submit #{id}", ctx do
+        view = revoked(ctx, @section)
         reject(&Projects.update_settings/3)
+        reject(&Previews.set_defaults/3)
 
         assert {:error, {:redirect, %{to: "/login"}}} =
-                 ctx.view |> form("##{@id}") |> render_submit()
+                 view |> form("##{@id}") |> render_submit()
       end
     end
 
-    test "revoked session cannot enable a destructive action", ctx do
+    test "revoked session cannot confirm a machine save", ctx do
+      {token, session} = insert_session(ctx.user)
+      conn = Plug.Test.init_test_session(ctx.conn, session_token: token)
+      {:ok, view, _} = live(conn, "/p/#{ctx.project.id}")
+      settings(%{ctx | view: view}, [], "machine")
+      view |> form("#machine-form", settings: [setup_script: "make"]) |> render_submit()
+      render_async(view, 1000)
+      assert has_element?(view, "#machine-review")
+      Repo.delete!(session)
+      reject(&Projects.update_settings/3)
+      reject(&Projects.rebuild/2)
+
       assert {:error, {:redirect, %{to: "/login"}}} =
-               ctx.view
+               view
+               |> form("#machine-form")
+               |> put_submitter("#confirm-machine")
+               |> render_submit()
+    end
+
+    test "revoked session cannot enable a destructive action", ctx do
+      view = revoked(ctx, "danger")
+
+      assert {:error, {:redirect, %{to: "/login"}}} =
+               view
                |> form("#project-delete-form", confirm: ctx.project.name)
                |> render_change()
     end
 
     test "revoked session cannot rebuild", ctx do
+      view = revoked(ctx, "danger")
       reject(&Projects.rebuild/2)
 
       assert {:error, {:redirect, %{to: "/login"}}} =
-               ctx.view
+               view
                |> form("#project-rebuild-form", confirm: ctx.project.name)
                |> render_submit(%{action: "rebuild"})
     end
 
-    test "cannot save a secret through the dialog", ctx do
+    test "cannot add a secret through the page", ctx do
+      view = revoked(ctx, "machine")
       reject(&Projects.update_settings/3)
 
       assert {:error, {:redirect, %{to: "/login"}}} =
-               ctx.view
-               |> form("#secret-form", secret: [store: "env", key: "TOKEN", value: "v"])
-               |> render_submit()
+               view |> element("button", "Add secret") |> render_click()
     end
 
-    test "cannot delete the project through the dialog", ctx do
+    test "cannot delete the project through the page", ctx do
+      view = revoked(ctx, "danger")
       reject(&Projects.destroy/2)
 
       assert {:error, {:redirect, %{to: "/login"}}} =
-               ctx.view
+               view
                |> form("#project-delete-form", confirm: ctx.project.name)
                |> render_submit(%{action: "delete"})
 
@@ -1221,10 +1464,45 @@ defmodule RavixWeb.WorkspaceManagementTest do
     end
   end
 
-  defp settings(ctx, overrides \\ []) do
+  defp revoked(ctx, section) do
+    {token, session} = insert_session(ctx.user)
+    conn = Plug.Test.init_test_session(ctx.conn, session_token: token)
+    {:ok, view, _} = live(conn, "/p/#{ctx.project.id}")
+    settings(%{ctx | view: view}, [], section)
+    Repo.delete!(session)
+    view
+  end
+
+  # A settings save's answer, and the flash it hands the page one message
+  # later: `:sys.get_state/1` returns once the page has taken that message.
+  defp settled(view) do
+    render_async(view, 1000)
+    :sys.get_state(view.pid)
+    render(view)
+  end
+
+  defp add_secret(view), do: view |> element("button", "Add secret") |> render_click()
+
+  # The Machine page's two submits: the one that asks, and the confirmation.
+  defp save_machine(view, params) do
+    view |> form("#machine-form", params) |> render_submit()
+    render_async(view, 1000)
+
+    if has_element?(view, "#machine-review") do
+      view
+      |> form("#machine-form", params)
+      |> put_submitter("#confirm-machine")
+      |> render_submit()
+
+      render_async(view, 1000)
+    end
+  end
+
+  defp settings(ctx, overrides \\ [], section \\ "general") do
     stub(Projects, :settings, fn _, _ ->
       {:ok,
        Enum.into(overrides, %{
+         env_vars: %{},
          name: ctx.project.name,
          runtime: "claude",
          model: "model",
@@ -1237,7 +1515,7 @@ defmodule RavixWeb.WorkspaceManagementTest do
        })}
     end)
 
-    render_patch(ctx.view, "/p/#{ctx.project.id}/settings/general")
+    render_patch(ctx.view, "/p/#{ctx.project.id}/settings/#{section}")
     render_async(ctx.view)
   end
 end

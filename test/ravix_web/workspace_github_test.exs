@@ -325,6 +325,9 @@ defmodule RavixWeb.WorkspaceGitHubTest do
 
       view |> element("#available-77 button") |> render_click()
       assert flashed(view) =~ "Added @acme to this workspace."
+      # Landing the add starts a fresh read of what is still available, after
+      # the `render_async` above collected the tasks it waits for.
+      render_async(view, 5_000)
 
       assert [%Installation{installation_id: 77, account_login: "acme"} = connection] =
                Store.installations(ctx.team.id)

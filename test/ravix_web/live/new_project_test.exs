@@ -37,9 +37,11 @@ defmodule RavixWeb.Live.NewProjectTest do
 
   defp open(conn, user) do
     {:ok, view, _} = live(log_in_user(conn, user), "/home")
-    render_async(view)
+    # `/home` mounts with several reads out at once; the default 100ms is
+    # not enough for them on a loaded machine during the full suite.
+    render_async(view, 5_000)
     render_click(view, "dialog", %{name: "new-project"})
-    render_async(view)
+    render_async(view, 5_000)
     view
   end
 

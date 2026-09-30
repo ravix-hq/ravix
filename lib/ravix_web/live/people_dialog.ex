@@ -15,6 +15,11 @@ defmodule RavixWeb.Live.PeopleDialog do
   pages carried those as top-level assigns, which is how `WorkspaceLive`
   came to hold twenty-eight of them.
 
+  `layout: :page` draws the same list without the dialog around it: the
+  project's owner reads and changes it on the project's Access settings
+  page (RAV-74), `/p/:project/settings/access`; everyone else still opens
+  the dialog.
+
   `scope` picks the unit. What that changes is real and the dialog says so:
   a project member reaches project-visible tracks; private invitations remain
   separate, including when the person leaves the project.
@@ -63,7 +68,8 @@ defmodule RavixWeb.Live.PeopleDialog do
          login: "",
          base: nil,
          admin?: false,
-         url: nil
+         url: nil,
+         layout: :dialog
        )}
 
   @impl true
@@ -396,137 +402,151 @@ defmodule RavixWeb.Live.PeopleDialog do
   @impl true
   def render(assigns) do
     ~H"""
-    <div id={@id}>
-      <.dialog id={"#{@id}-dialog"} title={title(@scope)} on_close="dismiss">
+    <div id={@id} class={@layout == :page && "access-page"}>
+      <.dialog :if={@layout == :dialog} id={"#{@id}-dialog"} title={title(@scope)} on_close="dismiss">
         <p><.project_name project={@project} /></p>
-        <p :if={@scope == :project && !@workspace_project?} class="hint">
-          Members can create tracks and work in tracks shared with this project. Private tracks require an invitation.
-        </p>
-        <form
-          :if={@scope == :track && Ravix.Accounts.Access.creator?(@current_user, @track)}
-          id="track-visibility-form"
-          phx-change="visibility"
-          phx-target={@myself}
-        >
-          <.input
-            type="select"
-            name="visibility"
-            label="Sharing"
-            value={@track.visibility}
-            options={
-              [{"Everyone in this project", :project}] ++
-                if(@track.sandbox_layout == :dedicated,
-                  do: [{"Only people I invite", :private}],
-                  else: []
-                )
-            }
-          />
-          <p :if={@track.sandbox_layout != :dedicated} class="hint">
-            Private tracks need their own machine. This track shares the project machine.
-          </p>
-        </form>
-        <p :if={@scope == :track && @track.visibility == :project} class="hint">
-          Project members work here with their project role.
-        </p>
-        <ul
-          :if={@base && @people}
-          id={"#{@id}-summary"}
-          class="access-summary"
-          aria-label="Access summary"
-        >
-          <li>
-            Base role: <strong>{role_label(@base.level)}</strong> (all {@base.workspace} members)
-          </li>
-          <li>Direct access: <strong>{people_count(direct_count(@people))}</strong></li>
-          <li>
-            Workspace: {members_count(@base.members, @base.workspace)} {role_label(@base.level)} by default
-          </li>
-        </ul>
-        <ul class="people-list" aria-label="Members">
-          <li :for={person <- @people} id={"#{@id}-person-#{person.login}"} class="people-row">
-            <div class="people-identity">
-              <span>@{person.login}</span>
-              <small :if={badge(person, @scope)}>{badge(person, @scope)}</small>
-            </div>
-            <%= cond do %>
-              <% editable?(person, @scope, @admin?, @current_user) -> %>
-                <.role_menu id={@id} person={person} target={@myself}>
-                  <:trigger>{role_label(person.role)}</:trigger>
-                  <:remove>{remove_label(person, @scope, @current_user)}</:remove>
-                </.role_menu>
-                <span :if={source_label(person)} class="people-source">
-                  · {source_label(person)}
-                </span>
-              <% givable?(person, @scope, @admin?, @current_user) -> %>
-                <span class="role-label">{role_label(person.role)}</span>
-                <span class="people-source">· {source_label(person)}</span>
-                <.role_menu
-                  id={@id}
-                  person={person}
-                  target={@myself}
-                  label={"Give @#{person.login} a different role"}
-                >
-                  <:trigger>Give a different role</:trigger>
-                </.role_menu>
-              <% true -> %>
-                <span :if={person.role} class="role-label dim">{role_label(person.role)}</span>
-                <span :if={source_label(person)} class="people-source">
-                  · {source_label(person)}
-                </span>
-                <button
-                  :if={removable?(person, @scope, @admin?, @current_user)}
-                  class="ghost"
-                  phx-click={if person.fallback, do: "clear-role", else: "remove-person"}
-                  phx-value-login={person.login}
-                  phx-target={@myself}
-                >
-                  {remove_label(person, @scope, @current_user)}
-                </button>
-            <% end %>
-          </li>
-        </ul>
-        <p :if={@workspace_project?} id={"#{@id}-workspace-hint"} class="hint workspace-hint">
-          Everyone in the workspace reaches this project at the base role. A direct role replaces it, higher or lower.
-        </p>
-        <form
-          :if={@admin? && !@workspace_project?}
-          id={"#{@id}-invite-form"}
-          phx-change="type-login"
-          phx-submit="invite-person"
-          phx-target={@myself}
-        >
-          <.input
-            name="login"
-            id={"#{@id}-invite-login"}
-            label="GitHub username"
-            value={@login}
-            required
-          />
-          <.loading_status :if={@inviting?}>Sending invitation…</.loading_status>
-          <button class="primary" phx-disable-with="Inviting…" disabled={@inviting?}>Invite</button>
-        </form>
-        <.invite_link
-          :if={!@workspace_project?}
-          owner={@admin?}
-          invite={@invite}
-          target={@myself}
-        />
-        <div
-          :if={@url}
-          id={"#{@id}-copy-link"}
-          class="share-link copy-link"
-          phx-hook="CopyCode"
-          data-copy-failed="Copy failed. Select the link and copy it."
-        >
-          <code>{@url}</code>
-          <button type="button" class="ghost">Copy link</button>
-          <span role="status" aria-live="polite"></span>
-        </div>
-        <p :if={@url} class="hint">
-          Opens this {@scope} for people who already have access. It does not invite anyone.
-        </p>
+        {people(assigns)}
       </.dialog>
+      <div :if={@layout == :page} class="settings-content">
+        <p class="settings-help">
+          Everyone who can reach this project, with their role and where it comes from.
+        </p>
+        {people(assigns)}
+      </div>
     </div>
+    """
+  end
+
+  # The list, the invitation and the link: the same in the dialog and on
+  # the project's Access page.
+  defp people(assigns) do
+    ~H"""
+    <p :if={@scope == :project && !@workspace_project?} class="hint">
+      Members can create tracks and work in tracks shared with this project. Private tracks require an invitation.
+    </p>
+    <form
+      :if={@scope == :track && Ravix.Accounts.Access.creator?(@current_user, @track)}
+      id="track-visibility-form"
+      phx-change="visibility"
+      phx-target={@myself}
+    >
+      <.input
+        type="select"
+        name="visibility"
+        label="Sharing"
+        value={@track.visibility}
+        options={
+          [{"Everyone in this project", :project}] ++
+            if(@track.sandbox_layout == :dedicated,
+              do: [{"Only people I invite", :private}],
+              else: []
+            )
+        }
+      />
+      <p :if={@track.sandbox_layout != :dedicated} class="hint">
+        Private tracks need their own machine. This track shares the project machine.
+      </p>
+    </form>
+    <p :if={@scope == :track && @track.visibility == :project} class="hint">
+      Project members work here with their project role.
+    </p>
+    <ul
+      :if={@base && @people}
+      id={"#{@id}-summary"}
+      class="access-summary"
+      aria-label="Access summary"
+    >
+      <li>
+        Base role: <strong>{role_label(@base.level)}</strong> (all {@base.workspace} members)
+      </li>
+      <li>Direct access: <strong>{people_count(direct_count(@people))}</strong></li>
+      <li>
+        Workspace: {members_count(@base.members, @base.workspace)} {role_label(@base.level)} by default
+      </li>
+    </ul>
+    <ul class="people-list" aria-label="Members">
+      <li :for={person <- @people} id={"#{@id}-person-#{person.login}"} class="people-row">
+        <div class="people-identity">
+          <span>@{person.login}</span>
+          <small :if={badge(person, @scope)}>{badge(person, @scope)}</small>
+        </div>
+        <%= cond do %>
+          <% editable?(person, @scope, @admin?, @current_user) -> %>
+            <.role_menu id={@id} person={person} target={@myself}>
+              <:trigger>{role_label(person.role)}</:trigger>
+              <:remove>{remove_label(person, @scope, @current_user)}</:remove>
+            </.role_menu>
+            <span :if={source_label(person)} class="people-source">
+              · {source_label(person)}
+            </span>
+          <% givable?(person, @scope, @admin?, @current_user) -> %>
+            <span class="role-label">{role_label(person.role)}</span>
+            <span class="people-source">· {source_label(person)}</span>
+            <.role_menu
+              id={@id}
+              person={person}
+              target={@myself}
+              label={"Give @#{person.login} a different role"}
+            >
+              <:trigger>Give a different role</:trigger>
+            </.role_menu>
+          <% true -> %>
+            <span :if={person.role} class="role-label dim">{role_label(person.role)}</span>
+            <span :if={source_label(person)} class="people-source">
+              · {source_label(person)}
+            </span>
+            <button
+              :if={removable?(person, @scope, @admin?, @current_user)}
+              class="ghost"
+              phx-click={if person.fallback, do: "clear-role", else: "remove-person"}
+              phx-value-login={person.login}
+              phx-target={@myself}
+            >
+              {remove_label(person, @scope, @current_user)}
+            </button>
+        <% end %>
+      </li>
+    </ul>
+    <p :if={@workspace_project?} id={"#{@id}-workspace-hint"} class="hint workspace-hint">
+      Everyone in the workspace reaches this project at the base role. A direct role replaces it, higher or lower.
+    </p>
+    <form
+      :if={@admin? && !@workspace_project?}
+      id={"#{@id}-invite-form"}
+      phx-change="type-login"
+      phx-submit="invite-person"
+      phx-target={@myself}
+    >
+      <.input
+        name="login"
+        id={"#{@id}-invite-login"}
+        label="GitHub username"
+        value={@login}
+        required
+      />
+      <.loading_status :if={@inviting?}>Sending invitation…</.loading_status>
+      <button class="primary" phx-disable-with="Inviting…" disabled={@inviting?}>Invite</button>
+    </form>
+    <.invite_link
+      :if={!@workspace_project?}
+      owner={@admin?}
+      invite={@invite}
+      target={@myself}
+    />
+    <div
+      :if={@url}
+      id={"#{@id}-copy-link"}
+      class="share-link copy-link"
+      phx-hook="CopyCode"
+      data-copy-failed="Copy failed. Select the link and copy it."
+    >
+      <code>{@url}</code>
+      <button type="button" class="ghost">Copy link</button>
+      <span role="status" aria-live="polite"></span>
+    </div>
+    <p :if={@url} class="hint">
+      Opens this {@scope} for people who already have access. It does not invite anyone.
+    </p>
     """
   end
 end

@@ -80,6 +80,9 @@ defmodule RavixWeb.Icons do
     "spinner" => ~S(<path d="M12 3.5a8.5 8.5 0 1 1-8.5 8.5" />),
     "arrow-down" => ~S(<path d="M12 5v14M6 13l6 6 6-6" />),
     "arrow-up" => ~S(<path d="M12 19V5M6 11l6-6 6 6" />),
+    # A square in a ring: stop the turn, drawn where the send arrow was.
+    "stop" =>
+      ~S(<circle cx="12" cy="12" r="9" /><rect x="8.5" y="8.5" width="7" height="7" rx="1" fill="currentColor" stroke="none" />),
     "external" =>
       ~S(<path d="M14 4h6v6" /><path d="M20 4 10.5 13.5" /><path d="M18 14.5V19a1.5 1.5 0 0 1-1.5 1.5h-11A1.5 1.5 0 0 1 4 19V8a1.5 1.5 0 0 1 1.5-1.5H10" />),
     "settings" =>
