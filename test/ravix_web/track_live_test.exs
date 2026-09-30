@@ -1042,7 +1042,13 @@ defmodule RavixWeb.TrackLiveTest do
     render_async(ctx.view, 2_000)
     refute has_element?(ctx.view, "#new-thread-dialog")
     assert has_element?(ctx.view, "#thread-tab-draft[aria-selected=true]", "New thread")
-    assert has_element?(ctx.view, ".thread-default-source", "Project default")
+
+    assert has_element?(
+             ctx.view,
+             "#draft-runtime-menu .model-option:has(input[checked])",
+             "Project default"
+           )
+
     # Stubbed `Tracks.get` reads the rows, so the page sees the new thread.
     stub(Tracks, :get, fn _, id, _opts ->
       {:ok,
@@ -1073,7 +1079,7 @@ defmodule RavixWeb.TrackLiveTest do
     assert has_element?(ctx.view, "#composer-#{thread.id}")
     assert has_element?(ctx.view, "#thread-tab-#{thread.id}[aria-selected=true]")
     refute has_element?(ctx.view, "#thread-tab-draft")
-    refute has_element?(ctx.view, "#thread_draft-runtime")
+    refute has_element?(ctx.view, "#draft-runtime")
     assert has_element?(ctx.view, ".composer-model")
     assert_push_event(ctx.view, "composer:forget", %{key: key})
     assert key == "track:#{ctx.track.id}:thread:draft:#{request_id}"
@@ -1098,8 +1104,20 @@ defmodule RavixWeb.TrackLiveTest do
     stub(Ravix.MachineCache, :machine_of, fn _, _ -> {:ok, nil} end)
     ctx.view |> element("#thread-switcher button[aria-label='Add thread']") |> render_click()
     render_async(ctx.view)
-    assert has_element?(ctx.view, ".thread-default-source", "Your default: Claude Code")
-    assert has_element?(ctx.view, "#thread_draft-model option[selected]", "Claude Opus 5")
+    assert has_element?(ctx.view, "#draft-runtime-trigger", "Claude Code · Claude Opus 5")
+
+    assert has_element?(
+             ctx.view,
+             "#draft-runtime-menu .model-option:has(input[checked])",
+             "Your default"
+           )
+
+    assert has_element?(
+             ctx.view,
+             "#draft-runtime-menu label:has(input[name=\"thread_draft[model]\"][checked])",
+             "Claude Opus 5"
+           )
+
     assert has_element?(ctx.view, "#thread-tab-draft", "Claude Code · Claude Opus 5")
     assert has_element?(ctx.view, "#thread-picker option[value=draft][selected]", "New thread")
   end
@@ -1122,16 +1140,25 @@ defmodule RavixWeb.TrackLiveTest do
     }
 
     open_draft(ctx, base)
-    assert has_element?(ctx.view, "label[for=thread_draft-runtime]", "Agent")
-    assert has_element?(ctx.view, "#thread_draft-runtime option[value=claude]", "Claude Code")
+    assert has_element?(ctx.view, "#draft-runtime-menu legend", "Agent")
 
     assert has_element?(
              ctx.view,
-             "#thread_draft-runtime option[value=codex][disabled]",
+             "#draft-runtime-menu label:has(input[name=\"thread_draft[runtime]\"][value=claude])",
+             "Claude Code"
+           )
+
+    assert has_element?(
+             ctx.view,
+             "#draft-runtime-menu label:has(input[name=\"thread_draft[runtime]\"][value=codex][disabled])",
              "Codex threads on this project aren't available yet"
            )
 
-    assert has_element?(ctx.view, "#thread_draft-model option", "Claude Opus 5")
+    assert has_element?(
+             ctx.view,
+             "#draft-runtime-menu label:has(input[name=\"thread_draft[model]\"])",
+             "Claude Opus 5"
+           )
 
     for {owner?, reason} <- [
           {true, "Connect to use"},
@@ -1149,7 +1176,20 @@ defmodule RavixWeb.TrackLiveTest do
       }
 
       open_draft(ctx, options)
-      assert has_element?(ctx.view, "#thread_draft-runtime option[value=codex][disabled]", reason)
+
+      assert has_element?(
+               ctx.view,
+               "#draft-runtime-menu label:has(input[name=\"thread_draft[runtime]\"][value=codex][disabled])",
+               reason
+             )
+
+      # RAV-80: the payer connects from the agent menu; nothing waits above
+      # the composer.
+      connect =
+        "#draft-runtime-menu button[phx-click=connect-thread-agent][phx-value-runtime=codex]"
+
+      assert has_element?(ctx.view, connect, "Connect Codex…") == owner?
+      refute has_element?(ctx.view, ".thread-connections button[phx-click=connect-thread-agent]")
     end
   end
 
@@ -1227,7 +1267,12 @@ defmodule RavixWeb.TrackLiveTest do
       render_async(ctx.view)
       assert has_element?(ctx.view, "#thread-error[role=alert]", message)
       assert has_element?(ctx.view, "#thread-tab-draft[aria-selected=true]")
-      assert has_element?(ctx.view, "#thread_draft-runtime option[value=codex][selected]")
+
+      assert has_element?(
+               ctx.view,
+               "#draft-runtime-menu label:has(input[name=\"thread_draft[runtime]\"][value=codex][checked])"
+             )
+
       refute_push_event(ctx.view, "composer:clear", %{})
       refute_push_event(ctx.view, "composer:forget", %{})
     end
@@ -1298,7 +1343,9 @@ defmodule RavixWeb.TrackLiveTest do
     assert has_element?(ctx.view, "#thread-tab-draft", "Claude Code")
 
     ctx.view
-    |> element("button[phx-click=connect-thread-agent][phx-value-runtime=codex]")
+    |> element(
+      "#draft-runtime-menu button[phx-click=connect-thread-agent][phx-value-runtime=codex]"
+    )
     |> render_click()
 
     render_async(ctx.view)
@@ -1325,11 +1372,16 @@ defmodule RavixWeb.TrackLiveTest do
 
     assert has_element?(
              ctx.view,
-             "#thread_draft-runtime option[value=codex][selected]",
-             "Connected"
+             "#draft-runtime-menu label:has(input[name=\"thread_draft[runtime]\"][value=codex][checked]:not([disabled]))",
+             "Codex"
            )
 
-    assert has_element?(ctx.view, "#thread_draft-model option[selected]", "GPT-6 Astra")
+    assert has_element?(
+             ctx.view,
+             "#draft-runtime-menu label:has(input[name=\"thread_draft[model]\"][checked])",
+             "GPT-6 Astra"
+           )
+
     assert has_element?(ctx.view, "#thread-tab-draft", "Codex · GPT-6 Astra")
     refute has_element?(ctx.view, ".thread-connections form")
     render_click(ctx.view, "discard-draft")
@@ -2604,9 +2656,32 @@ defmodule RavixWeb.TrackLiveTest do
              )
 
       refute has_element?(ctx.view, "#transcript-turns")
-      assert has_element?(ctx.view, ".thread-default-source", "Your default: Claude Code")
-      assert has_element?(ctx.view, ".draft-default-hint", "Also your default for new threads")
+      assert has_element?(ctx.view, "#draft-runtime-trigger", "Claude Code · Claude Opus 5")
+
+      assert has_element?(
+               ctx.view,
+               "#draft-runtime-menu .model-option:has(input[checked])",
+               "Your default"
+             )
+
+      assert has_element?(
+               ctx.view,
+               "#draft-runtime-menu .model-default-hint",
+               "Also your default for new threads"
+             )
+
       refute has_element?(ctx.view, "#model-trigger")
+      # RAV-80: one model control, the composer's pill, and no native selects.
+      refute has_element?(ctx.view, "#composer-form select")
+      assert has_element?(ctx.view, "#draft-runtime-trigger.composer-model.model-trigger")
+
+      assert 1 ==
+               ctx.view
+               |> render()
+               |> LazyHTML.from_fragment()
+               |> LazyHTML.query("#composer-form [aria-haspopup=dialog]")
+               |> Enum.count()
+
       key = draft_key(ctx.view)
 
       ctx.view |> element("#thread-switcher button[aria-label='Add thread']") |> render_click()
@@ -2645,14 +2720,19 @@ defmodule RavixWeb.TrackLiveTest do
       assert has_element?(ctx.view, "#composer-#{ctx.track.id}")
       assert has_element?(ctx.view, "#thread-tab-#{ctx.track.id}[aria-selected=true]")
       assert has_element?(ctx.view, "#thread-tab-draft[aria-selected=false]", "Claude Sonnet 5")
-      refute has_element?(ctx.view, "#thread_draft-runtime")
+      refute has_element?(ctx.view, "#draft-runtime")
 
       # The narrow picker offers the draft too, and choosing it comes back.
       assert has_element?(ctx.view, "#thread-picker option[value=draft]", "New thread")
       ctx.view |> element("#thread-picker-form") |> render_change(%{thread_id: "draft"})
       assert has_element?(ctx.view, "#thread-tab-draft[aria-selected=true]")
       assert draft_key(ctx.view) == key
-      assert has_element?(ctx.view, "#thread_draft-model option[selected]", "Claude Sonnet 5")
+
+      assert has_element?(
+               ctx.view,
+               "#draft-runtime-menu label:has(input[name=\"thread_draft[model]\"][checked])",
+               "Claude Sonnet 5"
+             )
 
       {:ok, parent, _} = live(ctx.conn, "/p/#{ctx.project.id}/t/#{ctx.track.id}")
       reloaded = find_live_child(parent, "track-host")
@@ -2668,8 +2748,17 @@ defmodule RavixWeb.TrackLiveTest do
       |> form("#composer-form", %{thread_draft: %{runtime: "codex"}})
       |> render_change(%{_target: ["thread_draft", "runtime"]})
 
-      assert has_element?(ctx.view, "#thread_draft-runtime option[value=codex][selected]")
-      assert has_element?(ctx.view, "#thread_draft-model option[selected]", "GPT-6 Astra")
+      assert has_element?(
+               ctx.view,
+               "#draft-runtime-menu label:has(input[name=\"thread_draft[runtime]\"][value=codex][checked])"
+             )
+
+      assert has_element?(
+               ctx.view,
+               "#draft-runtime-menu label:has(input[name=\"thread_draft[model]\"][checked])",
+               "GPT-6 Astra"
+             )
+
       assert has_element?(ctx.view, "#thread-tab-draft", "Codex · GPT-6 Astra")
 
       ctx.view

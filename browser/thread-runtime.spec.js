@@ -2,6 +2,7 @@ import { test, expect } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
 import { signIn } from './sign-in.js';
 import { connectApiKey } from './settings.js';
+import { chooseDraft, draftChoice, draftModels, draftPill } from './draft-runtime.js';
 
 const mock = `http://localhost:${process.env.MOCK_PORT || 8893}`;
 
@@ -41,22 +42,22 @@ test('cohort threads attach the other runtime to the home disk and reuse its pro
       const form = page.locator('#draft-runtime');
       const draftTab = page.locator('#thread-tab-draft');
       // All-dedicated projects use the saved project default for each new thread.
-      await expect(form.getByLabel('Agent', { exact: true })).toHaveValue(home);
+      await expect(draftChoice(page, 'runtime')).toHaveValue(home);
       if (home === 'claude' && n === 1) {
         const connections = page.locator('.thread-connections');
-        await connections.getByRole('button', { name: 'Connect to use Codex', exact: true }).click();
+        await draftPill(page).click();
+        await page.locator('#draft-runtime-menu').getByRole('button', { name: 'Connect Codex…', exact: true }).click();
         await connections.getByRole('button', { name: 'API key', exact: true }).click();
         await connections.getByLabel('API key', { exact: true }).fill('mock-inline-thread-key');
         await connections.getByRole('button', { name: 'Connect Codex', exact: true }).click();
-        await expect(form.getByLabel('Agent', { exact: true })).toHaveValue('codex');
+        await expect(draftChoice(page, 'runtime')).toHaveValue('codex');
         await expect(draftTab).toContainText('Codex');
       }
-      await form.getByLabel('Agent', { exact: true }).selectOption(guest);
-      // Model options arrive with the server's runtime patch, after selectOption returns.
+      await chooseDraft(page, 'runtime', guest);
+      // Model options arrive with the server's runtime patch, after the pick.
       await expect(draftTab).toContainText(guest === 'codex' ? 'Codex · ' : 'Claude Code · ');
-      const models = form.getByLabel('Model', { exact: true });
-      const model = await models.locator('option').last().getAttribute('value');
-      await models.selectOption(model);
+      const model = (await draftModels(page)).at(-1);
+      await chooseDraft(page, 'model', model);
       await page.getByRole('textbox', { name: 'Message', exact: true }).fill(`Guest thread ${n}`);
       await page.getByRole('button', { name: 'Send', exact: true }).click();
       await expect(form).toHaveCount(0);

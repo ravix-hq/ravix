@@ -212,9 +212,8 @@
           >
             <span class="empty-icon"><.icon name="sparkle" size={22} /></span>
             <h2>New thread</h2>
-            <p>Your first message starts this thread.</p>
-            <p class="hint">
-              Threads share this checkout and can run concurrently. Coordinate edits to avoid collisions.
+            <p class="dim">
+              Your first message starts this thread. It shares this checkout with the others.
             </p>
           </div>
           <button
@@ -439,15 +438,13 @@
           <button type="button" class="ghost" phx-click="dismiss-billing-notice">Got it</button>
         </div>
         <.loading_status :if={:retry in @pending}>Retrying track…</.loading_status>
-        <.loading_status :if={@thread_draft[:selected?] && :thread_options in @pending}>
-          Loading agents…
-        </.loading_status>
         <RavixWeb.Live.ThreadConnect.panel
           :if={@thread_draft[:selected?]}
           options={@thread_draft.options}
           connection={@thread_connect}
           current_user={@current_user}
           session_hash={@session_hash}
+          buttons={false}
         />
         <p :if={@thread_error} id="thread-error" role="alert">{@thread_error}</p>
         <.loading_status :if={:start_thread in @pending}>Starting thread…</.loading_status>
@@ -688,27 +685,37 @@
                 >
                   <.icon name="picture" size={17} />
                 </button>
-                <%!-- A draft's agent is still open, so it offers both; once the
-                  thread exists only the model changes. The picks are part of
-                  this form, and each change arrives as `validate`. --%>
-                <div
+                <%!-- A draft's agent is still open, so its pill offers both
+                  (RAV-80); once the thread exists only the model changes. It
+                  sits where the model pill does, and is the composer's pill:
+                  the picks are radios of this form, and each change arrives
+                  as `validate`. --%>
+                <RavixWeb.Live.RuntimePicker.menu
                   :if={@thread_draft[:selected?] && @thread_draft.options}
                   id="draft-runtime"
-                  class="draft-runtime"
-                >
-                  <RavixWeb.Live.RuntimePicker.fields
-                    options={@thread_draft.options}
-                    params={
-                      %{
-                        "runtime" => @thread_draft.runtime,
-                        "model" => @thread_draft.model,
-                        "preference_explicit" => to_string(@thread_draft.explicit?)
-                      }
+                  options={@thread_draft.options}
+                  params={
+                    %{
+                      "runtime" => @thread_draft.runtime,
+                      "model" => @thread_draft.model,
+                      "preference_explicit" => to_string(@thread_draft.explicit?)
                     }
-                    name="thread_draft"
-                  />
-                  <p class="hint draft-default-hint">Also your default for new threads</p>
-                </div>
+                  }
+                  name="thread_draft"
+                  form="composer-form"
+                  class="composer-model model-trigger"
+                  hint="Also your default for new threads"
+                  connect
+                  disabled={:start_thread in @pending}
+                />
+                <span
+                  :if={@thread_draft[:selected?] && :thread_options in @pending}
+                  id="draft-runtime-loading"
+                  class="composer-model dim"
+                  role="status"
+                >
+                  Loading agents…
+                </span>
                 <span
                   :if={
                     @composer_mode == :ask &&
