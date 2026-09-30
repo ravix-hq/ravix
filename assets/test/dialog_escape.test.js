@@ -48,3 +48,11 @@ test("stop removes the listener", () => {
   dialogs.stop()
   expect(press("Escape")).toEqual({})
 })
+
+test("the Share popover counts as a dialog, though it has no scrim (RAV-84)", () => {
+  dialogs = watchDialogs(window)
+  document.body.innerHTML = `<div id="s" class="share-layer"><button id="b">Copy link</button></div>`
+  expect(press("Escape", document.getElementById("b"))).toEqual({dialog: true})
+  document.getElementById("s").hidden = true
+  expect(press("Escape")).toEqual({})
+})

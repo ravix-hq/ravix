@@ -283,6 +283,16 @@ function seedClone(disk: Disk, root: string): void {
     // A TODO on purpose: "Fix a TODO" is one of the starter chips, and a chip
     // that finds nothing to fix is a chip that makes the machine look broken.
     ["src/lib/window.ts", "// TODO: rounding here is wrong across a DST boundary — it assumes every\n// day is 86400 seconds, which costs an hour twice a year.\nexport function dayOf(ts: number): number {\n  return Math.floor(ts / 86_400);\n}\n"],
+    // One of each kind the Files panel draws its own icon for.
+    [".gitignore", "node_modules/\ndist/\n.env\n"],
+    ["Dockerfile", "FROM oven/bun:1\nWORKDIR /app\nCOPY . .\nRUN bun install --frozen-lockfile\nCMD [\"bun\", \"src/index.ts\"]\n"],
+    ["bun.lock", "{\n  \"lockfileVersion\": 1\n}\n"],
+    ["tsconfig.json", "{\n  \"compilerOptions\": { \"strict\": true }\n}\n"],
+    ["docker-compose.yml", "services:\n  api:\n    build: .\n    ports: [\"8080:8080\"]\n"],
+    ["public/index.html", "<!doctype html>\n<title>atlas</title>\n<link rel=\"stylesheet\" href=\"style.css\">\n"],
+    ["public/style.css", "body { font-family: system-ui; }\n"],
+    ["public/logo.svg", "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 8 8\"><circle cx=\"4\" cy=\"4\" r=\"4\"/></svg>\n"],
+    ["scripts/release.exs", "IO.puts(\"release\")\n"],
   ];
   for (const [rel, body] of files) disk.files.set(`${root}/${rel}`, body);
 }
@@ -332,6 +342,7 @@ function fakeDiff(): string {
     " export function dayOf(ts: number): number {",
     "-  return Math.floor(ts / 86_400);",
     "+  return Math.floor(zonedSeconds(ts) / 86_400);",
+    "+  // A line longer than any inspector is wide, so the diff has to wrap it: zonedSeconds() shifts the timestamp by the offset in force at that instant, which is what makes a 23- or 25-hour day count as exactly one day rather than as a day and an hour or a day short of one.",
     " }",
     "diff --git a/src/lib/zone.ts b/src/lib/zone.ts",
     "new file mode 100644",
@@ -837,6 +848,9 @@ function secretsFor(parent: string, id: string): Map<string, string> {
 
 /** Sandboxes whose worktrees the browser harness has said hold no changes. */
 const cleanBoxes = new Set<string>();
+
+/** Sandboxes whose file and diff reads the browser harness has slowed, in ms. */
+const readDelays = new Map<string, number>();
 
 /** Provider lifecycle control for deterministic mock contract tests. */
 export function setSandboxStatus(id: string, status: "suspended" | "ready"): void {
@@ -1414,6 +1428,10 @@ export async function fountain(req: Request, url: URL): Promise<Response | null>
     }, 409);
   }
 
+  // A slow machine, when a spec asks for one: the inspector must not wait on it.
+  const slowRead = /^\/api\/sandboxes\/([^/]+)\/(files|diff)$/.exec(p);
+  if (slowRead && readDelays.has(slowRead[1]!)) await Bun.sleep(readDelays.get(slowRead[1]!)!);
+
   const sbFiles = /^\/api\/sandboxes\/([^/]+)\/files$/.exec(p);
   if (sbFiles && disk) {
     const dir = (url.searchParams.get("path") ?? "/").replace(/\/+$/, "");
@@ -1529,6 +1547,10 @@ const PEOPLE = [
     { id: 9099, login: "quickjumper", name: "Quick Jumper", avatar_url: `${BASE}/ghweb/avatar.svg` },
     { id: 9083, login: "titler", name: "Track Titler", avatar_url: `${BASE}/ghweb/avatar.svg` },
     { id: 9096, login: "sidebarpolish", name: "Sidebar Polish", avatar_url: `${BASE}/ghweb/avatar.svg` },
+    { id: 9189, login: "inspectorfiles", name: "Inspector Files", avatar_url: `${BASE}/ghweb/avatar.svg` },
+    { id: 9190, login: "inspectorswitch", name: "Inspector Switch", avatar_url: `${BASE}/ghweb/avatar.svg` },
+    { id: 9191, login: "inspectordiff", name: "Inspector Diff", avatar_url: `${BASE}/ghweb/avatar.svg` },
+    { id: 9192, login: "inspectorevidence", name: "Inspector Evidence", avatar_url: `${BASE}/ghweb/avatar.svg` },
   ] : []),
   { id: 9001, login: "dana", name: "Dana Okonkwo", avatar_url: `${BASE}/ghweb/avatar.svg?dana` },
   { id: 9002, login: "eli", name: "Eli Fischer", avatar_url: `${BASE}/ghweb/avatar.svg?eli` },
@@ -1965,6 +1987,14 @@ Bun.serve({
       const { id } = await req.json() as { id: string };
       if (!state.boxes.has(id)) return json({ error: "invalid_fixture" }, 400);
       cleanBoxes.add(id);
+      return json({ status: "ok" });
+    }
+
+    // Slow a sandbox's directory and diff reads by `ms`; 0 puts them back.
+    if (p === "/__browser/read-delay" && req.method === "POST" && process.env.RAVIX_BROWSER_TEST === "1") {
+      const { id, ms } = await req.json() as { id: string; ms: number };
+      if (!state.boxes.has(id) || !Number.isInteger(ms) || ms < 0 || ms > 10_000) return json({ error: "invalid_fixture" }, 400);
+      if (ms === 0) readDelays.delete(id); else readDelays.set(id, ms);
       return json({ status: "ok" });
     }
 

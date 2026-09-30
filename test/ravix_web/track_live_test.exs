@@ -3659,6 +3659,382 @@ defmodule RavixWeb.TrackLiveTest do
     assert has_element?(ctx.view, ".file-explorer", "fresh.txt")
   end
 
+  describe "Files and Changes switch from what they last showed" do
+    # A read that waits for the test, so what the page shows while it is out
+    # can be asserted rather than raced.
+    defp held(label, answer) do
+      test_pid = self()
+
+      fn ->
+        send(test_pid, {label, self()})
+        assert_receive :go, 5_000
+        answer
+      end
+    end
+
+    # Let one held read answer, and wait for its answer to reach the page.
+    # `render_async/2` cannot: it would wait on every read, the held ones too.
+    defp release(view, reader) do
+      ref = Process.monitor(reader)
+      send(reader, :go)
+      assert_receive {:DOWN, ^ref, :process, _, _}, 5_000
+      render(view)
+    end
+
+    defp listing(ctx, names) do
+      %Files.Listing{
+        path: ctx.track.workdir,
+        truncated: false,
+        entries: Enum.map(names, &%Files.Entry{name: &1, type: "file", size: 1})
+      }
+    end
+
+    test "a switch shows the cached tab at once and refreshes it behind", ctx do
+      expect(Tracks, :diff, fn _, _ -> {:ok, changes_fixture()} end)
+      render_click(ctx.view, "panel", %{name: "changes"})
+      render_async(ctx.view, 1_000)
+      assert has_element?(ctx.view, ".change-file", "space name.txt")
+
+      # Back to Files: the tree it had is on screen before the machine answers.
+      read = held(:files_read, {:ok, listing(ctx, ["fresh.txt"])})
+      expect(Tracks, :files, fn _, _, nil -> read.() end)
+      render_click(ctx.view, "panel", %{name: "files"})
+      assert_receive {:files_read, files_reader}, 5_000
+      assert has_element?(ctx.view, ".file-explorer .file-name", "src")
+      assert has_element?(ctx.view, "button.panel-refresh.busy[disabled]")
+      refute has_element?(ctx.view, ".workspace-panel .loading-status")
+
+      # And to Changes while that read is still out: the diff is there too.
+      read = held(:diff_read, {:ok, %{changes_fixture() | files: [], changes: [], diff: ""}})
+      expect(Tracks, :diff, fn _, _ -> read.() end)
+      stub(Tracks, :checks, fn _, _ -> {:error, :github_unavailable} end)
+      render_click(ctx.view, "panel", %{name: "changes"})
+      assert_receive {:diff_read, diff_reader}, 5_000
+      assert has_element?(ctx.view, ".change-file", "space name.txt")
+      refute has_element?(ctx.view, ".file-explorer")
+
+      # The Files read lands while Changes is showing: into the cache, not
+      # onto the screen, and it is what Files shows next.
+      release(ctx.view, files_reader)
+      assert has_element?(ctx.view, ".change-file", "space name.txt")
+      refute has_element?(ctx.view, ".file-name", "fresh.txt")
+      release(ctx.view, diff_reader)
+      assert has_element?(ctx.view, "#changes-empty h3", "No changes yet")
+
+      read = held(:files_again, {:ok, listing(ctx, ["fresh.txt"])})
+      expect(Tracks, :files, fn _, _, nil -> read.() end)
+      render_click(ctx.view, "panel", %{name: "files"})
+      assert_receive {:files_again, reader}, 5_000
+      assert has_element?(ctx.view, ".file-name", "fresh.txt")
+      send(reader, :go)
+      render_async(ctx.view, 1_000)
+    end
+
+    test "an older read answering after a newer one does not overwrite it", ctx do
+      old = held(:old_read, {:ok, listing(ctx, ["old.txt"])})
+      new = held(:new_read, {:ok, listing(ctx, ["new.txt"])})
+      expect(Tracks, :files, fn _, _, nil -> old.() end)
+      expect(Tracks, :files, fn _, _, nil -> new.() end)
+
+      render_click(ctx.view, "refresh-panel")
+      assert_receive {:old_read, old_reader}, 5_000
+      render_click(ctx.view, "refresh-panel")
+      assert_receive {:new_read, new_reader}, 5_000
+
+      release(ctx.view, new_reader)
+      assert has_element?(ctx.view, ".file-name", "new.txt")
+
+      # The first read's answer is a generation behind: LiveView keeps only
+      # the latest task under `{:panel, :files}` and drops this one.
+      release(ctx.view, old_reader)
+      assert has_element?(ctx.view, ".file-name", "new.txt")
+      refute has_element?(ctx.view, ".file-name", "old.txt")
+    end
+
+    test "a stale Changes read cannot land over a newer one in the cache", ctx do
+      expect(Tracks, :diff, fn _, _ -> {:ok, changes_fixture()} end)
+      render_click(ctx.view, "panel", %{name: "changes"})
+      render_async(ctx.view, 1_000)
+
+      stub(Tracks, :checks, fn _, _ -> {:error, :github_unavailable} end)
+      empty = {:ok, %{changes_fixture() | files: [], changes: [], diff: ""}}
+      old = held(:old_diff, {:ok, changes_fixture()})
+      new = held(:new_diff, empty)
+      expect(Tracks, :diff, fn _, _ -> old.() end)
+      expect(Tracks, :diff, fn _, _ -> new.() end)
+
+      # Two visits to Changes, each reading it again; then away to Files.
+      render_click(ctx.view, "panel", %{name: "files"})
+      render_async(ctx.view, 1_000)
+      render_click(ctx.view, "panel", %{name: "changes"})
+      assert_receive {:old_diff, old_reader}, 5_000
+      render_click(ctx.view, "panel", %{name: "files"})
+      render_click(ctx.view, "panel", %{name: "changes"})
+      assert_receive {:new_diff, new_reader}, 5_000
+      render_click(ctx.view, "panel", %{name: "files"})
+
+      release(ctx.view, new_reader)
+      release(ctx.view, old_reader)
+      render_async(ctx.view, 1_000)
+
+      # What Changes shows next is the newer answer, not the older one.
+      read = held(:last_diff, empty)
+      expect(Tracks, :diff, fn _, _ -> read.() end)
+      render_click(ctx.view, "panel", %{name: "changes"})
+      assert_receive {:last_diff, reader}, 5_000
+      assert has_element?(ctx.view, "#changes-empty h3", "No changes yet")
+      refute has_element?(ctx.view, ".change-file")
+      send(reader, :go)
+      render_async(ctx.view, 1_000)
+    end
+
+    test "an open folder comes back with its tab, and one still loading is folded", ctx do
+      src = "button[phx-value-path='#{ctx.track.workdir}/src']"
+      ctx.view |> element(src) |> render_click()
+      render_async(ctx.view, 1_000)
+      assert has_element?(ctx.view, ".file-list .file-list")
+
+      expect(Tracks, :diff, fn _, _ -> {:ok, changes_fixture()} end)
+      render_click(ctx.view, "panel", %{name: "changes"})
+      render_async(ctx.view, 1_000)
+      render_click(ctx.view, "panel", %{name: "files"})
+      assert has_element?(ctx.view, "#{src}[aria-expanded=true]")
+      assert has_element?(ctx.view, ".file-list .file-list")
+      render_async(ctx.view, 1_000)
+
+      # Collapse, then open again with the read held, and leave before it lands.
+      ctx.view |> element(src) |> render_click()
+      read = held(:folder, {:ok, listing(ctx, [])})
+      expect(Tracks, :files, fn _, _, _path -> read.() end)
+      ctx.view |> element(src) |> render_click()
+      assert_receive {:folder, reader}, 5_000
+      expect(Tracks, :diff, fn _, _ -> {:ok, changes_fixture()} end)
+      render_click(ctx.view, "panel", %{name: "changes"})
+      release(ctx.view, reader)
+      render_async(ctx.view, 1_000)
+      render_click(ctx.view, "panel", %{name: "files"})
+      assert has_element?(ctx.view, "#{src}[aria-expanded=false]")
+      refute has_element?(ctx.view, ".file-note[role=status]", "Loading")
+      render_async(ctx.view, 1_000)
+    end
+
+    test "an asleep machine forgets the cache rather than show it", ctx do
+      expect(Tracks, :diff, fn _, _ -> {:ok, changes_fixture()} end)
+      render_click(ctx.view, "panel", %{name: "changes"})
+      render_async(ctx.view, 1_000)
+
+      expect(Tracks, :files, fn _, _, _ -> {:error, :machine_asleep} end)
+      render_click(ctx.view, "panel", %{name: "files"})
+      render_async(ctx.view, 1_000)
+      assert has_element?(ctx.view, "#panel-asleep")
+
+      expect(Tracks, :diff, fn _, _ -> {:error, :machine_asleep} end)
+      render_click(ctx.view, "panel", %{name: "changes"})
+      refute has_element?(ctx.view, ".change-file")
+      render_async(ctx.view, 1_000)
+      assert has_element?(ctx.view, "#panel-asleep")
+    end
+
+    test "a revoked session cannot switch back to a cached tab", ctx do
+      expect(Tracks, :diff, fn _, _ -> {:ok, changes_fixture()} end)
+      render_click(ctx.view, "panel", %{name: "changes"})
+      render_async(ctx.view, 1_000)
+      token = Plug.Conn.get_session(ctx.conn, :session_token)
+      Repo.get!(Session, Ravix.Crypto.sha256(token)) |> Repo.delete!()
+
+      :sys.replace_state(ctx.view.pid, fn state ->
+        update_in(
+          state.socket.assigns.session_guard,
+          &%{&1 | verified_at_ms: &1.verified_at_ms - Guard.ttl_ms() - 1}
+        )
+      end)
+
+      reject(Tracks, :files, 3)
+
+      assert {:error, {:redirect, %{to: "/login"}}} =
+               render_click(ctx.view, "panel", %{name: "files"})
+    end
+
+    test "a member removed from another user's track cannot switch to a cached tab", ctx do
+      owner = insert_user()
+      project = insert_project(user: owner)
+      track = insert_track(project: project, conversation_id: "shared-cache")
+      People.Store.add_member(track.id, ctx.user.id, owner.id)
+      {:ok, parent, _} = live(ctx.conn, "/p/#{project.id}/t/#{track.id}")
+      view = find_live_child(parent, "track-host")
+      settle(view)
+      expect(Tracks, :diff, fn _, _ -> {:ok, changes_fixture()} end)
+      render_click(view, "panel", %{name: "changes"})
+      render_async(view, 1_000)
+      Repo.get_by!(TrackMember, track_id: track.id, user_id: ctx.user.id) |> Repo.delete!()
+
+      :sys.replace_state(view.pid, fn state ->
+        update_in(state.socket.assigns.track_guard, &%{&1 | stale?: true})
+      end)
+
+      reject(Tracks, :files, 3)
+      assert {:error, {:redirect, %{to: "/"}}} = render_click(view, "panel", %{name: "files"})
+    end
+
+    test "a background read answering after revocation is not cached", ctx do
+      expect(Tracks, :diff, fn _, _ -> {:ok, changes_fixture()} end)
+      render_click(ctx.view, "panel", %{name: "changes"})
+      render_async(ctx.view, 1_000)
+
+      read = held(:files_read, {:ok, listing(ctx, ["secret.txt"])})
+      expect(Tracks, :files, fn _, _, nil -> read.() end)
+      render_click(ctx.view, "panel", %{name: "files"})
+      assert_receive {:files_read, reader}, 5_000
+      expect(Tracks, :diff, fn _, _ -> {:ok, changes_fixture()} end)
+      render_click(ctx.view, "panel", %{name: "changes"})
+      assert has_element?(ctx.view, ".change-file", "space name.txt")
+
+      Repo.update!(Ecto.Changeset.change(ctx.track, closed_at: DateTime.utc_now()))
+      send(reader, :go)
+      assert_redirect(ctx.parent, "/", 1_000)
+    end
+  end
+
+  describe "the Files tree" do
+    test "never lists .git, at the root or below", ctx do
+      stub(Tracks, :files, fn _, _, path ->
+        {:ok,
+         %Files.Listing{
+           path: path || ctx.track.workdir,
+           truncated: false,
+           entries: [
+             %Files.Entry{name: ".git", type: "directory", size: 0},
+             %Files.Entry{name: ".github", type: "directory", size: 0},
+             %Files.Entry{name: ".gitignore", type: "file", size: 1}
+           ]
+         }}
+      end)
+
+      render_click(ctx.view, "refresh-panel")
+      render_async(ctx.view, 1_000)
+      ctx.view |> element("button.workspace-file", ".github") |> render_click()
+      render_async(ctx.view, 1_000)
+      refute has_element?(ctx.view, ".file-name", ~r/^\.git$/)
+      assert has_element?(ctx.view, ".file-list .file-list .file-name", ".gitignore")
+      assert has_element?(ctx.view, ".file-name", ".github")
+
+      # Not even with ignored files shown: `.git` is not an ignored file.
+      render_click(ctx.view, "toggle-ignored")
+      refute has_element?(ctx.view, ".file-name", ~r/^\.git$/)
+    end
+
+    test "draws a shape and colour class per kind of file", ctx do
+      names =
+        ~w(mix.exs app.js main.ts package.json README.md app.css index.html ci.yml mix.lock
+           logo.png Dockerfile .gitignore run.sh notes.txt main.py LICENSE package-lock.json)
+
+      stub(Tracks, :files, fn _, _, _ -> {:ok, listing(ctx, names)} end)
+      render_click(ctx.view, "refresh-panel")
+      render_async(ctx.view, 1_000)
+
+      for {name, kind} <- [
+            {"mix.exs", "elixir"},
+            {"app.js", "script"},
+            {"main.ts", "typescript"},
+            {"package.json", "json"},
+            {"README.md", "markdown"},
+            {"app.css", "style"},
+            {"index.html", "markup"},
+            {"ci.yml", "yaml"},
+            {"mix.lock", "lock"},
+            {"package-lock.json", "lock"},
+            {"logo.png", "image"},
+            {"Dockerfile", "docker"},
+            {".gitignore", "dotfile"},
+            {"run.sh", "shell"},
+            {"notes.txt", "text"},
+            {"main.py", "code"},
+            {"LICENSE", "file"}
+          ] do
+        assert has_element?(
+                 ctx.view,
+                 ~s(button[title$="/#{name}"] .file-kind.kind-#{kind}[data-kind=#{kind}][aria-hidden=true] svg)
+               ),
+               "#{name} should be drawn as #{kind}"
+      end
+    end
+  end
+
+  describe "the kind of a file" do
+    test "is its name before its extension, and a dotfile last" do
+      entry = &%Files.Entry{name: &1, type: "file", size: 0}
+      kind = &elem(RavixWeb.TrackLive.file_icon(entry.(&1)), 1)
+
+      assert kind.("Dockerfile.dev") == "docker"
+      assert kind.("docker-compose.yaml") == "docker"
+      assert kind.("bun.lockb") == "lock"
+      assert kind.("Cargo.lock") == "lock"
+      assert kind.(".eslintrc.json") == "json"
+      assert kind.(".env") == "dotfile"
+      assert kind.("VIEW.HEEX") == "elixir"
+      assert kind.("Makefile") == "file"
+
+      shapes =
+        ~w(a.ex a.js a.ts a.json a.md a.css a.html a.yml a.lock a.png Dockerfile .gitignore)
+        |> Enum.map(&RavixWeb.TrackLive.file_icon(entry.(&1)))
+
+      assert length(Enum.uniq_by(shapes, &elem(&1, 1))) == 12
+
+      assert RavixWeb.TrackLive.file_icon(%Files.Entry{name: "x", type: "directory", size: 0}) ==
+               {"folder", "folder"}
+
+      assert RavixWeb.TrackLive.file_icon(%Files.Entry{name: "x", type: "symlink", size: 0}) ==
+               {"external", "link"}
+    end
+  end
+
+  test "Show ignored files is an icon toggle in the inspector's toolbar, on Files only", ctx do
+    toggle = "nav[aria-label='Inspector panels'] button#toggle-ignored[phx-click=toggle-ignored]"
+    assert has_element?(ctx.view, "#{toggle}[aria-pressed=false][title='Show ignored files'] svg")
+    assert has_element?(ctx.view, "#{toggle} .sr-only", "Show ignored files")
+    # Beside Refresh, and no longer a button in the tree.
+    assert has_element?(ctx.view, "#{toggle} + button.panel-refresh")
+    refute has_element?(ctx.view, ".file-explorer button", "Show ignored files")
+
+    ctx.view |> element(toggle) |> render_click()
+    assert has_element?(ctx.view, "#{toggle}[aria-pressed=true]")
+
+    expect(Tracks, :diff, fn _, _ -> {:ok, changes_fixture()} end)
+    render_click(ctx.view, "panel", %{name: "changes"})
+    render_async(ctx.view, 1_000)
+    refute has_element?(ctx.view, "#toggle-ignored")
+    render_click(ctx.view, "panel", %{name: "files"})
+    assert has_element?(ctx.view, "#{toggle}[aria-pressed=true]")
+    render_async(ctx.view, 1_000)
+  end
+
+  test "the inspector widens while one file's diff is open", ctx do
+    refute has_element?(ctx.view, "#inspector.diff-open")
+    # Two reads: the first visit, and the refresh behind the second.
+    expect(Tracks, :diff, 2, fn _, _ -> {:ok, changes_fixture()} end)
+    render_click(ctx.view, "panel", %{name: "changes"})
+    render_async(ctx.view, 1_000)
+    refute has_element?(ctx.view, "#inspector.diff-open")
+
+    # A path that is not in the diff opens nothing, and widens nothing.
+    render_click(ctx.view, "select-diff", %{path: "../../private"})
+    refute has_element?(ctx.view, "#inspector.diff-open")
+
+    ctx.view |> element(".change-file", "space name.txt") |> render_click()
+    assert has_element?(ctx.view, "#inspector.inspector.diff-open .file-diff")
+
+    # Only on Changes: the path is remembered, but Files is not a diff.
+    render_click(ctx.view, "panel", %{name: "files"})
+    refute has_element?(ctx.view, "#inspector.diff-open")
+    render_async(ctx.view, 1_000)
+
+    ctx.view |> element("button", "Changes") |> render_click()
+    assert has_element?(ctx.view, "#inspector.diff-open")
+    render_async(ctx.view, 1_000)
+    ctx.view |> element("button", "← All changed files") |> render_click()
+    refute has_element?(ctx.view, "#inspector.diff-open")
+  end
+
   test "selecting a diff respects session revocation", ctx do
     expect(Tracks, :diff, fn _, _ -> {:ok, changes_fixture()} end)
     render_click(ctx.view, "panel", %{name: "changes"})
@@ -4336,15 +4712,16 @@ defmodule RavixWeb.TrackLiveTest do
     assert render(ctx.view) =~ "File content is truncated"
   end
 
-  for {layout, scope, label} <- [
-        {:shared, "Shared machine",
-         "Shared project machine (used by all of this project's tracks)"},
-        {:dedicated, "Own machine", "This track's machine"}
+  for {layout, scope, title} <- [
+        {:shared, "Shared machine", "Used by all of this project's tracks"},
+        {:dedicated, "Own machine", "This track's own machine"}
       ] do
     @layout layout
     @machine_scope scope
-    @machine_label label
-    test "#{layout} machine ownership is visible in the header, terminal and Vitals", ctx do
+    @machine_title title
+    # RAV-90: the header's badge says whose machine it is, once; the dock's
+    # panes do not repeat it as a heading over their contents.
+    test "#{layout} machine ownership is said once, in the header, not in the dock", ctx do
       Repo.update!(
         Ecto.Changeset.change(ctx.track, sandbox_layout: @layout, opened_at: DateTime.utc_now())
       )
@@ -4360,18 +4737,27 @@ defmodule RavixWeb.TrackLiveTest do
       {:ok, parent, _} = live(ctx.conn, "/p/#{ctx.project.id}/t/#{ctx.track.id}")
       view = find_live_child(parent, "track-host")
       render_async(view)
-      assert has_element?(view, "#track-machine-scope", @machine_scope)
+
+      assert has_element?(
+               view,
+               ~s(#track-machine-scope[title="#{@machine_title}"]),
+               @machine_scope
+             )
+
       chip(view, "Idle", nil)
       # The dock is its tab strip: no standing line above it.
       refute has_element?(view, "#track-machine-label")
       refute has_element?(view, "#track-machine-status")
       refute has_element?(view, ".machine-dock-host > [role=status]")
       view |> element("button[phx-click=dock][phx-value-name=terminal]") |> render_click()
-      assert has_element?(view, "#terminal-machine-label", @machine_label)
+      assert has_element?(view, "#track-terminal .dock-empty h3", "No commands yet")
+      refute has_element?(view, "#terminal-machine-label")
       view |> element("button[phx-click=dock][phx-value-name=vitals]") |> render_click()
       render_async(view)
-      assert has_element?(view, "#vitals-machine-label", @machine_label)
       assert has_element?(view, ".dock-empty", "No machine is available yet.")
+      refute has_element?(view, "#vitals-machine-label")
+      refute has_element?(view, "#machine-dock", "This track's machine")
+      refute has_element?(view, "#machine-dock", "Shared project machine")
     end
   end
 
@@ -4461,12 +4847,17 @@ defmodule RavixWeb.TrackLiveTest do
 
     assert has_element?(ctx.view, "#machine-dock:not([hidden])")
     assert has_element?(ctx.view, "#track-terminal .dock-empty h3", "No commands yet")
-    assert has_element?(ctx.view, "#track-terminal .dock-empty", "tests, builds and scripts")
 
     assert has_element?(
              ctx.view,
              "#track-terminal .dock-empty",
-             "For an interactive shell, such as a console or a REPL, open a terminal with +."
+             "builds and scripts run one at a time"
+           )
+
+    assert has_element?(
+             ctx.view,
+             "#track-terminal .dock-empty",
+             "For an interactive shell, open a terminal with +."
            )
 
     assert has_element?(
