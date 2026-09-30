@@ -3,8 +3,9 @@ import { signIn, connectClaude } from './sign-in.js';
 import { openAgentSettings } from './settings.js';
 
 // The chip is "<agent> · <model>", then the runtime's effort and Fast once a
-// turn has reported them (RAV-52); this spec is about the model part.
-const modelOf = title => (title ?? '').split(' · ').slice(0, 2).join(' · ');
+// turn has reported them (RAV-52); this spec is about the model part. A turn
+// in progress adds a second line saying why it can't change (RAV-87).
+const modelOf = title => (title ?? '').split('\n')[0].split(' · ').slice(0, 2).join(' · ');
 const chipModel = page => expect.poll(async () => modelOf(await page.locator('#model-trigger').getAttribute('title')));
 
 test('an account default selects the model for a new thread and leaves the existing thread unchanged', async ({ page }) => {

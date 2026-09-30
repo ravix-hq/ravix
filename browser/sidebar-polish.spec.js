@@ -142,6 +142,9 @@ test('sidebar rows keep one rhythm, spin while working and keep the open track i
   await more.focus();
   await page.keyboard.press('ArrowDown');
   await expect(more).toHaveAttribute('aria-expanded', 'true');
+  // RAV-74: the open project's Settings comes first, then its People.
+  await expect(projectRow.getByRole('menuitem', { name: /^Settings for / })).toBeFocused();
+  await page.keyboard.press('ArrowDown');
   await expect(projectRow.getByRole('menuitem', { name: /^People in / })).toBeFocused();
   await page.keyboard.press('ArrowDown');
   await expect(projectRow.getByRole('menuitemcheckbox', { name: 'Show closed tracks' })).toBeFocused();

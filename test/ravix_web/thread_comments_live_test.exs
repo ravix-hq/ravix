@@ -155,6 +155,8 @@ defmodule RavixWeb.ThreadCommentsLiveTest do
     ref = Process.monitor(loader)
     assert_receive {:DOWN, ^ref, :process, _, _}
     comment_mode(view)
+    # Something typed (RAV-87), so only the transcript read holds it back.
+    render_hook(view, "composer-draft", %{"empty" => false})
 
     assert has_element?(view, "button.composer-send[aria-label='Post comment'][disabled]")
     submit(view, "Too early")

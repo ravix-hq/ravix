@@ -145,7 +145,7 @@ test('the Share dialog shares a private track with one member, and nobody else l
 // RAV-32: a workspace project's People dialog offers no invitation and no
 // invite link. RAV-75: it lists everyone who reaches the project with where
 // their role comes from, and gives a workspace member a different role.
-test("a workspace project's People dialog lists every source and gives a different role", async ({ page }) => {
+test("a workspace project's Access page lists every source and gives a different role", async ({ page }) => {
   test.skip(process.env.RAVIX_WORKSPACE_ACCESS !== 'true', 'Runs under test:browser:workspace-access');
   const sql = browserSql();
 
@@ -175,9 +175,11 @@ test("a workspace project's People dialog lists every source and gives a differe
          VALUES ('${projectId}', '00000000-0000-4000-8000-000000097501',
                  '00000000-0000-4000-8000-000000009013', 'write', NOW())`);
 
+  // RAV-74: the owner's People is the project's Access settings page.
   await page.goto(projectPath);
-  await page.getByRole('button', { name: 'People', exact: true }).click();
-  const people = page.getByRole('dialog', { name: 'Project people', exact: true });
+  await page.getByRole('link', { name: 'People', exact: true }).click();
+  await expect(page).toHaveURL(new RegExp(`${projectPath}/settings/access$`));
+  const people = page.locator('#project-access');
   await expect(people).toBeVisible();
   await expect(people.getByLabel('GitHub username')).toHaveCount(0);
   await expect(people).not.toContainText('invite link');
@@ -189,12 +191,12 @@ test("a workspace project's People dialog lists every source and gives a differe
   const members = sql(`SELECT count(*) FROM ravix.workspace_memberships
                          WHERE workspace_id = '${workspaceId}' AND revoked_at IS NULL`);
   await expect(summary).toContainText(`${members} sharecreator members get Write by default`);
-  await expect(people.locator('#people-person-sharecreator')).toContainText('Admin');
-  await expect(people.locator('#people-person-sharecreator')).toContainText('owner');
-  await expect(people.locator('#people-person-accessalice')).toContainText('direct');
-  const carol = people.locator('#people-person-accesscarol');
+  await expect(people.locator('#project-access-person-sharecreator')).toContainText('Admin');
+  await expect(people.locator('#project-access-person-sharecreator')).toContainText('owner');
+  await expect(people.locator('#project-access-person-accessalice')).toContainText('direct');
+  const carol = people.locator('#project-access-person-accesscarol');
   await expect(carol).toContainText('from workspace');
-  const axe = await new AxeBuilder({ page }).include('#people-dialog')
+  const axe = await new AxeBuilder({ page }).include('#settings-page')
     .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa']).analyze();
   expect(axe.violations).toEqual([]);
 
