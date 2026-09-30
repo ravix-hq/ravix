@@ -110,8 +110,10 @@ defmodule RavixWeb.Live.RuntimePicker do
       </fieldset>
       <fieldset :if={@models != []} class="chip-group">
         <legend>Model</legend>
+        <ModelMenu.search :if={ModelMenu.searchable?(@models)} id={@id} />
         <ModelMenu.option
           :for={model <- @models}
+          filter={RavixWeb.ModelName.friendly(model)}
           model={model}
           checked={model == @model}
           tag={
@@ -121,6 +123,7 @@ defmodule RavixWeb.Live.RuntimePicker do
           name={@name <> "[model]"}
           form={@form}
         />
+        <ModelMenu.search_empty :if={ModelMenu.searchable?(@models)} />
       </fieldset>
     </ModelMenu.chip>
     """
