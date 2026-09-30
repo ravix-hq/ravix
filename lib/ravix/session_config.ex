@@ -95,7 +95,7 @@ defmodule Ravix.SessionConfig do
         choices(nested)
 
       %{"value" => value} = raw when is_binary(value) ->
-        [%{value: value, name: string(raw["name"]) || value}]
+        [%{value: value, name: choice_name(string(raw["name"]) || value)}]
 
       _other ->
         []
@@ -103,6 +103,13 @@ defmodule Ravix.SessionConfig do
   end
 
   defp choices(_list), do: []
+
+  # claude-agent-acp names its level above High after its value, "Xhigh",
+  # which reads as a typo; it is the one name said in words (RAV-95). The
+  # value sent back is untouched.
+  defp choice_name(name) do
+    if String.downcase(name) in ["xhigh", "x-high"], do: "Extra high", else: name
+  end
 
   defp string(value) when is_binary(value) and value != "", do: value
   defp string(_value), do: nil

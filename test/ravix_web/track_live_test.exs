@@ -2046,7 +2046,7 @@ defmodule RavixWeb.TrackLiveTest do
 
       assert has_element?(
                ctx.view,
-               "#model-menu [role=menuitemradio][aria-checked=true]",
+               "#model-menu [role=radio][aria-checked=true]",
                "Project default"
              )
 
@@ -2252,7 +2252,7 @@ defmodule RavixWeb.TrackLiveTest do
 
       assert has_element?(
                ctx.view,
-               ~s(#model-fast[role=menuitemcheckbox][aria-checked=true][phx-value-id=fast][phx-value-choice=false]),
+               ~s(#model-fast[role=switch][aria-checked=true][phx-value-id=fast][phx-value-choice=false]),
                "Fast mode"
              )
 
@@ -2264,7 +2264,8 @@ defmodule RavixWeb.TrackLiveTest do
       ctx.serve.("codex", "openai/gpt-6-astra", @codex, %{})
 
       assert has_element?(ctx.view, "#model-trigger", "Medium")
-      assert has_element?(ctx.view, "#model-effort-label", "Reasoning effort")
+      # The section is "Effort" whatever the adapter calls its option.
+      assert has_element?(ctx.view, "#model-effort-label", "Effort")
 
       assert has_element?(
                ctx.view,
@@ -2273,6 +2274,118 @@ defmodule RavixWeb.TrackLiveTest do
              )
 
       assert has_element?(ctx.view, ~s(#model-fast[phx-value-id="fast-mode"][aria-checked=false]))
+    end
+
+    test "the menu is in sections, Model, Effort and Speed, with the default note last (RAV-95)",
+         ctx do
+      html = ctx.view |> element("#model-menu") |> render()
+
+      assert ["Model", "Effort", "Speed"] ==
+               html
+               |> LazyHTML.from_fragment()
+               |> LazyHTML.query(".model-section-label")
+               |> Enum.map(&LazyHTML.text/1)
+
+      assert has_element?(ctx.view, "#model-menu > p.model-default-hint:last-child")
+      assert html =~ "Also your default for new threads"
+      # Three models are a short list: no search.
+      refute has_element?(ctx.view, "#model-search")
+    end
+
+    test "Fast is a switch that shows its state, on and off", ctx do
+      assert has_element?(
+               ctx.view,
+               ~s{#model-speed #model-fast[role=switch][aria-checked=true]:not([aria-disabled])},
+               "Fast mode"
+             )
+
+      # It stays in the open menu rather than closing it.
+      refute has_element?(ctx.view, "#model-fast[popovertarget]")
+
+      ctx.serve.("claude", "anthropic/claude-opus-5-5", @claude, %{"fast" => false})
+
+      assert has_element?(
+               ctx.view,
+               ~s(#model-fast[role=switch][aria-checked=false][phx-value-choice=true])
+             )
+
+      refute has_element?(ctx.view, "#model-trigger", "Fast mode")
+    end
+
+    test "a model the runtime offers no Fast for shows the switch disabled, and why", ctx do
+      no_fast = Enum.reject(@claude, &(&1["id"] == "fast"))
+      ctx.serve.("claude", "anthropic/claude-sonnet-5", no_fast, %{"fast" => true})
+
+      assert has_element?(
+               ctx.view,
+               ~s(#model-fast[role=switch][aria-checked=false][aria-disabled=true][title="Not available for this model"]),
+               "Fast mode"
+             )
+
+      refute has_element?(ctx.view, "#model-fast[phx-click]")
+      refute has_element?(ctx.view, "#model-trigger", "Fast mode")
+      assert has_element?(ctx.view, "#model-effort")
+    end
+
+    test "the adapter's Xhigh reads Extra high, and is sent as xhigh", ctx do
+      xhigh =
+        Enum.map(@claude, fn
+          %{"id" => "effort"} = effort ->
+            update_in(effort["options"], &(&1 ++ [%{"value" => "xhigh", "name" => "Xhigh"}]))
+
+          option ->
+            option
+        end)
+
+      ctx.serve.("claude", "anthropic/claude-opus-5-5", xhigh, %{"effort" => "xhigh"})
+
+      assert has_element?(
+               ctx.view,
+               ~s(#model-effort [phx-value-choice="xhigh"][aria-checked=true]),
+               "Extra high"
+             )
+
+      assert has_element?(ctx.view, "#model-trigger", "Claude Opus 5.5 · Extra high")
+      refute render(ctx.view) =~ "Xhigh"
+    end
+
+    test "more than six models get a search field over the model rows", ctx do
+      models = for n <- 1..7, do: "anthropic/claude-test-#{n}"
+
+      stub(Tracks, :get, fn _, id, _ ->
+        track =
+          Tracks.present(Repo.get!(Track, id), role: :owner)
+          |> Map.merge(%{status: :ready, model: hd(models), runtime: "claude"})
+          |> Map.merge(%{session_options: nil, session_config: %{}})
+
+        {:ok,
+         %{
+           track: track,
+           header: blank_header(),
+           threads: thread_options(id),
+           starters: [],
+           models: models
+         }}
+      end)
+
+      send(ctx.view.pid, {:hub, Event.new(:tracks, ctx.project.id, track_id: ctx.track.id)})
+      settle(ctx.view)
+
+      assert has_element?(
+               ctx.view,
+               "#model-menu > input#model-search[type=search][data-chip-filter][aria-label='Search models']"
+             )
+
+      for model <- models do
+        assert has_element?(
+                 ctx.view,
+                 ~s(#model-models [phx-value-model="#{model}"][data-filter-text])
+               )
+      end
+
+      assert has_element?(ctx.view, "#model-models [data-chip-filter-empty][hidden]")
+      # Not reported yet: no Effort, and no Speed either.
+      refute has_element?(ctx.view, "#model-speed")
     end
 
     test "nothing advertised yet, or an older Fountain: no controls, and no slash commands",
@@ -5448,6 +5561,20 @@ defmodule RavixWeb.TrackLiveTest do
 
     send(ctx.view.pid, :refresh)
     assert render_async(ctx.view) =~ "Start here"
+
+    # Presence counts you too; you are never told that you are typing.
+    send(
+      ctx.view.pid,
+      {:hub,
+       Event.new(:here, ctx.project.id,
+         track_id: ctx.track.id,
+         present: [%{login: ctx.user.login, typing: true}, %{login: "teammate", typing: true}]
+       )}
+    )
+
+    html = render(ctx.view)
+    assert html =~ "@teammate is typing"
+    refute html =~ "@#{ctx.user.login} is typing"
   end
 
   test "minute refresh makes no event requests and live output still appends", ctx do
