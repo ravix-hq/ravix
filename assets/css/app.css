@@ -375,7 +375,11 @@ button.linkish:hover { background: none; text-decoration: underline; }
 a { color: var(--accent); text-decoration: none; }
 a:hover { text-decoration: underline; }
 
-input, textarea, select {
+/* Text-like fields only. A radio or checkbox given width: 100% stretches across
+   its flex label and pushes the text aside (RAV-59). :where keeps the
+   specificity of a bare `input`, so class rules still override it. */
+input:where(:not([type=checkbox], [type=radio], [type=range], [type=color], [type=file], [type=image], [type=hidden])),
+textarea, select {
   font: inherit;
   color: var(--ink);
   background: var(--input);
@@ -385,11 +389,13 @@ input, textarea, select {
   width: 100%;
 }
 input::placeholder, textarea::placeholder { color: var(--dimmer); }
-input:focus, textarea:focus, select:focus {
+input:where(:not([type=checkbox], [type=radio], [type=range], [type=color], [type=file], [type=image], [type=hidden])):focus,
+textarea:focus, select:focus {
   outline: none;
   border-color: var(--accent-line);
   box-shadow: 0 0 0 1px var(--accent-line);
 }
+input[type=checkbox], input[type=radio] { flex: none; }
 textarea { resize: vertical; font-family: inherit; }
 textarea.mono { font-family: var(--mono); }
 
@@ -1736,10 +1742,9 @@ button.primary.home-action .ico { color: inherit; }
 .plan-item, .plan-editor-item { border: 1px solid var(--line); border-radius: .5rem; padding: 1rem; margin: 1rem 0; min-width: 0; overflow-wrap: anywhere; }
 .plans-panel textarea, .plans-panel input:not([type=checkbox]), .plans-panel select { max-width: 100%; }
 #plan-editor > input, #plan-editor > textarea, .plan-editor-item > input, .plan-editor-item > textarea, .plan-editor-item > select, .plan-note textarea { display: block; width: 100%; margin: .35rem 0 1rem; }
-/* Keep labels and native controls together despite the global full-width input styles. */
 .plan-assignment-row { display: flex; flex-wrap: wrap; align-items: center; gap: .75rem 1.25rem; margin-top: .8rem; }
 .plan-assignment-row .plan-assign-choice { display: inline-flex; align-items: center; gap: .5rem; margin: 0; }
-.plan-assign-choice input[type=checkbox] { width: auto; margin: 0; flex: none; }
+.plan-assign-choice input[type=checkbox] { margin: 0; }
 .plan-assign-target { display: flex; align-items: center; gap: .65rem; flex: 1 1 16rem; min-width: 0; max-width: 30rem; }
 .plan-assign-target label { margin: 0; flex: none; }
 .plan-assign-target select { width: 100%; min-width: 0; margin: 0; }

@@ -1,6 +1,7 @@
 import { test, expect } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
 import { signIn, connectClaude } from './sign-in.js';
+import { expectInlineChoice } from './controls.js';
 
 test('project track links scroll vertically and preserve the mobile drawer', async ({ page }) => {
   test.setTimeout(120_000);
@@ -62,6 +63,8 @@ test('project track links scroll vertically and preserve the mobile drawer', asy
   await close.click();
   const dialog = page.getByRole('dialog', { name: 'Close track', exact: true });
   await expect(dialog).toBeVisible();
+  // RAV-59: the shared checkbox input keeps its size beside its label.
+  await expectInlineChoice(dialog.locator('label[for="close-force"]'));
   await page.keyboard.press('Escape');
   await expect(dialog).toHaveCount(0);
   await expect(close).toBeFocused();
