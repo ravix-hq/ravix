@@ -156,9 +156,8 @@ export const Shell = {
     // xterm measures a character cell once, when it opens. Opened before the
     // theme's monospace font has loaded, it measures the fallback font's, and
     // the real glyphs then overrun their cells.
-    const xterm = loadXterm(this.el.dataset.xtermJs, this.el.dataset.xtermCss).then(loaded => xtermStyles().then(() => loaded))
-    Promise.all([xterm, monoFont(this.el)]).then(
-      ([loaded]) => this.start(loaded),
+    Promise.all([loadXterm(this.el.dataset.xtermJs, this.el.dataset.xtermCss), monoFont(this.el)]).then(
+      ([xterm]) => this.start(xterm),
       () => {
         if (!this.gone) this.el.textContent = "The terminal could not be loaded. Reload the page to try again."
       },
@@ -196,12 +195,20 @@ export const Shell = {
 
     for (const data of this.backlog.splice(0)) term.write(decode(data))
     const front = this.wasInFront()
-    laidOut().then(() => {
-      if (this.gone) return
-      this.refit()
-      this.attach(front)
-      if (this.visible) term.focus()
-    })
+    // A hidden pane cannot be measured, so there is nothing to wait for: it
+    // attaches at once and is fitted when shown. One in view is measured
+    // only once it is really laid out, so the shell starts at its size.
+    if (this.el.closest("[hidden]")) return this.opened(front)
+    xtermStyles()
+      .then(laidOut)
+      .then(() => this.opened(front))
+  },
+
+  opened(front) {
+    if (this.gone) return
+    this.refit()
+    this.attach(front)
+    if (this.visible) this.term.focus()
   },
 
   // A hidden pane measures as nothing; it keeps the size it had until shown.
