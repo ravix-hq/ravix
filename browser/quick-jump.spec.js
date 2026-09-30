@@ -27,6 +27,8 @@ test('Ctrl+K opens quick jump from the composer, keeps every key and stays put',
   await page.getByRole('button', { name: 'Create project', exact: true }).click();
   await expect(page.locator('#crumb-plans')).toBeVisible();
   const long = 'rav-83-workspaces-as-the-unit-of-sharing-across-projects-teams-and-organisations-in-one-place-for-everyone';
+  // Read as words once created: the issue key in capitals, the rest as typed.
+  const named = `RAV-83 ${long.slice(7).replaceAll('-', ' ')}`;
   await newTrack(page, long);
   await newTrack(page, 'rav-99-quick-jump');
 
@@ -46,7 +48,7 @@ test('Ctrl+K opens quick jump from the composer, keeps every key and stays put',
   await expect(composer).toHaveValue('');
   const rows = dialog.locator('[data-jump-result]');
   await expect(rows).toHaveCount(1);
-  await expect(rows.first()).toHaveText('rav-99-quick-jump');
+  await expect(rows.first()).toHaveText('RAV-99 quick jump');
 
   await page.keyboard.press('Escape');
   await expect(dialog).toHaveCount(0);
@@ -69,11 +71,12 @@ test('Ctrl+K opens quick jump from the composer, keeps every key and stays put',
   expect([...tops]).toEqual([opened]);
 
   // A long name ends in an ellipsis inside the row, not wrapped mid-word.
-  const label = dialog.locator('[data-jump-result] .search-label', { hasText: 'rav-83-' });
+  const label = dialog.locator('[data-jump-result] .search-label', { hasText: 'RAV-83 ' });
   expect(await label.evaluate(el => [getComputedStyle(el).textOverflow, el.scrollWidth > el.clientWidth]))
     .toEqual(['ellipsis', true]);
-  // The full name is the row's tooltip: `Track.label/1`, as the sidebar says it (RAV-83).
-  await expect(label.locator('xpath=..')).toHaveAttribute('title', long);
+  // The full name is the row's tooltip, as the sidebar says it
+  // (`Track.label/1`, RAV-83), and the raw branch under it.
+  await expect(label.locator('xpath=..')).toHaveAttribute('title', `${named}\nravix/${long}`);
   // The group header is muted text with a count, not a link-blue heading.
   const header = dialog.locator('h3').first();
   await expect(header.locator('.search-count')).toHaveText('2');
@@ -89,5 +92,5 @@ test('Ctrl+K opens quick jump from the composer, keeps every key and stays put',
   expect((await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa']).analyze()).violations).toEqual([]);
   await page.keyboard.press('Enter');
   await expect(dialog).toHaveCount(0);
-  await expect(page.locator('.track-crumbs')).toContainText(long);
+  await expect(page.locator('.track-crumbs')).toContainText(named);
 });

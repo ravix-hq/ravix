@@ -89,11 +89,17 @@ defmodule RavixWeb.InboxCardsLiveTest do
     # A card names its track by `Track.label/1` and prints no branch slug
     # beside it, titled or not (RAV-83).
     card = &"a.inbox-item[href^='/p/#{project.id}/t/#{&1.id}?']"
-    assert has_element?(view, "#{card.(named)} strong", "fix-login")
+    assert has_element?(view, "#{card.(named)} strong", "Fix login")
     refute has_element?(view, "#{card.(named)} code")
     assert has_element?(view, "#{card.(branched)} strong", "Tidy the docs")
     refute has_element?(view, "#{card.(branched)} code")
-    refute html =~ "ada/tidy-docs-1"
+    # The branch is left to the name's tooltip.
+    refute has_element?(view, card.(branched), "ada/tidy-docs-1")
+
+    assert has_element?(
+             view,
+             "#{card.(branched)} strong[title^='Tidy the docs'][title$='ada/tidy-docs-1']"
+           )
 
     # The time is relative and machine-readable, and nothing says "UTC".
     assert has_element?(

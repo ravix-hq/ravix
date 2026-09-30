@@ -1508,9 +1508,15 @@ defmodule Ravix.Tracks do
   the count, because the browser is not the only thing that can post here
   and an unbounded list of megabyte data URLs is a way to fill the
   machine's memory rather than a feature.
+
+  A thread's first prompt titles it (RAV-48), off the request. A caller
+  that accepts the prompt inside a transaction of its own passes
+  `title: :after_commit` and calls `title_after_prompt/5` once that
+  transaction has committed: the titler reads the row from another process,
+  which cannot see it before then.
   """
-  @spec prompt(User.t(), String.t(), map()) :: {:ok, term()} | {:error, reason()}
-  def prompt(%User{} = user, track_id, payload) do
+  @spec prompt(User.t(), String.t(), map(), keyword()) :: {:ok, term()} | {:error, reason()}
+  def prompt(%User{} = user, track_id, payload, opts \\ []) do
     payload = stringify(payload)
 
     with {:ok, %{track: track, thread: thread}} <-
@@ -1550,7 +1556,25 @@ defmodule Ravix.Tracks do
         %Body{prompt: text, images: images},
         thread.id
       )
-      |> title_first(track, thread, text)
+      |> then(
+        &if(opts[:title] == :after_commit, do: &1, else: title_first(&1, track, thread, text))
+      )
+    end
+  end
+
+  @doc """
+  Title the thread from the prompt accepted on it as queue row `item_id`,
+  when that is the first prompt a person wrote there: the step `prompt/4`
+  left to a caller that passed `title: :after_commit`. Answers `:ok` at once
+  whatever happens; the title is worked out off the request.
+  """
+  @spec title_after_prompt(User.t(), String.t(), String.t(), String.t(), String.t()) ::
+          :ok | {:error, reason()}
+  def title_after_prompt(%User{} = user, track_id, thread_id, item_id, text) do
+    with {:ok, %{track: track, thread: thread}} <-
+           Access.thread_access(user, track_id, thread_id, :write) do
+      title_first({:ok, %{id: item_id}}, track, thread, text)
+      :ok
     end
   end
 
