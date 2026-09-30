@@ -37,7 +37,7 @@ test('an asleep track says so once, in the inspector, and Wake wakes it', async 
   const trackId = new URL(page.url()).pathname.split('/t/')[1];
   const sandbox = await sandboxOf(request, trackId);
   expect((await request.post(`${mock}/__browser/sandbox-status`, { data: { id: sandbox, status: 'suspended' } })).ok()).toBe(true);
-  await page.getByRole('button', { name: 'Refresh', exact: true }).click();
+  await page.locator('.panel-refresh').click();
 
   const asleep = page.locator('#panel-asleep');
   await expect(asleep.getByRole('status')).toHaveText('Machine is asleep');

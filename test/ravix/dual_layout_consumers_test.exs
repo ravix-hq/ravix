@@ -47,14 +47,35 @@ defmodule Ravix.DualLayoutConsumersTest do
 
       stub(Ravix.Fountain, :client, fn -> client end)
 
-      SpritesFake.install(fn conn, call ->
-        assert call.path == "/v1/sprites/sprite-#{id}/exec"
-        assert ["sh", "-lc", script] = call.argv
-        assert script =~ track.workdir
+      # The diff's untracked read asks whether the sprite is running first.
+      untracked =
+        Jason.encode!(%{
+          available: true,
+          diff: "diff --git a/#{id}.txt b/#{id}.txt\nnew file mode 100644\n",
+          large: [],
+          truncated: false
+        })
 
-        if script =~ "cpu.max",
-          do: SpritesFake.exec_response(conn, "nproc=#{if id == "one", do: 1, else: 2}\n", "", 0),
-          else: SpritesFake.exec_response(conn, "#{id}\n__ravix_cwd__#{track.workdir}\n", "", 0)
+      SpritesFake.install(fn conn, call ->
+        if call.method == "GET" do
+          assert call.path == "/v1/sprites/sprite-#{id}"
+          Plug.Conn.send_resp(conn, 200, ~s({"status":"running"}))
+        else
+          assert call.path == "/v1/sprites/sprite-#{id}/exec"
+          assert ["sh", "-lc", script] = call.argv
+          assert script =~ track.workdir
+
+          cond do
+            script =~ "cpu.max" ->
+              SpritesFake.exec_response(conn, "nproc=#{if id == "one", do: 1, else: 2}\n")
+
+            script =~ "b64decode" ->
+              SpritesFake.exec_response(conn, "#{untracked}\n__ravix_cwd__#{track.workdir}\n")
+
+            true ->
+              SpritesFake.exec_response(conn, "#{id}\n__ravix_cwd__#{track.workdir}\n")
+          end
+        end
       end)
 
       assert {:ok, %{stdout: output}} = Terminal.exec(ctx.owner, track.id, %{command: "pwd"})
@@ -63,7 +84,11 @@ defmodule Ravix.DualLayoutConsumersTest do
       assert cores == if(id == "one", do: 1, else: 2)
       assert {:ok, %{content: ^id}} = Tracks.file(ctx.owner, track.id, "a.txt")
       assert {:ok, %{entries: []}} = Tracks.files(ctx.owner, track.id, nil)
-      assert {:ok, %{diff: ""}} = Tracks.diff(ctx.owner, track.id)
+
+      assert {:ok, %{changes: [%{path: path, status: :untracked}]}} =
+               Tracks.diff(ctx.owner, track.id)
+
+      assert path == "#{id}.txt"
       refute Enum.any?(FakeTransport.calls(client), &(&1.path == "/api/conversations"))
     end
   end

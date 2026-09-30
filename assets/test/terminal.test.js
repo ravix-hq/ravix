@@ -76,3 +76,39 @@ test("a busy fieldset prevents execution and releases focus when the command fin
   expect(input.value).toBe("")
   expect(events).toEqual([{name: "exec", payload: {command: "echo unfinished"}}])
 })
+
+test("Ctrl+` clicks the dock's New terminal item unless it is missing or disabled", () => {
+  document.body.innerHTML += `<button id="dock-shell-new"></button>`
+  const {hook} = mountHook(Terminal, "#terminal")
+  const item = document.getElementById("dock-shell-new")
+  let clicks = 0
+  item.addEventListener("click", () => clicks++)
+  const press = init => {
+    const event = new KeyboardEvent("keydown", {key: "`", code: "Backquote", bubbles: true, cancelable: true, ...init})
+    window.dispatchEvent(event)
+    return event
+  }
+  let reached = 0
+  const shell = document.createElement("textarea")
+  document.body.append(shell)
+  shell.addEventListener("keydown", () => reached++)
+  const inShell = new KeyboardEvent("keydown", {key: "`", code: "Backquote", ctrlKey: true, bubbles: true, cancelable: true})
+  shell.dispatchEvent(inShell)
+  expect(inShell.defaultPrevented).toBe(true)
+  expect(reached).toBe(0)
+  expect(clicks).toBe(1)
+  press({})
+  press({ctrlKey: true, metaKey: true})
+  press({ctrlKey: true, key: "a", code: "KeyA"})
+  expect(clicks).toBe(1)
+  item.disabled = true
+  expect(press({ctrlKey: true}).defaultPrevented).toBe(false)
+  item.remove()
+  press({ctrlKey: true})
+  expect(clicks).toBe(1)
+  hook.destroyed()
+  document.body.innerHTML += `<button id="dock-shell-new"></button>`
+  document.getElementById("dock-shell-new").addEventListener("click", () => clicks++)
+  press({ctrlKey: true})
+  expect(clicks).toBe(1)
+})

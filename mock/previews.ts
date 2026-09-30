@@ -179,6 +179,17 @@ const server = Bun.serve<SocketData>({ port: Number(process.env.MOCK_SPRITES_POR
         const [out, code] = gitExec(match[1]!, script);
         return new Response(Buffer.concat([Buffer.from([1]), Buffer.from(out), Buffer.from([3, code])]));
       }
+      // The Changes tab's untracked-files read (`Diff.untracked_command/1`),
+      // told from the Files tab's metadata read by its five-value payload.
+      // Only a worktree named for it has one, so every other track's Changes
+      // stays what the Fountain mock's diff says.
+      const payload = /base64\.b64decode\("[^"]+"\)\)' (\S+)/.exec(script)?.[1];
+      const read = payload ? JSON.parse(atob(payload)) : null;
+      if (read?.length === 5 && /untracked/.test(read[0])) {
+        const diff = "diff --git a/docs/NOTES.md b/docs/NOTES.md\nnew file mode 100644\n--- /dev/null\n+++ b/docs/NOTES.md\n@@ -0,0 +1,3 @@\n+# Notes\n+\n+Untracked, and now listed.\n";
+        const out = JSON.stringify({ available: true, diff, large: [], truncated: false });
+        return new Response(Buffer.concat([Buffer.from([1]), Buffer.from(out), Buffer.from([3, 0])]));
+      }
       const logs = argv[0] === "tail" ? [...services.values()].find(s => argv.at(-1)?.includes(s.name))?.logs || "" : "";
       const stats = argv[0] === "sh" && argv.at(-1)?.includes("/sys/fs/cgroup/cpu.stat");
       const output = stats ? [
