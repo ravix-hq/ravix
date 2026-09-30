@@ -1,8 +1,9 @@
 import {beforeEach, expect, setSystemTime, test} from "bun:test"
 import {Composer} from "../js/hooks/composer.js"
-import {mountHook} from "./setup.js"
+import {key, mountHook} from "./setup.js"
 
-// RAV-94: Ask agent / Comment switches in the browser when pressed, and the
+// RAV-94: the "Ctrl+L to focus" hint is hidden while focus is anywhere in the
+// composer. Ask agent / Comment switches in the browser when pressed, and the
 // server's render, which may arrive after a patch drawn before the click,
 // catches up without putting the old mode back on screen.
 
@@ -34,8 +35,9 @@ function render({askDisabled = false} = {}) {
       <button type="button" id="ask" data-composer-mode="ask" aria-pressed="true">Ask agent</button>
       <button type="button" id="comment" data-composer-mode="comment" aria-pressed="false">Comment</button>
     </div>
+    <span id="composer-shortcut" data-composer-shortcut><kbd>Ctrl+L</kbd> to focus</span>
     <button class="composer-send" aria-label="Send" title="Send"></button>
-  </div></form>`
+  </div></form><button id="elsewhere">Elsewhere</button>`
   return mountHook(Composer, "textarea")
 }
 
@@ -148,4 +150,32 @@ test("a box with no modes (a draft thread's) ignores the switch", () => {
   hook.el.dataset.mode = "ask"
   hook.chooseMode("shout")
   expect(pressed()).toBe("ask")
+})
+
+const hint = () => document.querySelector("[data-composer-shortcut]")
+
+test("the focus hint hides while focus is in the composer, and returns when it leaves", () => {
+  const {hook} = render()
+  expect(hint().style.visibility).toBe("")
+  hook.el.focus()
+  expect(hint().style.visibility).toBe("hidden")
+  // Moving within the composer, to its own buttons, keeps it hidden.
+  document.querySelector("#comment").focus()
+  expect(hint().style.visibility).toBe("hidden")
+  document.querySelector("#elsewhere").focus()
+  expect(hint().style.visibility).toBe("")
+})
+
+test("the hint starts hidden when the box already has focus, and ⌘L focuses it on a Mac's label", () => {
+  render()
+  document.querySelector("textarea").focus()
+  // A second mount (a patch that replaced the box) finds focus already inside.
+  const {hook} = mountHook(Composer, "textarea")
+  expect(hint().style.visibility).toBe("hidden")
+  document.querySelector("#elsewhere").focus()
+  expect(hint().style.visibility).toBe("")
+  key(document.querySelector("#elsewhere"), "l", {ctrlKey: true})
+  expect(document.activeElement).toBe(hook.el)
+  expect(hint().style.visibility).toBe("hidden")
+  expect(hint().textContent).toMatch(/^(⌘L|Ctrl\+L) to focus$/)
 })

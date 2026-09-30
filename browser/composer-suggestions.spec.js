@@ -21,18 +21,20 @@ test('@ mentions a file, / picks a command, and Ctrl+L focuses the composer', as
   await expect(page.locator('#transcript-status')).toHaveText('Agent replied');
   await expect(message).toHaveAttribute('placeholder', 'Ask to make changes, @mention files, run /commands');
 
-  // Ctrl+L from elsewhere on the page.
+  // Ctrl+L from elsewhere on the page. The hint shows from 1360px up.
+  await page.setViewportSize({ width: 1440, height: 900 });
   await page.locator('#transcript-scroll').click();
+  await expect(page.locator('#composer-shortcut')).toBeVisible();
   await expect(message).not.toBeFocused();
   await page.keyboard.press('Control+l');
   await expect(message).toBeFocused();
   // The hint is for reaching the box, so it goes once the box has focus
-  // (RAV-94), and it is for wide screens: on a narrow track it would wrap
-  // the composer's row and take room from the transcript.
+  // (RAV-94), and it is for wide screens: below 1360px it would wrap the
+  // composer's row and take room from the transcript.
   await expect(page.locator('#composer-shortcut')).toBeHidden();
   await message.blur();
   await expect(page.locator('#composer-shortcut')).toBeVisible();
-  await page.setViewportSize({ width: 535, height: 900 });
+  await page.setViewportSize({ width: 1280, height: 900 });
   await expect(page.locator('#composer-shortcut')).toBeHidden();
   await page.setViewportSize({ width: 1280, height: 720 });
   await message.focus();

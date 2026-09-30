@@ -150,7 +150,7 @@ defmodule RavixWeb.FirstRunTest do
       render_async(child, 5_000)
       render_async(child, 5_000)
       assert has_element?(child, ".workspace-queue", "Add a health check")
-      assert has_element?(child, ".workspace-queue", "Starts when setup is ready")
+      assert has_element?(child, ".workspace-queue", "Queued · starts when setup is ready")
       assert has_element?(child, "#track-setup-steps li", "Run setup")
       assert has_element?(child, "#track-setup-steps li[aria-current=step]")
     end
