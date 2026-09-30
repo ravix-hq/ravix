@@ -450,8 +450,7 @@ defmodule RavixWeb.TrackLive do
     with %{prompt: prompt} = turn when is_binary(prompt) <-
            Enum.find(socket.assigns.page.turns, &(&1.id == id)),
          true <- Enum.any?(turn.blocks, &match?(%TranscriptBlock.Failure{}, &1)) do
-      {prompt, _restored?} = Recovery.visible_prompt(prompt)
-      {_speaker, body} = prompt |> Ravix.Previews.Agent.visible_prompt() |> prompt_author()
+      {_speaker, body, _restored?} = visible_prompt(prompt)
 
       {:noreply,
        push_event(socket, "composer:retry", %{text: body, images: turn.image_count > 0})}
@@ -3549,15 +3548,14 @@ defmodule RavixWeb.TrackLive do
   attr :turn_id, :string, required: true
 
   defp prompt_message(assigns) do
-    {prompt, restored?} = Recovery.visible_prompt(assigns.prompt)
-    {speaker, body} = prompt |> Ravix.Previews.Agent.visible_prompt() |> prompt_author()
+    {speaker, body, restored?} = visible_prompt(assigns.prompt)
     assigns = assign(assigns, speaker: speaker, body: body, restored?: restored?)
 
     ~H"""
     <div class="said">
       <span class="speaker">{@speaker}</span>
       <span :if={@restored?} class="chip">Context restored</span>
-      <div :if={@body != ""} class="workspace-prompt">{@body}</div>
+      <div :if={@body != ""} class="workspace-prompt md">{prompt_html(@body)}</div>
       <div :if={@image_count > 0} class="prompt-images" role="group" aria-label="Attached images">
         <a
           :for={position <- 0..(@image_count - 1)}
@@ -3659,6 +3657,25 @@ defmodule RavixWeb.TrackLive do
       </div>
     </aside>
     """
+  end
+
+  # A prompt as its author meant it to be read: the preview instructions,
+  # restored context and author marker taken off, which the retry puts back
+  # into the composer as typed and the transcript and queue draw.
+  defp visible_prompt(prompt) do
+    {prompt, restored?} = Recovery.visible_prompt(prompt)
+    {speaker, body} = prompt |> Ravix.Previews.Agent.visible_prompt() |> prompt_author()
+    {speaker, body, restored?}
+  end
+
+  # A prompt is markdown as often as a reply is, whether a person or an
+  # orchestrating agent wrote it, so it goes through the same escaping
+  # renderer. Newlines stay breaks: people type prompts with plain ones.
+  defp prompt_html(body), do: Markdown.render_safe(body, breaks: true)
+
+  defp queue_prompt_html(prompt) do
+    {_speaker, body, _restored?} = visible_prompt(prompt)
+    prompt_html(body)
   end
 
   # Shared prompts carry PromptQueue.with_author/2's marker after the preview

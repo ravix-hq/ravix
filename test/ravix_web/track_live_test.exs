@@ -1181,7 +1181,7 @@ defmodule RavixWeb.TrackLiveTest do
 
     assert has_element?(
              ctx.view,
-             ".workspace-queue p",
+             ".workspace-queue .queue-feedback",
              "Codex is at capacity on this machine; your prompt is queued."
            )
 
@@ -5193,7 +5193,11 @@ defmodule RavixWeb.TrackLiveTest do
       refute has_element?(ctx.view, ".workspace-queue .chip", raw)
     end
 
-    assert has_element?(ctx.view, ".workspace-queue p", "Waiting for the current turn to finish")
+    assert has_element?(
+             ctx.view,
+             ".workspace-queue .queue-feedback",
+             "Waiting for the current turn to finish"
+           )
 
     PromptQueue.Store.set_status(
       hd(ids),
@@ -5206,7 +5210,7 @@ defmodule RavixWeb.TrackLiveTest do
 
     assert has_element?(
              ctx.view,
-             ".workspace-queue p",
+             ".workspace-queue .queue-feedback",
              "Claude Code is at capacity on this machine; your prompt is queued."
            )
 
@@ -5222,7 +5226,7 @@ defmodule RavixWeb.TrackLiveTest do
 
       assert has_element?(
                ctx.view,
-               ".workspace-queue > div:last-child p",
+               ".workspace-queue > div:last-child .queue-feedback",
                "Waiting behind a prompt that needs attention"
              )
 
@@ -5230,7 +5234,7 @@ defmodule RavixWeb.TrackLiveTest do
       refresh.()
     end
 
-    refute has_element?(ctx.view, ".workspace-queue p")
+    refute has_element?(ctx.view, ".workspace-queue .queue-feedback")
   end
 
   test "shared transcript messages name their senders in snapshots and live updates", ctx do
@@ -5256,7 +5260,9 @@ defmodule RavixWeb.TrackLiveTest do
 
     assert has_element?(ctx.view, "#turns-mine .speaker", "@#{ctx.user.login}")
     assert has_element?(ctx.view, "#turns-theirs .speaker", "@teammate")
-    assert has_element?(ctx.view, "#turns-theirs .workspace-prompt", "Their message Second line")
+    assert has_element?(ctx.view, "#turns-theirs .workspace-prompt p", "Their message")
+    assert has_element?(ctx.view, "#turns-theirs .workspace-prompt br")
+    assert has_element?(ctx.view, "#turns-theirs .workspace-prompt p", "Second line")
     assert has_element?(ctx.view, "#turns-legacy .speaker", "User")
     assert has_element?(ctx.view, "#turns-system .speaker", "Ravix")
     assert has_element?(ctx.view, "#turns-system .workspace-prompt", "Open this track.")
@@ -5273,6 +5279,52 @@ defmodule RavixWeb.TrackLiveTest do
     assert has_element?(ctx.view, "#turns-live .speaker", "@another-person")
     assert has_element?(ctx.view, "#turns-live .workspace-prompt", "<script>alert(1)</script>")
     refute has_element?(ctx.view, "#transcript-turns script")
+  end
+
+  test "prompts render as markdown, in the transcript and the queue, escaping raw html", ctx do
+    body = "Do **x** with `y`:\n\n1. first\n- second\n\n<script>alert(1)</script>"
+
+    page =
+      Transcript.page(
+        [opened(1, "md", PromptQueue.with_author("teammate", body))],
+        "claude"
+      )
+
+    stub(Tracks, :events, fn _, _, _thread_opts -> {:ok, page} end)
+
+    stub(PromptQueue, :list, fn _, _, _ ->
+      {:ok,
+       [
+         %QueuedPrompt{
+           id: "held-md",
+           prompt: PromptQueue.with_author("teammate", body),
+           image_count: 0,
+           author_login: "teammate",
+           status: :failed,
+           error: "Refused",
+           created_at: DateTime.utc_now(),
+           can_cancel: true
+         }
+       ]}
+    end)
+
+    render_click(ctx.view, "retry-load")
+    send(ctx.view.pid, :refresh)
+    settle(ctx.view)
+
+    for scope <- ["#turns-md .workspace-prompt", ".workspace-queue .queue-prompt"] do
+      assert has_element?(ctx.view, "#{scope} strong", "x")
+      assert has_element?(ctx.view, "#{scope} code", "y")
+      assert has_element?(ctx.view, "#{scope} ol li", "first")
+      assert has_element?(ctx.view, "#{scope} ul li", "second")
+      assert has_element?(ctx.view, "#{scope} p", "<script>alert(1)</script>")
+      refute has_element?(ctx.view, "#{scope} script")
+    end
+
+    html = render(ctx.view)
+    assert html =~ "&lt;script&gt;alert(1)&lt;/script&gt;"
+    refute html =~ "<script>alert(1)"
+    refute html =~ "[from @"
   end
 
   test "transcript snapshots render prompts, thinking, tools, and raw output safely", ctx do
