@@ -145,10 +145,19 @@ defmodule Ravix.Workspaces.Picker do
   @spec addable_matches(t()) :: [addable()]
   def addable_matches(%__MODULE__{addable: nil}), do: []
 
-  def addable_matches(%__MODULE__{addable: addable, query: query}) do
-    case query |> String.trim() |> String.downcase() do
-      "" -> addable
-      q -> Enum.filter(addable, &String.contains?(String.downcase(&1.repo), q))
+  def addable_matches(%__MODULE__{addable: addable, query: query}),
+    do: filter_repos(addable, query)
+
+  @doc """
+  Repositories (`%{repo: "owner/repo"}` maps) whose name contains the query,
+  case-insensitively, in the order given. The list the picker draws, here
+  and in the Danger zone's Change repository (RAV-76).
+  """
+  @spec filter_repos([%{required(:repo) => String.t()}], String.t() | nil) :: [map()]
+  def filter_repos(repos, query) do
+    case (query || "") |> String.trim() |> String.downcase() do
+      "" -> repos
+      q -> Enum.filter(repos, &String.contains?(String.downcase(&1.repo), q))
     end
   end
 
