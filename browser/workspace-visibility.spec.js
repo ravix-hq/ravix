@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { test, expect } from '@playwright/test';
 import { signIn, connectClaude } from './sign-in.js';
+import { chooseSharing } from './new-track.js';
 
 // ADR 0009 phase 3b, with RAVIX_WORKSPACE_ACCESS on: `bun run
 // test:browser:workspace-access` starts the harness (browser/server.py) so.
@@ -25,8 +26,8 @@ const idOf = path => {
 async function openTrack(page, visibility, branch) {
   await page.locator('#yard .workspace-project.current .project-add').click();
   const track = page.getByRole('dialog', { name: 'New track', exact: true });
-  await track.getByLabel('Sharing', { exact: true }).selectOption(visibility);
-  await track.getByRole('button', { name: 'Advanced', exact: true }).click();
+  await chooseSharing(track, visibility);
+  await track.getByRole('button', { name: 'Options', exact: true }).click();
   await track.getByLabel('Branch name', { exact: true }).fill(branch);
   await track.getByRole('button', { name: 'Create track', exact: true }).click();
   await expect(page.locator('.track-crumbs')).toContainText(branch);

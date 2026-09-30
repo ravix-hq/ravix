@@ -33,7 +33,8 @@ test('cohort threads attach the other runtime to the home disk and reuse its pro
     const projectId = new URL(page.url()).pathname.split('/')[2];
     await page.locator('#yard .workspace-project.current .project-add').click();
     const track = page.getByRole('dialog', { name: 'New track', exact: true });
-    await expect(track.getByLabel('Agent', { exact: true })).toHaveValue(home);
+    await expect(track.locator('#new-track-model-menu input[name="new_track[runtime]"]:checked')).toHaveValue(home);
+    await expect(track.locator('#new-track-model-trigger')).toContainText(home === 'codex' ? 'Codex · ' : 'Claude Code · ');
     await track.getByRole('button', { name: 'Create track', exact: true }).click();
     await expect(page.getByRole('textbox', { name: 'Message', exact: true })).toBeEnabled({ timeout: 30_000 });
     // Readiness is durable; the live-region announcement only describes new stream events.

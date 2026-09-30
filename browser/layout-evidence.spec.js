@@ -13,7 +13,7 @@ test('layout evidence', async ({ page }, testInfo) => {
   await expect(project).not.toBeVisible();
   await page.locator('#yard .workspace-project.current .project-add').click();
   const track = page.getByRole('dialog', { name: 'New track', exact: true });
-  await track.getByRole('button', { name: 'Advanced', exact: true }).click();
+  await track.getByRole('button', { name: 'Options', exact: true }).click();
   await track.getByLabel('Branch name').fill('layout-example');
   await track.getByRole('button', { name: 'Create track', exact: true }).click();
   await expect(page.getByRole('textbox', { name: 'Message', exact: true })).toBeEnabled({ timeout: 30_000 });

@@ -73,12 +73,12 @@ defmodule RavixWeb.TrackLive do
   alias RavixWeb.Live.Form
   alias RavixWeb.Live.Guard
   alias RavixWeb.Live.MachineDock
+  alias RavixWeb.Live.ModelMenu
   alias RavixWeb.Live.Panel
   alias RavixWeb.Live.Params
   alias RavixWeb.Live.ThreadConnect
   alias RavixWeb.Live.ToolCall
   alias RavixWeb.Markdown
-  alias RavixWeb.ModelName
 
   @impl true
   def mount(_params, session, socket) do
@@ -2151,70 +2151,8 @@ defmodule RavixWeb.TrackLive do
     |> workspace_async(:preview_action, fn -> call.(user, id, hash) end)
   end
 
-  attr :runtime, :string, default: nil
-  attr :model, :string, required: true, doc: "what the shown conversation runs"
-  attr :project_model, :string, required: true
-  attr :models, :list, required: true, doc: "the catalog's models for the project's runtime"
-  attr :disabled, :boolean, default: false
-
-  @doc """
-  The model under the composer, and the menu that changes it for the shown
-  conversation from its next turn.
-
-  A native popover, like the account menu: light dismiss, Escape and focus
-  return come with it, and choosing an item hides it. The project's model
-  is marked as the default, and choosing it puts the conversation back on
-  whatever the project runs. With no catalog to offer, or while a turn
-  runs, it is the plain label it used to be, or a disabled trigger.
-  """
-  def model_menu(%{models: []} = assigns) do
-    ~H"""
-    <span class="composer-model" title={agent_model(@runtime, @model)}>{agent_model(@runtime, @model)}</span>
-    """
-  end
-
-  def model_menu(assigns) do
-    assigns = assign(assigns, :choices, Enum.uniq(assigns.models ++ [assigns.model]))
-
-    ~H"""
-    <button
-      type="button"
-      id="model-trigger"
-      class="composer-model model-trigger"
-      popovertarget="model-menu"
-      aria-label={agent_model(@runtime, @model)}
-      title={agent_model(@runtime, @model)}
-      disabled={@disabled}
-    ><span class="truncate">{agent_model(@runtime, @model)}</span><span class="sr-only">, change model</span><.icon
-      name="chevron"
-      size={10}
-      open={true}
-    /></button>
-    <div id="model-menu" class="model-menu" popover role="menu" aria-label="Model">
-      <p class="model-default-hint">Also your default for new threads</p>
-      <button
-        :for={choice <- @choices}
-        type="button"
-        class="account-item model-option"
-        role="menuitemradio"
-        aria-checked={to_string(choice == @model)}
-        popovertarget="model-menu"
-        popovertargetaction="hide"
-        phx-click="set-model"
-        phx-value-model={if choice == @project_model, do: "", else: choice}
-        title={ModelName.friendly(choice)}
-      >
-        <span class="truncate">{ModelName.friendly(choice)}</span><small :if={
-          choice == @project_model
-        }>Project default</small><span class="spacer"></span><span
-          :if={choice == @model}
-          class="check"
-          aria-hidden="true"
-        >✓</span>
-      </button>
-    </div>
-    """
-  end
+  @doc "The model under the composer: `RavixWeb.Live.ModelMenu.menu/1`."
+  defdelegate model_menu(assigns), to: ModelMenu, as: :menu
 
   defp thread_failure(socket, reason) do
     draft = socket.assigns.thread_draft || %{runtime: nil, options: nil}
@@ -2250,14 +2188,7 @@ defmodule RavixWeb.TrackLive do
       else: item.wait_reason
   end
 
-  defp agent_model(nil, model) when is_binary(model) and model != "",
-    do: ModelName.friendly(model)
-
-  defp agent_model(runtime, model) do
-    [RavixWeb.AgentName.label(runtime) || "Agent", ModelName.friendly(model)]
-    |> Enum.reject(&(&1 == ""))
-    |> Enum.join(" · ")
-  end
+  defp agent_model(runtime, model), do: ModelMenu.agent_model(runtime, model)
 
   attr :threads, :list, required: true
   attr :thread_id, :string, required: true

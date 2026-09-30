@@ -2079,6 +2079,21 @@ defmodule RavixWeb.WorkspaceLive do
   defp ref_label(%{number: number, title: title}), do: "##{number} #{title}"
   defp ref_label(%{name: name}), do: name
 
+  # The New track chips (RAV-60): where the track opens, and who sees it.
+  defp track_destination(%{repo: repo}) when is_binary(repo), do: repo
+  defp track_destination(project), do: "Scratch · #{project.display_name}"
+
+  defp private_tracks?(user), do: Ravix.Config.dedicated_opens_enabled?(user)
+
+  defp sharing_choices,
+    do: [
+      {"project", "Everyone", "Everyone in this project"},
+      {"private", "Only me", "Only me and the people I invite"}
+    ]
+
+  defp sharing_label("private"), do: "Only me"
+  defp sharing_label(_visibility), do: "Everyone"
+
   defp attention_count(tracks),
     do:
       Enum.reduce(tracks, 0, fn {_id, rows}, count -> count + Enum.count(rows, &attention?/1) end)

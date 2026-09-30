@@ -63,7 +63,11 @@ defmodule RavixWeb.NewTrackPromptTest do
 
     open_dialog(ctx.view)
     assert has_element?(ctx.view, "#new-track-prompt[phx-hook=SubmitOnEnter]")
-    assert has_element?(ctx.view, "label[for=new-track-prompt]", "What do you want to work on?")
+
+    assert has_element?(
+             ctx.view,
+             ~s(#new-track-prompt[aria-label="What do you want to work on?"][placeholder="What do you want to work on?"])
+           )
 
     ctx.view
     |> form("#new-track-form", new_track: %{prompt: "Fix the flaky login test"})

@@ -18,7 +18,7 @@ test('a typed login survives the track re-rendering after the box loses focus', 
   await expect(project).toHaveCount(0);
   await page.locator('#yard .workspace-project.current .project-add').click();
   const track = page.getByRole('dialog', { name: 'New track', exact: true });
-  await track.getByRole('button', { name: 'Advanced', exact: true }).click();
+  await track.getByRole('button', { name: 'Options', exact: true }).click();
   await track.getByLabel('Branch name', { exact: true }).fill('people-typing');
   await track.getByRole('button', { name: 'Create track', exact: true }).click();
   await expect(page.locator('.track-crumbs')).toContainText('people-typing');

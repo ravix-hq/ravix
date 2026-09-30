@@ -25,7 +25,7 @@
 //   Notify          desktop notifications when a track needs you and you are not looking
 //   SettingsSections section navigation and unsaved input warnings
 //   ProjectTree     viewer-local collapse preferences for project and section rows
-//   QuickJump       Cmd/Ctrl-K and keyboard selection in navigation search
+//   QuickJump       Cmd/Ctrl-K, Cmd/Ctrl-N and keyboard selection in navigation search
 //   ProjectSections drag a sidebar project onto one of your sections
 //   ProjectFormFocus synchronous dialog focus that never steals later typing
 //   CopyCode        copy a Help example exactly, with success or failure feedback
@@ -33,6 +33,7 @@
 //   RelativeTime    a sidebar row's "22h" age, kept current without server ticks
 //   SubmitOnEnter   the create dialog's first prompt: Enter creates, Shift+Enter is a new line
 //   HeaderFit       a track header's status chips: whole words or just their icons
+//   ChipMenu        a chip's popover: aria-expanded, Escape and focus return inside a dialog
 //
 // Adding a hook is a product decision, not a convenience. Say why in its
 // file's header, and list it here.
@@ -65,9 +66,10 @@ import {TurnTimer} from "./hooks/turn_timer"
 import {RelativeTime} from "./hooks/relative_time"
 import {SubmitOnEnter} from "./hooks/submit_on_enter"
 import {HeaderFit} from "./hooks/header_fit"
+import {ChipMenu} from "./hooks/chip_menu"
 
 
-const hooks = {ThreadTabs, AgentConfirmation, Theme, PanelResize, PanelToggle, TranscriptTail, Composer, Terminal, Notify, SettingsSections, ProjectTree, QuickJump, ProjectSections, CopyCode, ProjectFormFocus, ShareMention, TurnTimer, RelativeTime, SubmitOnEnter, Shell, HeaderFit}
+const hooks = {ThreadTabs, AgentConfirmation, Theme, PanelResize, PanelToggle, TranscriptTail, Composer, Terminal, Notify, SettingsSections, ProjectTree, QuickJump, ProjectSections, CopyCode, ProjectFormFocus, ShareMention, TurnTimer, RelativeTime, SubmitOnEnter, Shell, HeaderFit, ChipMenu}
 
 const csrfToken = document.querySelector("meta[name='csrf-token']").getAttribute("content")
 clearTransportFallback(window)

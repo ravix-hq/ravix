@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { signIn, connectClaude } from './sign-in.js';
+import { chooseSharing } from './new-track.js';
 
 test('private tracks are hidden from project members until invited', async ({ page, browser }) => {
   test.setTimeout(120_000);
@@ -18,9 +19,9 @@ test('private tracks are hidden from project members until invited', async ({ pa
   await page.keyboard.press('Escape');
   await page.locator('#yard .workspace-project.current .project-add').click();
   const track = page.getByRole('dialog', { name: 'New track', exact: true });
-  await expect(track.getByLabel('Sharing', { exact: true })).toHaveValue('project');
-  await track.getByLabel('Sharing', { exact: true }).selectOption('private');
-  await track.getByRole('button', { name: 'Advanced', exact: true }).click();
+  await expect(track.locator('#new-track-sharing-trigger')).toContainText('Everyone');
+  await chooseSharing(track, 'private');
+  await track.getByRole('button', { name: 'Options', exact: true }).click();
   await track.getByLabel('Branch name', { exact: true }).fill('secret-investigation');
   await track.getByRole('button', { name: 'Create track', exact: true }).click();
   await expect(page.locator('.track-crumbs')).toContainText('secret-investigation');
