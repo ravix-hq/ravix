@@ -1550,7 +1550,7 @@ section.first-prompt#project-start { align-self: center; padding: 32px 24px; }
 .agent-card-hint { font-size: 12px; }
 /* RAV-77: a card's name and its ⋯ menu share a row; the default is the
    card drawn in the accent. */
-.agent-card-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 28px; }
+.agent-card-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; align-self: stretch; min-height: 28px; }
 .agent-card .agent-card-more { margin: 0; padding: 2px 6px; color: var(--dim); }
 .agent-card .agent-card-more > svg { display: none; }
 .agent-card.default { border-color: var(--accent-line); }
