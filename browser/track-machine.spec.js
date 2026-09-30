@@ -44,8 +44,15 @@ test('machine status follows the selected dedicated track, never its shared proj
   sql(`UPDATE ravix.tracks SET sandbox_layout = 'dedicated', sandbox_generation = 1, sandbox_id = CASE id WHEN '${ids[0]}' THEN '${sandbox}' ELSE 'missing-${ids[1]}' END WHERE id IN ('${ids[0]}', '${ids[1]}')`);
   for (const index of [0, 1, 0]) {
     await page.goto(paths[index]);
-    await expect(page.locator('#track-machine-status')).toHaveText(index === 0
-      ? 'Idle.'
-      : 'Idle. The machine did not answer just now; your next message wakes it.');
+    const chip = page.locator('#track-machine-state');
+    await expect(chip).toHaveText('Idle');
+    if (index === 0) {
+      await expect(chip).toHaveAttribute('title', 'Idle');
+      await expect(page.locator('#track-machine-detail')).toHaveCount(0);
+    } else {
+      const note = 'The machine did not answer just now; your next message wakes it.';
+      await expect(chip).toHaveAttribute('title', note);
+      await expect(page.locator('#track-machine-detail')).toHaveText(note);
+    }
   }
 });

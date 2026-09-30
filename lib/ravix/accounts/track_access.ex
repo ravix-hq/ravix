@@ -15,8 +15,10 @@ defmodule Ravix.Accounts.TrackAccess do
   the difference between them is how they got here, not what they may do once
   they are. See `Ravix.Accounts.ProjectAccess` for why this is a struct.
 
-  `level` is what they may do (ADR 0010): `:read`, `:write` or `:admin`, the
-  highest of the grants that reach this track. The owner is always `:admin`.
+  `level` is what they may do (ADR 0010): `:read`, `:write` or `:admin`, from
+  the nearest grant that reaches this track -- owner, then this track's own,
+  then the project's, then the workspace's (RAV-75). The owner is always
+  `:admin`, except on somebody else's private track.
   """
 
   alias Ravix.Accounts.Access

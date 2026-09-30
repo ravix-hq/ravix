@@ -270,6 +270,104 @@ defmodule Ravix.People.Store do
     changed?
   end
 
+  @doc """
+  Every project membership and its role, oldest first: the direct grants
+  `Ravix.Accounts.Access.project_people/2` decides from.
+  """
+  @spec project_grants(String.t()) :: [{User.t(), level()}]
+  def project_grants(project_id) do
+    {users, roles} = project_seats(project_id)
+    Enum.map(users, &{&1, Map.fetch!(roles, &1.login)})
+  end
+
+  @doc "Every seat on a track and its role, oldest first."
+  @spec track_grants(String.t()) :: [{User.t(), level()}]
+  def track_grants(track_id) do
+    Repo.all(
+      from(m in TrackMember,
+        join: u in assoc(m, :user),
+        where: m.track_id == ^track_id,
+        order_by: m.created_at,
+        select: {u, m.role}
+      )
+    )
+    |> Enum.map(fn {u, role} -> {u, role || :write} end)
+  end
+
+  @doc """
+  A direct grant on a workspace project for one of its workspace's live
+  members (RAV-75): their project role, which takes precedence over the
+  workspace's default whether it is higher or lower. Writes the membership
+  if there is none, and changes its role if there is. Unlike
+  `add_project_member/3` it leaves their track seats alone: on a workspace
+  project a seat and a project grant answer different questions (ADR 0009).
+
+  The membership is read `FOR SHARE` in the insert's transaction, as
+  `add_permission/4` reads it, so a concurrent workspace removal
+  (`Ravix.Workspaces.Store.revoke_membership/3`, which deletes these rows)
+  either waits for this grant and deletes it, or has already committed and
+  this writes nothing. The hub is told on success.
+  """
+  @spec grant_project_role(Project.t(), String.t(), level(), String.t()) ::
+          :ok | {:error, :not_workspace_member}
+  def grant_project_role(
+        %Project{workspace_id: workspace_id} = project,
+        user_id,
+        role,
+        granted_by
+      )
+      when is_binary(workspace_id) and role in [:read, :write, :admin] do
+    # ownership: `Ravix.People.set_project_role/4` admitted the caller through
+    # `Access.project_access/3` as an admin of this project; the membership
+    # locked inside is the target's own, which is what the grant depends on.
+    Repo.transaction(fn ->
+      # ownership: as above -- the target's live membership of the project's workspace.
+      live =
+        Repo.one(
+          from m in Ravix.Workspaces.Membership,
+            where:
+              m.workspace_id == ^workspace_id and m.user_id == ^user_id and
+                is_nil(m.revoked_at),
+            lock: "FOR SHARE"
+        )
+
+      if is_nil(live), do: Repo.rollback(:not_workspace_member)
+
+      %ProjectMember{}
+      |> ProjectMember.changeset(%{
+        project_id: project.id,
+        user_id: user_id,
+        invited_by: granted_by,
+        role: role
+      })
+      |> Repo.insert!(on_conflict: [set: [role: role]], conflict_target: [:project_id, :user_id])
+    end)
+    |> case do
+      {:ok, _row} ->
+        Ravix.Hub.publish(project.id, :people)
+        :ok
+
+      {:error, :not_workspace_member} = refused ->
+        refused
+    end
+  end
+
+  @doc """
+  Take a workspace member's direct grant away, and nothing else: they still
+  reach the project through its workspace, at its default. Their seats,
+  private tracks and queued work stay, unlike `remove_project_member/2`,
+  which is for somebody leaving the project altogether. The hub is told.
+  """
+  @spec drop_project_grant(String.t(), String.t()) :: :ok
+  def drop_project_grant(project_id, user_id) do
+    Repo.delete_all(
+      from m in ProjectMember, where: m.project_id == ^project_id and m.user_id == ^user_id
+    )
+
+    Ravix.Hub.publish(project_id, :people)
+    :ok
+  end
+
   defp seat_role(schema, key, id, user_id) do
     case Repo.one(
            from(m in schema,
@@ -1237,24 +1335,6 @@ defmodule Ravix.People.Store do
     shared ++
       Enum.map(narrow, &Person.new(&1, :track)) ++
       Enum.map(invites, &pending_person/1)
-  end
-
-  @doc """
-  Everyone on a project, owner first: the same list one level up.
-
-  Deliberately *not* a union with the track memberships underneath it. This
-  list answers "who is in the project", and somebody named on one branch of
-  it is not; showing them here would make the owner's own decision
-  unreadable back to them, and would put a remove control beside a row
-  that this dialog cannot remove.
-
-  """
-  @spec project_people_of(String.t(), String.t()) :: [person()]
-  def project_people_of(project_id, owner_id) do
-    {users, roles} = project_seats(project_id)
-    members = Enum.map(users, &Person.new(&1, :project))
-    pending = project_id |> project_invites_of() |> Enum.map(&pending_person/1)
-    with_roles(owner_entry(owner_id) ++ members ++ pending, %{}, roles)
   end
 
   @doc "A `Ravix.People.Profile` for a user row: login, name, avatar, nothing else."

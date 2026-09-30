@@ -79,18 +79,13 @@
         <span :if={@track.visibility == :private} class="chip" title="Private">
           <.icon name="lock" /><span class="chip-label" data-fit-label>Private</span>
         </span>
-        <.machine_chip machine={machine(@track, @threads, @thread_states, @setup_now)} />
-        <span
-          :if={
-            @track.sandbox_layout == :dedicated ||
-              Ravix.Config.dedicated_opens_enabled?(@current_user)
-          }
-          class="chip"
-          id="track-machine-scope"
-          title={machine_scope(@track)}
-        ><.icon name="machine" size={12} /><span class="chip-label" data-fit-label>{machine_scope(
-          @track
-        )}</span></span>
+        <.machine_chip machine={
+          probed(machine(@track, @threads, @thread_states, @setup_now), @machine_probe, @track)
+        } />
+        <span class="chip" id="track-machine-scope" title={machine_scope_title(@track)}><.icon
+          name="machine"
+          size={12}
+        /><span class="chip-label" data-fit-label>{machine_scope(@track)}</span></span>
         <span
           :if={@track.billing == :creator}
           id="track-payer"
@@ -1048,15 +1043,10 @@
               do: {@track.conversation_id, @track.sandbox_state}
           }
           track_id={@track_id}
-          machine={machine(@track, @threads, @thread_states, @setup_now)}
           workdir={@track.workdir}
           current_user={@current_user}
           session_hash={@session_hash}
           can_write={@track.level != :read}
-          said={
-            inspector_state(@track, machine(@track, @threads, @thread_states, @setup_now), @panel) !=
-              nil || (@panel.tab == :checks && match?(%{asleep?: true}, @git))
-          }
         />
       </aside>
     </div>

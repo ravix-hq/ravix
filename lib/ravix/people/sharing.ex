@@ -13,6 +13,11 @@ defmodule Ravix.People.Sharing do
     * `manage_people` -- whoever may add and remove people, on a private
       track only; a workspace-visible track already reaches everyone.
     * `holders` -- the live workspace members it is shared with.
+    * `access` -- everyone who reaches the track, with their level and
+      where it comes from (RAV-75): `:owner` (the project's owner, or a
+      private track's creator), `:direct` (a seat or a share on this
+      track), `:project` (the project's own grant) or `:workspace` (its
+      default). `Ravix.Accounts.Access.track_people/2` decides it.
     * `consent` -- RAV-17's one-time note to the creator of a track they
       pay for, that collaborators' prompts use their subscription, until
       it has been shown once (`Ravix.Tracks.billing_notice/2`); else nil.
@@ -30,6 +35,7 @@ defmodule Ravix.People.Sharing do
     :set_visibility,
     :manage_people,
     :holders,
+    :access,
     :consent
   ]
   defstruct @enforce_keys
@@ -43,6 +49,10 @@ defmodule Ravix.People.Sharing do
           set_visibility: boolean(),
           manage_people: boolean(),
           holders: [Ravix.People.Profile.t()],
+          access: [
+            {Ravix.People.Profile.t(), Ravix.Accounts.Access.level(),
+             Ravix.Accounts.Access.track_source()}
+          ],
           consent: String.t() | nil
         }
 end

@@ -188,6 +188,12 @@ defmodule RavixWeb.WorkspaceVisibilityLiveTest do
       stub(Tracks, :follow, fn _, _, _ -> {:ok, self()} end)
       stub(Tracks, :beat, fn _, _, _ -> :ok end)
       stub(Tracks, :mark_read, fn _, _, _ -> :ok end)
+      test = self()
+
+      stub(Ravix.Terminal, :status, fn _, _, _ ->
+        send(test, :probed)
+        {:ok, %Ravix.Terminal.Status{available: true, why: nil, cwd: "/"}}
+      end)
 
       {:ok, parent, _} =
         live(
@@ -197,6 +203,12 @@ defmodule RavixWeb.WorkspaceVisibilityLiveTest do
 
       view = find_live_child(parent, "track-host")
       render_async(view, 5_000)
+      # The dock's machine probe answers the page with a message of its own
+      # (`{:machine_probe, ...}`). Let it land before a test makes the guard
+      # stale, or the page leaves on that message rather than the test's event.
+      assert_receive :probed, 5_000
+      render_async(view, 5_000)
+      render(view)
       %{view: view}
     end
 

@@ -385,18 +385,176 @@ defmodule Ravix.Accounts.Access do
       %Project{} = project ->
         # ownership: no door before this one -- the membership's role is part
         # of what this door decides, as `project_member?/2` is.
-        grants =
-          [
-            People.project_member_role(project.id, user_id),
-            if(workspace_member?(project, user_id), do: :write)
-          ]
-          |> Enum.reject(&is_nil/1)
+        direct = People.project_member_role(project.id, user_id)
+        in_workspace? = is_nil(direct) and workspace_member?(project, user_id)
 
-        if grants == [],
-          do: {:error, :not_found},
-          else: {:ok, %ProjectAccess{project: project, role: :member, level: highest(grants)}}
+        case project_grant(false, direct, in_workspace?) do
+          nil -> {:error, :not_found}
+          {level, _source} -> {:ok, %ProjectAccess{project: project, role: :member, level: level}}
+        end
     end
   end
+
+  @typedoc """
+  Where somebody's level on a project comes from (RAV-75): they own it, a
+  direct grant (a project membership) names them, or the project's
+  workspace admits them at its default.
+  """
+  @type source :: :owner | :direct | :workspace
+
+  @typedoc """
+  Where somebody's level on a track comes from: the owner (or a private
+  track's creator), a grant on this track, the project's own grant, or the
+  workspace's default.
+  """
+  @type track_source :: :owner | :direct | :project | :workspace
+
+  # The precedence rule, one tier at a time (RAV-75, ADR 0010's addendum):
+  # owner, then a direct grant, then the workspace. The first tier that
+  # names somebody decides their level, whether it is higher or lower than
+  # the tier below it: that is what lets an admin give a workspace member a
+  # *different* role, Read included, and what makes removing that grant
+  # fall back to the workspace's.
+  defp project_grant(true, _direct, _in_workspace?), do: {:admin, :owner}
+  defp project_grant(false, direct, _in_workspace?) when direct in @levels, do: {direct, :direct}
+  defp project_grant(false, nil, true), do: {:write, :workspace}
+  defp project_grant(false, nil, false), do: nil
+
+  @doc """
+  Everyone who reaches a project, at the level they reach it with and where
+  that level comes from: `{user, level, source}`, owner first, then direct
+  grants, then the workspace's members. For somebody who may enter the
+  project (`project_access/2`); not found for anybody else.
+
+  Decided by the same rule as `project_access/2`, so the list cannot show a
+  level the door would not give.
+  """
+  @spec project_people(User.t(), String.t()) ::
+          {:ok, [{User.t(), level(), source()}]} | {:error, :not_found}
+  def project_people(%User{} = user, project_id) do
+    with {:ok, %{project: project}} <- project_access(user, project_id),
+         do: {:ok, project_reach(project)}
+  end
+
+  defp project_reach(project) do
+    # ownership: `Access.project_people/2` admitted the caller through
+    # `Access.project_access/2`; these are who else that door admits.
+    direct = grants_by_id(People.project_grants(project.id))
+    workspace = workspace_members(project)
+    in_workspace = MapSet.new(workspace, & &1.id)
+
+    [Ravix.Accounts.Store.get_user(project.user_id)]
+    |> people_in(Map.values(direct), workspace)
+    |> Enum.flat_map(fn person ->
+      owner? = person.id == project.user_id
+      in_workspace? = MapSet.member?(in_workspace, person.id)
+      reached(project_grant(owner?, role_of(direct, person), in_workspace?), person)
+    end)
+    |> sort_people()
+  end
+
+  @doc """
+  `project_people/2` for one track: everyone who reaches it, as
+  `{user, level, source}`, by the same rule `track_access/2` applies to one
+  person at a time. For the Share dialog. Not found for anybody who cannot
+  reach the track.
+  """
+  @spec track_people(User.t(), String.t()) ::
+          {:ok, [{User.t(), level(), track_source()}]} | {:error, :not_found}
+  def track_people(%User{} = user, track_id) do
+    with {:ok, %{track: track, project: project}} <- track_access(user, track_id),
+         do: {:ok, track_reach(track, project)}
+  end
+
+  # The facts `track_access/2` decides from, read for everybody at once.
+  defp track_reach(track, project) do
+    # ownership: `Access.track_people/2` admitted the caller through
+    # `Access.track_access/2`; these are the seats and grants it decides from.
+    seats = grants_by_id(People.track_grants(track.id))
+    # ownership: as above, the project's own grants.
+    wide = grants_by_id(People.project_grants(project.id))
+    workspace = workspace_members(project)
+    in_workspace = MapSet.new(workspace, & &1.id)
+    permitted = permitted_on(track, project, workspace)
+    permitted_ids = MapSet.new(permitted, & &1.id)
+
+    [Ravix.Accounts.Store.get_user(project.user_id), creator_of(track)]
+    |> people_in(Map.values(seats) ++ Map.values(wide), workspace ++ permitted)
+    |> Enum.flat_map(fn person ->
+      facts = %{
+        owner?: person.id == project.user_id,
+        creator?: creator?(person, track),
+        seat: role_of(seats, person),
+        project_role: role_of(wide, person),
+        in_workspace?: MapSet.member?(in_workspace, person.id),
+        permitted?: MapSet.member?(permitted_ids, person.id)
+      }
+
+      if (is_nil(track.closed_at) or facts.owner?) and visible?(facts, track, project),
+        do: reached(track_grant(facts, track), person),
+        else: []
+    end)
+    |> sort_people()
+  end
+
+  defp grants_by_id(grants), do: Map.new(grants, fn {u, role} -> {u.id, {u, role}} end)
+
+  defp role_of(grants, person) do
+    case grants[person.id] do
+      {_user, role} -> role
+      nil -> nil
+    end
+  end
+
+  defp people_in(named, grants, members) do
+    (named ++ Enum.map(grants, &elem(&1, 0)) ++ members)
+    |> Enum.reject(&is_nil/1)
+    |> Enum.uniq_by(& &1.id)
+  end
+
+  defp reached(nil, _person), do: []
+  defp reached({level, source}, person), do: [{person, level, source}]
+
+  # Permission rows count only for live members of a live workspace.
+  defp permitted_on(_track, _project, []), do: []
+
+  defp permitted_on(track, project, _workspace) do
+    # ownership: `Access.track_people/2` admitted the caller through
+    # `Access.track_access/2`; these are the permission rows it decides from.
+    Map.get(People.permitted_by_track([track.id], project.workspace_id), track.id, [])
+  end
+
+  defp creator_of(%Track{created_by: id}) when is_binary(id) do
+    # ownership: `Access.track_people/2` admitted the caller through
+    # `Access.track_access/2`; the creator is read for who they are.
+    Ravix.Accounts.Store.get_user(id)
+  end
+
+  defp creator_of(_track), do: nil
+
+  # Live members of the project's live workspace, while the switch lets
+  # them count: the list `workspace_member?/2` answers about one at a time.
+  defp workspace_members(%Project{workspace_id: workspace_id}) when is_binary(workspace_id) do
+    # ownership: no door -- `Access.project_people/2` and `Access.track_people/2`
+    # admitted their callers to this workspace's project first; these are the
+    # members its workspace grant reaches.
+    if Ravix.Config.workspace_access?() and Ravix.Workspaces.Store.live_workspace(workspace_id),
+      do: Ravix.Workspaces.Store.live_members(workspace_id),
+      else: []
+  end
+
+  defp workspace_members(%Project{}), do: []
+
+  defp sort_people(people) do
+    Enum.sort_by(people, fn {user, _level, source} ->
+      {source_rank(source), String.downcase(user.login || "")}
+    end)
+  end
+
+  defp source_rank(:owner), do: 0
+  defp source_rank(:direct), do: 1
+  defp source_rank(:project), do: 2
+  defp source_rank(:workspace), do: 3
 
   @doc """
   `project_access/2` for somebody who must hold at least `need` across the
@@ -436,6 +594,7 @@ defmodule Ravix.Accounts.Access do
   defp rank(:write), do: 1
   defp rank(:admin), do: 2
 
+  # Within one tier only; between tiers, the nearer grant decides.
   defp highest(levels), do: Enum.max_by(levels, &rank/1)
 
   @doc """
@@ -654,21 +813,18 @@ defmodule Ravix.Accounts.Access do
   def track_access(%User{id: user_id}, track_id) do
     with %Track{} = track <- get_track(track_id),
          %Project{} = project <- live_project(track.project_id) do
+      facts = track_facts(user_id, track, project)
+      grant = visible?(facts, track, project) && track_grant(facts, track)
+
       cond do
-        not visible_track?(user_id, track, project) ->
+        not is_tuple(grant) ->
           {:error, :not_found}
 
         # The owner is admin of every track they can see but one: a private
         # track somebody else made, which its creator runs (#299). There the
         # owner has what their seat gives them, like anybody else on it.
         project.user_id == user_id ->
-          {:ok,
-           %TrackAccess{
-             track: track,
-             project: project,
-             role: :owner,
-             level: owner_level(user_id, track, project)
-           }}
+          {:ok, %TrackAccess{track: track, project: project, role: :owner, level: elem(grant, 0)}}
 
         track.closed_at != nil ->
           {:error, :not_found}
@@ -676,15 +832,10 @@ defmodule Ravix.Accounts.Access do
         # Visible and not the owner: every way `visible_track?/3` admits
         # somebody is a seat, a creator, a project or workspace member or a
         # permission row, and each of those works on the track as a member,
-        # at the highest role among the grants that reach it (ADR 0010).
+        # at the level of the nearest grant that reaches it (RAV-75).
         true ->
           {:ok,
-           %TrackAccess{
-             track: track,
-             project: project,
-             role: :member,
-             level: track_level(user_id, track, project)
-           }}
+           %TrackAccess{track: track, project: project, role: :member, level: elem(grant, 0)}}
       end
     else
       _ -> {:error, :not_found}
@@ -705,39 +856,94 @@ defmodule Ravix.Accounts.Access do
          do: {:ok, access}
   end
 
-  defp owner_level(user_id, %Track{visibility: :private} = track, project),
-    do: track_level(user_id, track, project)
+  # What `track_access/2` decides from, for one person: the facts
+  # `track_reach/2` reads for everybody at once. The owner of a
+  # project-visible track needs none of the rows.
+  defp track_facts(user_id, %Track{visibility: :project}, %Project{user_id: user_id}),
+    do: %{
+      owner?: true,
+      creator?: false,
+      seat: nil,
+      project_role: nil,
+      in_workspace?: false,
+      permitted?: false
+    }
 
-  defp owner_level(_user_id, _track, _project), do: :admin
+  defp track_facts(user_id, track, project) do
+    in_workspace? = workspace_member?(project, user_id)
 
-  # The grants that reach a visible track, highest wins. A private track's
-  # creator runs it. A seat is this track's alone. A project membership
-  # reaches only the tracks the project can see, so it says nothing about a
-  # private one: a track share never widens to the project, nor a project
-  # role into a track kept private from it. The workspace's grants predate
-  # roles and work as write.
-  defp track_level(user_id, track, project) do
-    if track.visibility == :private and creator?(%User{id: user_id}, track) do
-      :admin
-    else
-      # ownership: no door before this one -- `track_access/2` is the door,
-      # and the seat's and membership's roles are what it decides the level from.
-      [
-        People.member_role(track.id, user_id),
-        if(track.visibility == :project, do: People.project_member_role(project.id, user_id)),
-        if(workspace_grant?(user_id, track, project), do: :write)
-      ]
-      |> Enum.reject(&is_nil/1)
-      |> case do
-        [] -> :write
-        grants -> highest(grants)
+    # ownership: no door before this one -- `track_access/2` is the door, and
+    # the seat's and membership's roles are what it decides the level from.
+    %{
+      owner?: project.user_id == user_id,
+      creator?: creator?(%User{id: user_id}, track),
+      seat: People.member_role(track.id, user_id),
+      project_role: People.project_member_role(project.id, user_id),
+      in_workspace?: in_workspace?,
+      permitted?:
+        in_workspace? and track.visibility == :private and
+          permitted?(track.id, user_id, project.workspace_id)
+    }
+  end
+
+  # The one row predicate, over facts (see `visible/2` for the rule itself).
+  # The switch is asked here, and a legacy project, with no workspace, reads
+  # the legacy rule whatever it says.
+  defp visible?(facts, track, project) do
+    if Ravix.Config.workspace_access?() and is_binary(project.workspace_id),
+      do: workspace_visible?(facts, track),
+      else: legacy_visible?(facts, track)
+  end
+
+  defp legacy_visible?(facts, track) do
+    (track.visibility == :private and facts.creator?) or not is_nil(facts.seat) or
+      (track.visibility == :project and (facts.owner? or not is_nil(facts.project_role)))
+  end
+
+  defp workspace_visible?(facts, track) do
+    in_project? = facts.in_workspace? or facts.owner? or not is_nil(facts.project_role)
+
+    not is_nil(facts.seat) or
+      case track.visibility do
+        :project -> in_project?
+        :private -> (facts.creator? and in_project?) or (facts.in_workspace? and facts.permitted?)
       end
+  end
+
+  # The level on a visible track and where it comes from, nearest grant
+  # first (RAV-75): the owner, or a private track's creator, who runs it;
+  # then a grant on this track, a seat or a permission row (the highest of
+  # the two, should somebody hold both); then the project's own grant; then
+  # the workspace's default. The first tier that names somebody decides,
+  # lower or higher than the next. A project membership and the workspace
+  # reach only the tracks the project can see, so neither says anything
+  # about a private one: a track share never widens to the project, nor a
+  # project role into a track kept private from it.
+  defp track_grant(facts, %Track{visibility: :private}) do
+    cond do
+      facts.creator? -> {:admin, :owner}
+      direct = direct_level(facts, true) -> {direct, :direct}
+      true -> nil
     end
   end
 
-  defp workspace_grant?(user_id, track, project) do
-    workspace_member?(project, user_id) and
-      (track.visibility == :project or permitted?(track.id, user_id, project.workspace_id))
+  defp track_grant(facts, _track) do
+    cond do
+      facts.owner? -> {:admin, :owner}
+      direct = direct_level(facts, false) -> {direct, :direct}
+      facts.project_role -> {facts.project_role, :project}
+      facts.in_workspace? -> {:write, :workspace}
+      true -> nil
+    end
+  end
+
+  # A seat, or a permission row on a private track; the higher, should
+  # somebody hold both.
+  defp direct_level(facts, private?) do
+    case Enum.reject([facts.seat, if(private? and facts.permitted?, do: :write)], &is_nil/1) do
+      [] -> nil
+      levels -> highest(levels)
+    end
   end
 
   @doc """
@@ -747,35 +953,8 @@ defmodule Ravix.Accounts.Access do
   reads the legacy rule whatever it says.
   """
   @spec visible_track?(String.t(), Track.t(), Project.t()) :: boolean()
-  def visible_track?(user_id, %Track{} = track, %Project{} = project) do
-    if Ravix.Config.workspace_access?() and is_binary(project.workspace_id),
-      do: workspace_visible?(user_id, track, project),
-      else: legacy_visible?(user_id, track, project)
-  end
-
-  defp legacy_visible?(user_id, track, project) do
-    (track.visibility == :private and creator?(%User{id: user_id}, track)) or
-      member?(track.id, user_id) or
-      (track.visibility == :project and legacy_grant?(project, user_id))
-  end
-
-  defp workspace_visible?(user_id, track, project) do
-    in_workspace? = workspace_member?(project, user_id)
-
-    member?(track.id, user_id) or
-      case track.visibility do
-        :project ->
-          in_workspace? or legacy_grant?(project, user_id)
-
-        :private ->
-          (creator?(%User{id: user_id}, track) and
-             (in_workspace? or legacy_grant?(project, user_id))) or
-            (in_workspace? and permitted?(track.id, user_id, project.workspace_id))
-      end
-  end
-
-  defp legacy_grant?(project, user_id),
-    do: project.user_id == user_id or project_member?(project.id, user_id)
+  def visible_track?(user_id, %Track{} = track, %Project{} = project),
+    do: visible?(track_facts(user_id, track, project), track, project)
 
   @doc "Stable creator identity; login is presentation only."
   def creator?(%User{id: id}, %{created_by: creator} = track),

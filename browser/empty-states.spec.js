@@ -48,8 +48,9 @@ test('an asleep track says so once, in the inspector, and Wake wakes it', async 
   ]);
   expect(Math.abs((box.x + box.width / 2) - (pane.x + pane.width / 2))).toBeLessThan(4);
   expect(Math.abs((box.y + box.height / 2) - (pane.y + pane.height / 2))).toBeLessThan(40);
-  // The dock names the state and nothing more.
-  await expect(page.locator('#track-machine-status')).toHaveText('Asleep.');
+  // The header chip names the state; the dock is only its tab strip.
+  await expect(page.locator('#track-machine-state')).toHaveText('Asleep');
+  await expect(page.locator('#track-machine-status')).toHaveCount(0);
   // Only the header chip's description, for a screen reader, carries the rest.
   await expect(page.getByText('Your next message wakes it')).toHaveCount(1);
   await expect(page.locator('#track-machine-detail')).toHaveText('Your next message wakes it.');
@@ -62,7 +63,7 @@ test('an asleep track says so once, in the inspector, and Wake wakes it', async 
   await asleep.getByRole('button', { name: 'Wake', exact: true }).click();
   await expect(asleep).toHaveCount(0, { timeout: 20_000 });
   await expect(page.locator('#changes-empty h3')).toHaveText('No changes yet');
-  await expect(page.locator('#track-machine-status')).not.toHaveText('Asleep.');
+  await expect(page.locator('#track-machine-state')).not.toHaveText('Asleep');
 
   await page.getByRole('button', { name: 'Preview', exact: true }).click();
   await expect(page.locator('#preview-empty h3')).toHaveText('No preview running');
