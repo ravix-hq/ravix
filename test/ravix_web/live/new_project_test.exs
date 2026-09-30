@@ -169,41 +169,6 @@ defmodule RavixWeb.Live.NewProjectTest do
     assert length(events("inline connect completed")) == 1
   end
 
-  test "onboarding uses the identical ordered fields and keeps inline connection on the project step",
-       %{conn: conn, user: user} do
-    workspace = open(conn, user)
-    {:ok, welcome, _} = live(log_in_user(conn, user), "/welcome/project")
-    render_async(welcome)
-
-    fields = fn view ->
-      render(view)
-      |> LazyHTML.from_document()
-      |> LazyHTML.query(".new-project-fields [id]")
-      |> LazyHTML.attribute("id")
-    end
-
-    assert fields.(workspace) -- ["new-project-form"] ==
-             fields.(welcome) -- ["first-project-form"]
-
-    assert Enum.find_index(fields.(welcome), &(&1 == "project-repo")) <
-             Enum.find_index(fields.(welcome), &(&1 == "project-name"))
-
-    welcome |> form("#first-project-form", new_project: [name: "First"]) |> render_change()
-    welcome |> element("#project-agent-codex") |> render_click()
-    render_async(welcome)
-    send(welcome.pid, {:agent_connected, user, :codex})
-    render(welcome)
-
-    assert has_element?(
-             welcome,
-             "#welcome-project #project-agent-codex[aria-pressed=true]",
-             "Connected"
-           )
-
-    assert has_element?(welcome, "#project-name[value=First]")
-    refute has_element?(welcome, "#first-project-form button[disabled]")
-  end
-
   test "no credentials chooses no agent; unavailable default chooses another usable agent", %{
     conn: conn,
     user: user
@@ -249,7 +214,7 @@ defmodule RavixWeb.Live.NewProjectTest do
     assert has_element?(view, "#project-repositories option[value='zebra/api']")
     refute has_element?(view, "#project-repositories option[value='acme/web']")
     render_click(view, "dismiss")
-    view |> element(".home-action", "New project") |> render_click()
+    render_click(view, "dialog", %{name: "new-project"})
     assert has_element?(view, "#project-repo")
 
     assert has_element?(
@@ -318,7 +283,7 @@ defmodule RavixWeb.Live.NewProjectTest do
     render_async(view)
   end
 
-  test "inline ChatGPT polling completes on the project step", %{conn: conn, user: user} do
+  test "inline ChatGPT polling completes in the new project dialog", %{conn: conn, user: user} do
     link = %Inference.Link{
       set_id: "set-owner",
       attempt_id: "fast",
@@ -335,8 +300,7 @@ defmodule RavixWeb.Live.NewProjectTest do
       {:ok, user}
     end)
 
-    {:ok, view, _} = live(log_in_user(conn, user), "/welcome/project")
-    render_async(view)
+    view = open(conn, user)
     view |> element("#project-agent-codex") |> render_click()
     render_async(view)
     view |> element("#chatgpt-connect") |> render_click()
@@ -359,7 +323,7 @@ defmodule RavixWeb.Live.NewProjectTest do
 
     assert has_element?(
              view,
-             "#welcome-project #project-agent-codex[aria-pressed=true]",
+             "#new-project-dialog #project-agent-codex[aria-pressed=true]",
              "Connected"
            )
   end

@@ -18,6 +18,16 @@ defmodule RavixWeb.Live.AgentPanel do
   is open --- and because the two pages would otherwise each carry a copy of
   the same eight assigns and nine event clauses.
 
+  ## Compact
+
+  The walkthrough passes `compact={true}` and gets one decision: a card per
+  agent saying Connect or Connected, and the steps for the one being
+  connected. The default choice, what is held with its Remove, the kind
+  (subscription or API key) and the warnings are the same pieces the account
+  dialog draws, behind a Manage toggle. A first connection becomes the
+  default in `Ravix.Accounts.Inference.connect/2`, so there is nothing to
+  choose until there are two.
+
   ## What the page keeps
 
   Two things a component cannot do for itself:
@@ -95,6 +105,12 @@ defmodule RavixWeb.Live.AgentPanel do
        thread_default_saved: false,
        scoped_agent: nil,
        onboarding: false,
+       # The walkthrough's one decision (`compact`): a card per agent with
+       # Connect or Connected, the steps for the one being connected
+       # (`connecting`), and the rest behind Manage (`manage_open`).
+       compact: false,
+       connecting: false,
+       manage_open: false,
        poll_token: make_ref(),
        disconnect_confirmation: nil
      )}
@@ -181,7 +197,7 @@ defmodule RavixWeb.Live.AgentPanel do
 
     {:noreply,
      socket
-     |> assign(agent: agent, kind: kind, credential_form: Form.new(:credential))
+     |> assign(agent: agent, kind: kind, connecting: true, credential_form: Form.new(:credential))
      |> read_link_status()}
   end
 
@@ -193,10 +209,13 @@ defmodule RavixWeb.Live.AgentPanel do
       do:
         {:noreply,
          socket
-         |> assign(kind: kind, credential_form: Form.new(:credential))
+         |> assign(kind: kind, connecting: true, credential_form: Form.new(:credential))
          |> read_link_status()},
       else: {:noreply, socket}
   end
+
+  def handle_event("toggle-manage", _params, socket),
+    do: {:noreply, assign(socket, manage_open: !socket.assigns.manage_open)}
 
   def handle_event("make-default", %{"agent" => word}, %{assigns: %{busy: false}} = socket)
       when is_map_key(@agents, word) do
@@ -464,7 +483,7 @@ defmodule RavixWeb.Live.AgentPanel do
     send(self(), {:agent_connected, user, agent})
 
     socket
-    |> assign(current_user: user, agent: agent, kind: kind)
+    |> assign(current_user: user, agent: agent, kind: kind, connecting: false)
     |> read_subscription()
     |> read_held()
   end
@@ -485,7 +504,12 @@ defmodule RavixWeb.Live.AgentPanel do
     send(self(), {:agent_disconnected, user, socket.assigns.disconnecting_agent})
 
     socket
-    |> assign(current_user: user, held: nil, credential_form: Form.new(:credential))
+    |> assign(
+      current_user: user,
+      held: nil,
+      connecting: true,
+      credential_form: Form.new(:credential)
+    )
     |> read_subscription()
     |> read_held()
   end
@@ -513,8 +537,10 @@ defmodule RavixWeb.Live.AgentPanel do
     traced_async(socket, :subscription, fn -> Inference.subscription(user) end)
   end
 
+  # A sign-in under way is shown however the panel is laid out: in the
+  # compact one, that means its card is the one being connected.
   defp show_link(socket, %Inference.Link{} = link),
-    do: socket |> assign(link: link, link_error: nil) |> schedule_poll()
+    do: socket |> assign(link: link, link_error: nil, connecting: true) |> schedule_poll()
 
   defp schedule_poll(
          %{assigns: %{link: %Inference.Link{poll_interval: seconds}, id: id, poll_token: token}} =
@@ -547,6 +573,11 @@ defmodule RavixWeb.Live.AgentPanel do
 
   defp credential_description(nil, :claude), do: "Claude subscription or Anthropic API key."
   defp credential_description(nil, :codex), do: "ChatGPT subscription or OpenAI API key."
+
+  # A compact card's one line: what connecting it spends by default. An API
+  # key is behind Manage.
+  defp card_description(:claude), do: "Uses your Claude subscription."
+  defp card_description(:codex), do: "Uses your ChatGPT subscription."
 
   # An "already linked" refusal this person can do something about. The other
   # two classifications say what happened and offer no button, because there is
@@ -643,58 +674,57 @@ defmodule RavixWeb.Live.AgentPanel do
     assigns = assign(assigns, other_agent: other_agent(assigns.held))
 
     ~H"""
-    <div class="agent-panel" id={@id} phx-hook="AgentConfirmation">
-      <form
-        :if={is_nil(@scoped_agent) && @thread_defaults && @thread_defaults.choices != []}
-        id="thread-default-form"
-        phx-submit="save-thread-default"
-        phx-change="change-thread-default"
-        phx-target={@myself}
-      >
-        <label for="thread-default-choice">Default agent for new threads</label>
-        <select id="thread-default-choice" name="preference[choice]" disabled={@busy}>
-          <option
-            :for={choice <- @thread_defaults.choices}
-            value={choice.runtime <> "|" <> choice.model}
-            selected={choice == @thread_defaults.preference}
+    <div class={["agent-panel", @compact && "compact"]} id={@id} phx-hook="AgentConfirmation">
+      <div :if={@compact} class="agent-cards" role="group" aria-label="Agents">
+        <div
+          :for={agent <- User.agents()}
+          id={"agent-card-#{agent}"}
+          class={[
+            "agent-card",
+            connected_agent?(@held, agent) && "connected",
+            @connecting && @agent == agent && "on"
+          ]}
+        >
+          <strong>{agent_name(agent)}</strong>
+          <small>{card_description(agent)}</small>
+          <p id={"agent-#{agent}-status"} class="agent-card-status">
+            <span :if={connected_agent?(@held, agent)} class="agent-card-connected">
+              <.icon name="check" size={13} class="ico" />Connected
+            </span>
+            <span :if={connected_agent?(@held, agent) and @current_user.agent == agent} class="chip">
+              Default for new projects
+            </span>
+            <span :if={is_nil(@held)} class="dim">Checking…</span>
+          </p>
+          <button
+            :if={not connected_agent?(@held, agent) and not (@connecting and @agent == agent)}
+            type="button"
+            class={if is_nil(@current_user.agent), do: "primary", else: "ghost"}
+            phx-click="choose-agent"
+            phx-target={@myself}
+            phx-value-agent={agent}
+            id={"agent-#{agent}"}
+            aria-label={"Connect #{agent_name(agent)}"}
+            disabled={@busy}
           >
-            {RavixWeb.AgentName.label(choice.runtime)} · {RavixWeb.ModelName.friendly(choice.model)}
-          </option>
-        </select>
-        <button type="submit" disabled={@busy}>Save thread default</button>
-        <p>
-          Used when the project's payer has connected this agent. Existing threads keep their agent.
-        </p>
-        <p :if={@thread_default_saved} role="status">Thread default saved.</p>
-        <p :if={@thread_default_error} role="alert">{@thread_default_error}</p>
-      </form>
-      <div
-        :if={@disconnect_confirmation}
-        id="agent-disconnect-confirmation"
-        role="group"
-        aria-label="Confirm agent removal"
-      >
-        <p>{remove_confirm(@disconnect_confirmation.agent, @disconnect_confirmation.kind)}</p>
-        <p :if={@disconnect_confirmation.projects != []}>
-          {affected_projects(@disconnect_confirmation.projects)} use {agent_name(
-            @disconnect_confirmation.agent
-          )} and will stop working unless another credential for this agent remains connected.
-        </p>
-        <ul aria-label="Affected projects">
-          <li :for={project <- @disconnect_confirmation.projects}>{project.name}</li>
-        </ul>
-        <button
-          type="button"
-          id="confirm-agent-disconnect"
-          class="primary"
-          phx-click="confirm-disconnect"
-          phx-target={@myself}
-          phx-mounted={Phoenix.LiveView.JS.focus()}
-        >Remove connection</button>
-        <button type="button" phx-click="cancel-disconnect" phx-target={@myself}>Cancel</button>
+            Connect
+          </button>
+          <span :if={@connecting and @agent == agent} class="dim agent-card-hint">
+            Follow the steps below
+          </span>
+        </div>
       </div>
+
+      <.thread_default :if={not @compact} {thread_default_assigns(assigns)} />
+      <.disconnect_confirmation :if={@disconnect_confirmation} {confirmation_assigns(assigns)} />
       <.loading_status :if={@busy}>Updating agent connection…</.loading_status>
-      <div :if={is_nil(@scoped_agent)} class="agent-choices" role="group" aria-label="Agent">
+
+      <div
+        :if={not @compact and is_nil(@scoped_agent)}
+        class="agent-choices"
+        role="group"
+        aria-label="Agent"
+      >
         <div :for={agent <- User.agents()}>
           <button
             type="button"
@@ -731,7 +761,11 @@ defmodule RavixWeb.Live.AgentPanel do
         </div>
       </div>
 
-      <section :if={is_nil(@scoped_agent) and @other_agent} id="second-agent-nudge" class="agent-held">
+      <section
+        :if={not @compact and is_nil(@scoped_agent) and @other_agent}
+        id="second-agent-nudge"
+        class="agent-held"
+      >
         <strong>{if @onboarding,
           do: "Connect #{agent_name(@other_agent)} too (optional)",
           else: "Also connect #{agent_name(@other_agent)}"}</strong>
@@ -747,214 +781,366 @@ defmodule RavixWeb.Live.AgentPanel do
         >Set up {agent_name(@other_agent)}</button>
       </section>
 
-      <section
-        :if={
-          is_nil(@scoped_agent) and is_list(@held) and (@held != [] or missing?(@current_user, @held))
-        }
-        class="agent-held"
-        id="agent-held"
-        aria-label="What you have connected"
-      >
-        <p :if={missing?(@current_user, @held)} class="welcome-warning" id="held-missing">
-          <.icon name="info" size={14} class="ico" />
-          <span>
-            Nothing is stored for {agent_name(@current_user.agent)} any more: its subscription or API key was removed outside this page. Projects using this agent need a connected credential to run.
-          </span>
-        </p>
-        <ul :if={@held != []} class="agent-held-list">
-          <li :for={{agent, kind} <- @held} id={"held-#{agent}-#{kind}"}>
-            <span class="agent-held-name">
-              <strong>{agent_name(agent)}</strong>
-              <span class="dim">{paid_by(agent, kind)}</span>
-              <span :if={in_use?(@current_user, agent, kind)} class="chip ok">Default for new projects</span>
-            </span>
-            <button
-              type="button"
-              class="ghost"
-              phx-click="disconnect"
-              phx-target={@myself}
-              phx-value-agent={agent}
-              phx-value-kind={kind}
-              disabled={@busy}
-              id={"remove-#{agent}-#{kind}"}
-            >
-              Remove
-            </button>
-          </li>
-        </ul>
-        <p :if={@held != []} class="hint">
-          Removing or replacing a connection ends your open tracks. Your provider account stays active.
-        </p>
-      </section>
+      <.held :if={not @compact} {held_assigns(assigns)} />
 
-      <div :if={@agent} class="agent-credential">
-        <div class="workspace-actions" role="group" aria-label="How it is paid for">
-          <button
-            :for={kind <- Inference.kinds(@agent)}
-            type="button"
-            class={if @kind == kind, do: "primary", else: "ghost"}
-            aria-pressed={to_string(@kind == kind)}
-            phx-click="choose-kind"
-            phx-target={@myself}
-            phx-value-kind={kind}
-            id={"kind-#{kind}"}
-            disabled={@busy}
-          >
-            {kind_name(kind)}
-          </button>
-        </div>
+      <div :if={@agent && (not @compact or @connecting)} class="agent-credential">
+        <.kinds :if={not @compact} agent={@agent} kind={@kind} busy={@busy} myself={@myself} />
+        <.credential {credential_assigns(assigns)} />
+      </div>
 
-        <p
-          :if={is_list(@held) and {@agent, @kind} in @held}
-          class="welcome-connected"
-          id="welcome-connected"
-        >
-          <.icon name="check" size={14} class="ico" />
-          <span>
-            {agent_name(@agent)} is connected with your {paid_by(@agent, @kind)}. {replace_hint(
-              @agent,
-              @kind
-            )}. Replacing it ends your open tracks in every project you own. A conversation will not carry on with a different credential than it started with.
-          </span>
-        </p>
-
-        <p
-          :if={@agent == :codex && @subscription}
-          class="agent-subscription"
-          id="chatgpt-subscription"
-        >
-          <span class={["chip", subscription_tone(@subscription)]}>{subscription_state(@subscription)}</span>
-          <span><.subscription_line subscription={@subscription} /></span>
-        </p>
-
-        <ol :if={@agent == :claude && @kind == :subscription} class="agent-howto">
-          <li>
-            In a signed-in Claude Code terminal, run <code>claude setup-token</code>.
-          </li>
-          <li>Approve in your browser.</li>
-          <li>Paste the token beginning with <code>sk-ant-oat01-</code>.</li>
-        </ol>
-        <ol :if={@agent == :claude && @kind == :api_key} class="agent-howto">
-          <li>
-            Create a key in the Anthropic Console, under <strong>API keys</strong>.
-          </li>
-          <li>
-            Paste it here. It starts with <code>sk-ant-api</code>. API usage is billed separately.
-          </li>
-        </ol>
-        <ol :if={@agent == :codex && @kind == :api_key} class="agent-howto">
-          <li>
-            Create a key on the OpenAI platform, under <strong>API keys</strong>.
-          </li>
-          <li>
-            Paste it here. It starts with <code>sk-</code>. API usage is billed separately.
-          </li>
-        </ol>
-
-        <div :if={@agent == :codex && @kind == :subscription} id="chatgpt-link">
-          <ol class="agent-howto">
-            <li>
-              Press <strong>Connect ChatGPT</strong> for a one-time code.
-            </li>
-            <li>
-              Enter it in a browser signed in to the ChatGPT account whose plan should pay.
-            </li>
-            <li>This page notices the approval and moves on.</li>
-          </ol>
-          <p :if={@link_error} class="error" id="link-error" role="alert">{@link_error}</p>
-          <div
-            :if={resolvable?(@link_conflict)}
-            class="workspace-actions"
-            id="chatgpt-conflict"
-          >
-            <button
-              type="button"
-              class="primary"
-              phx-click="resolve-conflict"
-              phx-target={@myself}
-              disabled={@busy}
-              id="chatgpt-resolve-conflict"
-            >{conflict_action(@link_conflict.resolution)}</button>
-          </div>
-          <p :if={@linking == false && is_nil(@link)} class="welcome-warning" id="linking-off">
-            <.icon name="info" size={14} class="ico" />
-            <span>
-              Linking a ChatGPT subscription is not switched on for this Ravix deployment. Ask whoever runs it, or use an OpenAI API key for now.
-            </span>
-          </p>
-          <div :if={@link} class="agent-code" id="chatgpt-code" aria-live="polite">
-            <p class="agent-code-value">
-              <span class="hint">Your code</span>
-              <strong id="chatgpt-user-code">{@link.user_code}</strong>
-            </p>
-            <p>
-              Enter it at
-              <a
-                :if={@link.trusted?}
-                href={@link.verification_url}
-                target="_blank"
-                rel="noopener noreferrer"
-                id="chatgpt-verification"
-              >{@link.verification_url}</a><code :if={!@link.trusted?} id="chatgpt-verification">{@link.verification_url}</code>. This authorizes use of your ChatGPT plan. Only type it if you started this sign-in yourself, on this page, just now. Nobody at Ravix will ever send you a code.
-            </p>
-            <p class="hint">
-              Waiting for approval. This code expires in 15 minutes.
-            </p>
-            <div class="workspace-actions">
-              <button
-                type="button"
-                class="ghost"
-                phx-click="cancel-link"
-                phx-target={@myself}
-                id="chatgpt-cancel"
-              >
-                Cancel
-              </button>
-            </div>
-          </div>
-          <div :if={is_nil(@link) && @linking != false} class="workspace-actions">
-            <button
-              type="button"
-              class="primary"
-              phx-click="begin-link"
-              phx-target={@myself}
-              disabled={@busy}
-              id="chatgpt-connect"
-            >
-              {if @busy, do: "Asking ChatGPT…", else: "Connect ChatGPT"}
-            </button>
-          </div>
-          <p class="hint">
-            Credentials stay encrypted with the agent service and are never shown — not to you, not to teammates, and not on this page. Disconnecting Ravix does not sign you out of ChatGPT.
-          </p>
-        </div>
-
-        <.form
-          :let={f}
-          :if={Inference.pasted?(@agent, @kind)}
-          for={@credential_form}
-          id="credential-form"
-          phx-submit="connect"
+      <div :if={@compact} class="agent-manage">
+        <button
+          type="button"
+          class="ghost agent-manage-toggle"
+          id="agent-manage-toggle"
+          aria-expanded={to_string(@manage_open)}
+          aria-controls="agent-manage"
+          phx-click="toggle-manage"
           phx-target={@myself}
-          autocomplete="off"
         >
-          <.input
-            field={f[:value]}
-            id="credential-value"
-            type="password"
-            label={if @kind == :subscription, do: "Subscription token", else: "API key"}
-            autocomplete="off"
-            required
-          />
+          <.icon name="chevron" size={12} open={@manage_open} />Manage
+        </button>
+        <div id="agent-manage" hidden={!@manage_open}>
           <p class="hint">
-            Stored encrypted with the agent service. Never displayed or shared with teammates.
+            Your default agent, what is connected, and API keys. The same settings are in your account menu later.
           </p>
-          <button class="primary" disabled={@busy} phx-disable-with="Connecting…">
-            Connect {agent_name(@agent)}
-          </button>
-        </.form>
+          <.thread_default {thread_default_assigns(assigns)} />
+          <div :if={@agent} class="agent-manage-kind">
+            <span class="label">Pay for {agent_name(@agent)} with</span>
+            <.kinds agent={@agent} kind={@kind} busy={@busy} myself={@myself} />
+          </div>
+          <.held {held_assigns(assigns)} make_default={true} />
+        </div>
       </div>
     </div>
+    """
+  end
+
+  # The pieces both layouts draw. Passed only what each reads, so a change to
+  # one assign re-renders only the piece that shows it.
+  defp thread_default_assigns(assigns),
+    do:
+      Map.take(assigns, [
+        :scoped_agent,
+        :thread_defaults,
+        :busy,
+        :thread_default_saved,
+        :thread_default_error,
+        :myself
+      ])
+
+  defp confirmation_assigns(assigns), do: Map.take(assigns, [:disconnect_confirmation, :myself])
+
+  defp held_assigns(assigns),
+    do: Map.take(assigns, [:scoped_agent, :held, :current_user, :busy, :myself])
+
+  defp credential_assigns(assigns),
+    do:
+      Map.take(assigns, [
+        :agent,
+        :kind,
+        :held,
+        :subscription,
+        :link,
+        :link_error,
+        :link_conflict,
+        :linking,
+        :credential_form,
+        :busy,
+        :myself
+      ])
+
+  defp thread_default(assigns) do
+    ~H"""
+    <form
+      :if={is_nil(@scoped_agent) && @thread_defaults && @thread_defaults.choices != []}
+      id="thread-default-form"
+      phx-submit="save-thread-default"
+      phx-change="change-thread-default"
+      phx-target={@myself}
+    >
+      <label for="thread-default-choice">Default agent for new threads</label>
+      <select id="thread-default-choice" name="preference[choice]" disabled={@busy}>
+        <option
+          :for={choice <- @thread_defaults.choices}
+          value={choice.runtime <> "|" <> choice.model}
+          selected={choice == @thread_defaults.preference}
+        >
+          {RavixWeb.AgentName.label(choice.runtime)} · {RavixWeb.ModelName.friendly(choice.model)}
+        </option>
+      </select>
+      <button type="submit" disabled={@busy}>Save thread default</button>
+      <p>
+        Used when the project's payer has connected this agent. Existing threads keep their agent.
+      </p>
+      <p :if={@thread_default_saved} role="status">Thread default saved.</p>
+      <p :if={@thread_default_error} role="alert">{@thread_default_error}</p>
+    </form>
+    """
+  end
+
+  defp disconnect_confirmation(assigns) do
+    ~H"""
+    <div id="agent-disconnect-confirmation" role="group" aria-label="Confirm agent removal">
+      <p>{remove_confirm(@disconnect_confirmation.agent, @disconnect_confirmation.kind)}</p>
+      <p :if={@disconnect_confirmation.projects != []}>
+        {affected_projects(@disconnect_confirmation.projects)} use {agent_name(
+          @disconnect_confirmation.agent
+        )} and will stop working unless another credential for this agent remains connected.
+      </p>
+      <ul aria-label="Affected projects">
+        <li :for={project <- @disconnect_confirmation.projects}>{project.name}</li>
+      </ul>
+      <button
+        type="button"
+        id="confirm-agent-disconnect"
+        class="primary"
+        phx-click="confirm-disconnect"
+        phx-target={@myself}
+        phx-mounted={Phoenix.LiveView.JS.focus()}
+      >Remove connection</button>
+      <button type="button" phx-click="cancel-disconnect" phx-target={@myself}>Cancel</button>
+    </div>
+    """
+  end
+
+  attr :scoped_agent, :atom
+  attr :held, :any
+  attr :current_user, User
+  attr :busy, :boolean
+  attr :myself, :any
+  attr :make_default, :boolean, default: false, doc: "compact: the cards have no Make default"
+
+  defp held(assigns) do
+    ~H"""
+    <section
+      :if={
+        is_nil(@scoped_agent) and is_list(@held) and (@held != [] or missing?(@current_user, @held))
+      }
+      class="agent-held"
+      id="agent-held"
+      aria-label="What you have connected"
+    >
+      <p :if={missing?(@current_user, @held)} class="welcome-warning" id="held-missing">
+        <.icon name="info" size={14} class="ico" />
+        <span>
+          Nothing is stored for {agent_name(@current_user.agent)} any more: its subscription or API key was removed outside this page. Projects using this agent need a connected credential to run.
+        </span>
+      </p>
+      <ul :if={@held != []} class="agent-held-list">
+        <li :for={{agent, kind} <- @held} id={"held-#{agent}-#{kind}"}>
+          <span class="agent-held-name">
+            <strong>{agent_name(agent)}</strong>
+            <span class="dim">{paid_by(agent, kind)}</span>
+            <span :if={in_use?(@current_user, agent, kind)} class="chip ok">Default for new projects</span>
+          </span>
+          <button
+            :if={
+              @make_default and @current_user.agent != agent and
+                List.keyfind(@held, agent, 0) == {agent, kind}
+            }
+            type="button"
+            class="ghost"
+            id={"make-default-#{agent}"}
+            phx-click="make-default"
+            phx-value-agent={agent}
+            phx-target={@myself}
+            disabled={@busy}
+          >
+            Make default
+          </button>
+          <button
+            type="button"
+            class="ghost"
+            phx-click="disconnect"
+            phx-target={@myself}
+            phx-value-agent={agent}
+            phx-value-kind={kind}
+            disabled={@busy}
+            id={"remove-#{agent}-#{kind}"}
+          >
+            Remove
+          </button>
+        </li>
+      </ul>
+      <p :if={@held != []} class="hint">
+        Removing or replacing a connection ends your open tracks. Your provider account stays active.
+      </p>
+    </section>
+    """
+  end
+
+  defp kinds(assigns) do
+    ~H"""
+    <div class="workspace-actions" role="group" aria-label="How it is paid for">
+      <button
+        :for={kind <- Inference.kinds(@agent)}
+        type="button"
+        class={if @kind == kind, do: "primary", else: "ghost"}
+        aria-pressed={to_string(@kind == kind)}
+        phx-click="choose-kind"
+        phx-target={@myself}
+        phx-value-kind={kind}
+        id={"kind-#{kind}"}
+        disabled={@busy}
+      >
+        {kind_name(kind)}
+      </button>
+    </div>
+    """
+  end
+
+  defp credential(assigns) do
+    ~H"""
+    <p
+      :if={is_list(@held) and {@agent, @kind} in @held}
+      class="welcome-connected"
+      id="welcome-connected"
+    >
+      <.icon name="check" size={14} class="ico" />
+      <span>
+        {agent_name(@agent)} is connected with your {paid_by(@agent, @kind)}. {replace_hint(
+          @agent,
+          @kind
+        )}. Replacing it ends your open tracks in every project you own. A conversation will not carry on with a different credential than it started with.
+      </span>
+    </p>
+
+    <p
+      :if={@agent == :codex && @subscription}
+      class="agent-subscription"
+      id="chatgpt-subscription"
+    >
+      <span class={["chip", subscription_tone(@subscription)]}>{subscription_state(@subscription)}</span>
+      <span><.subscription_line subscription={@subscription} /></span>
+    </p>
+
+    <ol :if={@agent == :claude && @kind == :subscription} class="agent-howto">
+      <li>
+        In a signed-in Claude Code terminal, run <code>claude setup-token</code>.
+      </li>
+      <li>Approve in your browser.</li>
+      <li>Paste the token beginning with <code>sk-ant-oat01-</code>.</li>
+    </ol>
+    <ol :if={@agent == :claude && @kind == :api_key} class="agent-howto">
+      <li>
+        Create a key in the Anthropic Console, under <strong>API keys</strong>.
+      </li>
+      <li>
+        Paste it here. It starts with <code>sk-ant-api</code>. API usage is billed separately.
+      </li>
+    </ol>
+    <ol :if={@agent == :codex && @kind == :api_key} class="agent-howto">
+      <li>
+        Create a key on the OpenAI platform, under <strong>API keys</strong>.
+      </li>
+      <li>
+        Paste it here. It starts with <code>sk-</code>. API usage is billed separately.
+      </li>
+    </ol>
+
+    <div :if={@agent == :codex && @kind == :subscription} id="chatgpt-link">
+      <ol class="agent-howto">
+        <li>
+          Press <strong>Connect ChatGPT</strong> for a one-time code.
+        </li>
+        <li>
+          Enter it in a browser signed in to the ChatGPT account whose plan should pay.
+        </li>
+        <li>This page notices the approval and moves on.</li>
+      </ol>
+      <p :if={@link_error} class="error" id="link-error" role="alert">{@link_error}</p>
+      <div
+        :if={resolvable?(@link_conflict)}
+        class="workspace-actions"
+        id="chatgpt-conflict"
+      >
+        <button
+          type="button"
+          class="primary"
+          phx-click="resolve-conflict"
+          phx-target={@myself}
+          disabled={@busy}
+          id="chatgpt-resolve-conflict"
+        >{conflict_action(@link_conflict.resolution)}</button>
+      </div>
+      <p :if={@linking == false && is_nil(@link)} class="welcome-warning" id="linking-off">
+        <.icon name="info" size={14} class="ico" />
+        <span>
+          Linking a ChatGPT subscription is not switched on for this Ravix deployment. Ask whoever runs it, or use an OpenAI API key for now.
+        </span>
+      </p>
+      <div :if={@link} class="agent-code" id="chatgpt-code" aria-live="polite">
+        <p class="agent-code-value">
+          <span class="hint">Your code</span>
+          <strong id="chatgpt-user-code">{@link.user_code}</strong>
+        </p>
+        <p>
+          Enter it at
+          <a
+            :if={@link.trusted?}
+            href={@link.verification_url}
+            target="_blank"
+            rel="noopener noreferrer"
+            id="chatgpt-verification"
+          >{@link.verification_url}</a><code :if={!@link.trusted?} id="chatgpt-verification">{@link.verification_url}</code>. This authorizes use of your ChatGPT plan. Only type it if you started this sign-in yourself, on this page, just now. Nobody at Ravix will ever send you a code.
+        </p>
+        <p class="hint">
+          Waiting for approval. This code expires in 15 minutes.
+        </p>
+        <div class="workspace-actions">
+          <button
+            type="button"
+            class="ghost"
+            phx-click="cancel-link"
+            phx-target={@myself}
+            id="chatgpt-cancel"
+          >
+            Cancel
+          </button>
+        </div>
+      </div>
+      <div :if={is_nil(@link) && @linking != false} class="workspace-actions">
+        <button
+          type="button"
+          class="primary"
+          phx-click="begin-link"
+          phx-target={@myself}
+          disabled={@busy}
+          id="chatgpt-connect"
+        >
+          {if @busy, do: "Asking ChatGPT…", else: "Connect ChatGPT"}
+        </button>
+      </div>
+      <p class="hint">
+        Credentials stay encrypted with the agent service and are never shown — not to you, not to teammates, and not on this page. Disconnecting Ravix does not sign you out of ChatGPT.
+      </p>
+    </div>
+
+    <.form
+      :let={f}
+      :if={Inference.pasted?(@agent, @kind)}
+      for={@credential_form}
+      id="credential-form"
+      phx-submit="connect"
+      phx-target={@myself}
+      autocomplete="off"
+    >
+      <.input
+        field={f[:value]}
+        id="credential-value"
+        type="password"
+        label={if @kind == :subscription, do: "Subscription token", else: "API key"}
+        autocomplete="off"
+        required
+      />
+      <p class="hint">
+        Stored encrypted with the agent service. Never displayed or shared with teammates.
+      </p>
+      <button class="primary" disabled={@busy} phx-disable-with="Connecting…">
+        Connect {agent_name(@agent)}
+      </button>
+    </.form>
     """
   end
 end

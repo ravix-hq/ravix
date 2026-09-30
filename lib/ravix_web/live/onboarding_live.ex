@@ -6,9 +6,10 @@ defmodule RavixWeb.OnboardingLive do
   trip to GitHub all land somewhere sensible:
 
       /welcome            how the app works
-      /welcome/agent      Claude Code or Codex, and the subscription or key for it
+      /welcome/agent      connect Claude Code or Codex
       /welcome/github     install the GitHub App on the repositories to work in
-      /welcome/project    pick one of them, and the machine is built
+      /welcome/project    what to work on, and where: the project, its first
+                          track and that track's first prompt, in one Start
 
   ## Nothing here is a gate
 
@@ -18,8 +19,10 @@ defmodule RavixWeb.OnboardingLive do
   to a teammate's project runs on *that* person's subscription and needs none of
   their own, and a scratch project needs no repository. What a step does is
   done by the same context call the rest of the app uses ---
-  `Ravix.Accounts.Inference.connect/2`, `Ravix.Projects.create/2` --- so
-  skipping one leaves nothing half-made that the workspace cannot finish later.
+  `Ravix.Accounts.Inference.connect/2`, `Ravix.Projects.create/2`,
+  `Ravix.Tracks.open/3` --- so skipping one leaves nothing half-made that the
+  workspace cannot finish later. Skipping lands on `/home`, whose empty state
+  is the same first-prompt form as the last step here.
 
   ## Where somebody resumes
 
@@ -35,18 +38,24 @@ defmodule RavixWeb.OnboardingLive do
 
   Is `RavixWeb.Live.AgentPanel`, which the workspace's account dialog also
   renders, so the walkthrough and the place somebody comes back to weeks
-  later cannot drift. What the page keeps is what a component cannot do:
-  hand the panel its polling tick and let the person continue to GitHub,
-  with an optional second connection after the first.
+  later cannot drift. Here it is compact: a card per agent, Connect or
+  Connected, and the rest behind Manage. What the page keeps is what a
+  component cannot do: hand the panel its polling tick and offer Continue
+  once something is connected.
+
+  ## The last step
+
+  Is `RavixWeb.Live.QuickStart`: a repository, "What do you want to work
+  on?", and Start. Start creates the project, opens its first track with the
+  prompt queued on it, and lands in that track, where the prompt waits for
+  setup. The agent is the default the agent step left, shown as a chip.
   """
   use RavixWeb, :live_view
-
-  alias RavixWeb.Live.NewProject
 
   alias Ravix.{Accounts, Projects}
   alias Ravix.Accounts.{Access, Inference, User}
   alias Ravix.Workspaces.{Installation, Repositories}
-  alias RavixWeb.Live.{AgentPanel, Form, Guard}
+  alias RavixWeb.Live.{AgentPanel, Guard, QuickStart}
 
   @steps [:intro, :agent, :github, :project]
   @paths %{
@@ -65,11 +74,8 @@ defmodule RavixWeb.OnboardingLive do
     {:ok,
      assign(socket,
        github_available: Accounts.capabilities().github,
-       project_form: Form.new(:new_project),
-       project_generation: 0,
-       project_agents: nil,
-       project_agent_error: nil,
-       project_mode: "github",
+       quick_form: nil,
+       quick_busy: false,
        # `nil` until GitHub has answered, which is not the same as "none": the
        # GitHub step says "checking" for the first and offers the install
        # button for the second.
@@ -77,7 +83,6 @@ defmodule RavixWeb.OnboardingLive do
        installation: nil,
        repos: [],
        repos_loading: false,
-       busy: false,
        workspace_github: nil
      )}
   end
@@ -105,12 +110,12 @@ defmodule RavixWeb.OnboardingLive do
   end
 
   defp step_title(:intro), do: "Welcome"
-  defp step_title(:agent), do: "Connect your agents"
+  defp step_title(:agent), do: "Connect your agent"
   defp step_title(:github), do: "Connect GitHub"
-  defp step_title(:project), do: "Create your first project"
+  defp step_title(:project), do: "Start your first track"
 
   # The two steps that read GitHub do it on arrival and off this process.
-  defp enter(socket, :project), do: socket |> NewProject.init() |> load_repos(nil)
+  defp enter(socket, :project), do: socket |> QuickStart.init() |> load_repos(nil) |> preselect()
 
   defp enter(socket, step) when step == :github,
     do: socket |> load_repos(nil) |> workspace_github()
@@ -136,18 +141,31 @@ defmodule RavixWeb.OnboardingLive do
     end
   end
 
-  def handle_event("choose-project-agent", %{"agent" => agent}, socket),
-    do: {:noreply, NewProject.choose(socket, agent)}
+  def handle_event("quick-start-edit", %{"quick_start" => params}, socket),
+    do: {:noreply, QuickStart.edit(socket, params)}
 
-  def handle_event("refresh-project-agents", _, socket),
-    do: {:noreply, NewProject.refresh(socket)}
+  def handle_event("quick-start-suggest", %{"prompt" => prompt}, socket),
+    do: {:noreply, QuickStart.suggest(socket, prompt)}
 
-  def handle_event("edit", %{"new_project" => params}, socket),
-    do: {:noreply, NewProject.edit(socket, params)}
+  # Only the step that draws the form takes it: a stale page on another step
+  # has no repositories read for it to check against.
+  def handle_event("quick-start", %{"quick_start" => params}, socket)
+      when socket.assigns.live_action == :project do
+    user = socket.assigns.current_user
 
-  def handle_event("create-project", %{"new_project" => params}, socket) do
-    {:noreply, NewProject.create(socket, params, &Projects.create/2)}
+    {:noreply,
+     QuickStart.submit(
+       socket,
+       params,
+       targets(socket.assigns.repos),
+       socket.assigns.repos,
+       fn target, prompt, runtime ->
+         QuickStart.run(user, target, prompt, runtime)
+       end
+     )}
   end
+
+  def handle_event("quick-start", _params, socket), do: {:noreply, socket}
 
   # Leaving without finishing is finishing: the workspace must not send
   # somebody back here every time they open it.
@@ -158,19 +176,16 @@ defmodule RavixWeb.OnboardingLive do
   @impl true
   # The agent panel's clock; see `RavixWeb.Live.AgentPanel`.
   def handle_info({:agent_panel, id, tick}, socket) do
-    if (id == "agent-panel" and socket.assigns.live_action == :agent) or
-         (socket.assigns.live_action == :project and NewProject.active_panel?(socket, id)),
-       do: send_update(AgentPanel, id: id, tick: tick)
+    if id == "agent-panel" and socket.assigns.live_action == :agent,
+      do: send_update(AgentPanel, id: id, tick: tick)
 
     {:noreply, socket}
   end
 
-  # Keep the optional second connection visible; Continue always reaches GitHub.
-  def handle_info({:agent_connected, %User{} = user, agent}, socket) do
-    if socket.assigns.live_action == :project,
-      do: {:noreply, NewProject.connected(socket, user, agent)},
-      else: {:noreply, assign(socket, current_user: user)}
-  end
+  # The cards say Connected, and Continue appears; the step is not left for
+  # them, because a second agent is one more card away.
+  def handle_info({:agent_connected, %User{} = user, _agent}, socket),
+    do: {:noreply, assign(socket, current_user: user)}
 
   def handle_info({:agent_default_changed, %User{} = user}, socket),
     do: {:noreply, assign(socket, current_user: user)}
@@ -188,35 +203,40 @@ defmodule RavixWeb.OnboardingLive do
     do: {:noreply, clear_notice(socket, kind, message)}
 
   @impl true
-  def handle_async(:project_agents, {:ok, response}, socket),
-    do: {:noreply, NewProject.availability(socket, response)}
-
-  def handle_async(:project_agents, {:exit, {:shutdown, :cancel}}, socket),
-    do: {:noreply, socket}
-
-  def handle_async(:project_agents, {:exit, reason}, socket),
-    do: {:noreply, NewProject.availability(socket, {:error, {:async_exit, reason}})}
-
-  def handle_async(:create_project, {:ok, response}, socket) do
+  # Straight into the track: its setup steps and the prompt waiting for them
+  # are what somebody who pressed Start came to see. A project whose track
+  # could not open is still somewhere to be, with the reason said there.
+  def handle_async(:quick_start, {:ok, response}, socket) do
     {:noreply,
      result(
-       assign(socket, busy: false),
+       assign(socket, quick_busy: false),
        response,
-       # Straight into the new-track dialog: a project with nothing in it is
-       # not what anybody came for, and the first conversation is one click.
-       fn s, project -> s |> finish() |> push_navigate(to: "/p/#{project.id}?new=track") end,
-       :project_form
+       fn
+         s, %{project: project, track: nil, error: reason} ->
+           s
+           |> finish()
+           |> error(reason)
+           |> push_navigate(to: "/p/#{project.id}")
+
+         s, %{project: project, track: track, queued: queued} ->
+           s = finish(s)
+           s = if message = QuickStart.refused(queued), do: flash(s, :error, message), else: s
+           push_navigate(s, to: "/p/#{project.id}/t/#{track.id}")
+       end,
+       :quick_form
      )}
   end
 
   def handle_async(:repos, {:ok, {:ok, data}}, socket) do
     {:noreply,
-     assign(socket,
+     socket
+     |> assign(
        repos_loading: false,
        repos: data.repos,
        installations: data.installations,
        installation: data.selected
-     )}
+     )
+     |> preselect()}
   end
 
   # GitHub could not be read. "None" is the honest thing to draw: the install
@@ -227,7 +247,7 @@ defmodule RavixWeb.OnboardingLive do
        assign(socket, repos_loading: false, repos: [], installations: [], installation: nil)}
 
   def handle_async(_name, {:exit, reason}, socket),
-    do: {:noreply, socket |> assign(busy: false) |> exit(reason)}
+    do: {:noreply, socket |> assign(quick_busy: false) |> exit(reason)}
 
   defp finish(socket) do
     case Accounts.finish_onboarding(socket.assigns.current_user) do
@@ -285,7 +305,28 @@ defmodule RavixWeb.OnboardingLive do
 
   defp handles(installations), do: Enum.map_join(installations, ", ", &"@#{&1.account}")
 
+  # The only repository GitHub shows is the one somebody means; with more,
+  # choosing is theirs. Nothing chosen already is overridden.
+  defp preselect(
+         %{assigns: %{live_action: :project, repos_loading: false, quick_form: %{} = form}} =
+           socket
+       ) do
+    case {form.params["target"], QuickStart.preselect(targets(socket.assigns.repos))} do
+      {blank, value} when blank in [nil, ""] and is_binary(value) ->
+        QuickStart.edit(socket, %{"target" => value})
+
+      _ ->
+        socket
+    end
+  end
+
+  defp preselect(socket), do: socket
+
   # ── what the template asks ───────────────────────────────────────────
+
+  # Somebody here has no project of their own yet, or chose to come back
+  # here; either way a repository is what they are choosing.
+  defp targets(repos), do: QuickStart.targets([], repos)
 
   defp path(step), do: Map.fetch!(@paths, step)
 
@@ -296,5 +337,5 @@ defmodule RavixWeb.OnboardingLive do
   defp step_name(:intro), do: "How it works"
   defp step_name(:agent), do: "Your agent"
   defp step_name(:github), do: "GitHub"
-  defp step_name(:project), do: "First project"
+  defp step_name(:project), do: "First prompt"
 end

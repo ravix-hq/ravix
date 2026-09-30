@@ -3,9 +3,13 @@ defmodule RavixWeb.OnboardingLiveTest do
   import Phoenix.LiveViewTest
   import Mimic
 
-  alias Ravix.{Accounts, Crypto, Projects, Repo}
+  alias Ravix.{Accounts, Crypto, Projects, PromptQueue, Repo, Tracks}
   alias Ravix.Accounts.{Inference, User}
+  alias Ravix.Fountain.FakeTransport
+  alias Ravix.Tracks.Track
   alias RavixWeb.Live.Guard
+
+  @sets "/api/account/inference-credential-sets"
 
   setup :verify_on_exit!
 
@@ -19,15 +23,15 @@ defmodule RavixWeb.OnboardingLiveTest do
     conn = log_in_user(conn, fresh())
     {:ok, view, _} = live(conn, "/welcome")
 
-    for {path, title} <- [
-          {"/welcome", "Welcome"},
-          {"/welcome/agent", "Connect your agents"},
-          {"/welcome/github", "Connect GitHub"},
-          {"/welcome/project", "Create your first project"}
+    for {path, title, heading} <- [
+          {"/welcome", "Welcome", "Welcome"},
+          {"/welcome/agent", "Connect your agent", "Connect your agent"},
+          {"/welcome/github", "Connect GitHub", "Connect GitHub"},
+          {"/welcome/project", "Start your first track", "What do you want to work on?"}
         ] do
       {:ok, direct, _} = live(conn, path)
       assert page_title(direct) == title <> " · Ravix"
-      assert has_element?(direct, "h1", title)
+      assert has_element?(direct, "h1", heading)
 
       if path == "/welcome/project" do
         assert has_element?(direct, "#welcome-project", "Ravix builds its machine")
@@ -114,6 +118,21 @@ defmodule RavixWeb.OnboardingLiveTest do
       assert html =~
                "Share the track. They continue the thread, with the earlier decisions still there."
 
+      # The section the stylesheet draws (and the browser suite checks) is the
+      # one the page renders: three numbered steps, the first open.
+      assert has_element?(view, "section#welcome-workflow.workflow-preview")
+
+      assert has_element?(
+               view,
+               "#welcome-workflow details.workflow-step[open]",
+               "Describe the change"
+             )
+
+      assert view
+             |> element("#welcome-workflow")
+             |> render()
+             |> then(&(length(String.split(&1, "workflow-num")) - 1)) == 3
+
       assert view |> element("#welcome-start") |> render_click()
       assert_patch(view, "/welcome/agent")
     end
@@ -177,29 +196,42 @@ defmodule RavixWeb.OnboardingLiveTest do
       refute has_element?(view, "#credential-form")
     end
 
-    test "connecting offers an optional second agent and can continue without it", %{
-      conn: conn
-    } do
+    test "connecting the first agent makes it the default and offers Continue", %{conn: conn} do
       user = fresh()
       github([])
+      assert user.agent == nil
+
+      # `Inference.connect/2` itself, against a scripted Fountain: the first
+      # connection is the default because the context says so, not the page.
+      client =
+        FakeTransport.client([
+          {%{method: "GET", path: @sets}, {200, [], %{data: [%{id: "house", is_default: true}]}}},
+          {%{method: "POST", path: @sets, body: %{name: "ravix:#{user.id}"}},
+           {201, [], %{data: %{id: "mine"}}}},
+          {%{method: "PUT", path: "#{@sets}/mine/credentials/claude_code_oauth_token"},
+           {200, [], %{data: %{set: true}}}}
+        ])
+
+      stub(Ravix.Fountain, :client, fn -> client end)
+      stub(Inference, :subscription, fn _ -> {:ok, nil} end)
+      stub(Ravix.MachineCache, :catalog, fn _ -> {:error, :not_asked} end)
 
       stub(Inference, :held, fn user ->
         {:ok, if(user.agent, do: [{user.agent, :subscription}], else: [])}
       end)
 
-      expect(Inference, :connect, fn caller, attrs ->
-        assert caller.id == user.id
-        assert attrs == %{agent: :claude, kind: :subscription, value: "sk-ant-oat01-private"}
-
-        Accounts.save_setup(caller, %{
-          agent: :claude,
-          credential_kind: :subscription,
-          credential_set_id: "set-1"
-        })
-      end)
-
       {:ok, view, _} = live(log_in_user(conn, user), "/welcome/agent")
+      render_async(view)
+
+      # One decision: two cards, each with Connect, and nothing else in view.
+      assert has_element?(view, "#agent-card-claude button#agent-claude", "Connect")
+      assert has_element?(view, "#agent-card-codex button#agent-codex", "Connect")
+      assert has_element?(view, "#agent-later", "I'll do this later")
+      refute has_element?(view, "#credential-form")
+
       view |> element("#agent-claude") |> render_click()
+      assert render(view) =~ "claude setup-token"
+      refute has_element?(view, "#agent-claude")
 
       view
       |> form("#credential-form", credential: [value: "sk-ant-oat01-private"])
@@ -208,11 +240,44 @@ defmodule RavixWeb.OnboardingLiveTest do
       refute render(view) =~ "sk-ant-oat01-private"
       render_async(view)
       render_async(view)
-      assert has_element?(view, "#second-agent-nudge", "Connect Codex too (optional)")
-      assert has_element?(view, "#welcome-agent")
-      view |> element("#agent-later") |> render_click()
+
+      assert %User{agent: :claude, credential_kind: :subscription, credential_set_id: "mine"} =
+               Repo.get!(User, user.id)
+
+      assert has_element?(view, "#agent-claude-status", "Connected")
+      assert has_element?(view, "#agent-claude-status .chip", "Default for new projects")
+      assert has_element?(view, "#agent-card-codex button#agent-codex", "Connect")
+      refute has_element?(view, "#credential-form")
+      refute has_element?(view, "#second-agent-nudge")
+
+      view |> element("#agent-later", "Continue") |> render_click()
       assert_patch(view, "/welcome/github")
       refute render(view) =~ "sk-ant-oat01-private"
+    end
+
+    test "Manage reveals the default, what is held with its Remove, and API keys", %{conn: conn} do
+      stub(Inference, :held, fn _ -> {:ok, [{:claude, :subscription}, {:codex, :api_key}]} end)
+      stub(Inference, :subscription, fn _ -> {:ok, nil} end)
+      {:ok, view, _} = live(log_in_user(conn, connected()), "/welcome/agent")
+      render_async(view)
+
+      assert has_element?(view, "#agent-manage-toggle[aria-expanded=false]")
+      assert has_element?(view, "#agent-manage[hidden]")
+      assert has_element?(view, "#agent-manage #remove-claude-subscription")
+      assert has_element?(view, "#agent-manage #make-default-codex")
+      assert has_element?(view, "#agent-manage #kind-api_key")
+
+      view |> element("#agent-manage-toggle") |> render_click()
+      assert has_element?(view, "#agent-manage-toggle[aria-expanded=true]")
+      refute has_element?(view, "#agent-manage[hidden]")
+
+      # The API key is there to choose, and choosing it shows its steps.
+      view |> element("#kind-api_key") |> render_click()
+      assert render(view) =~ "Anthropic Console"
+      assert has_element?(view, "#credential-form label", "API key")
+
+      view |> element("#agent-manage-toggle") |> render_click()
+      assert has_element?(view, "#agent-manage[hidden]")
     end
 
     test "a refusal lands on the field, the value is not given back, and the button works again",
@@ -244,6 +309,10 @@ defmodule RavixWeb.OnboardingLiveTest do
     test "somebody already connected is told so, and what replacing it means", %{conn: conn} do
       stub(Inference, :held, fn _ -> {:ok, [{:claude, :subscription}]} end)
       {:ok, view, _} = live(log_in_user(conn, connected()), "/welcome/agent")
+      render_async(view)
+      assert has_element?(view, "#agent-claude-status", "Connected")
+      # Replacing it is under Manage, as the kind it is paid with.
+      view |> element("#kind-subscription") |> render_click()
       html = render_async(view)
       assert html =~ "Claude Code is connected with your subscription"
       assert html =~ "open tracks"
@@ -461,6 +530,8 @@ defmodule RavixWeb.OnboardingLiveTest do
       {:ok, view, _} =
         live(log_in_user(conn, connected(agent: :codex)), "/welcome/agent")
 
+      render_async(view)
+      view |> element("#kind-subscription") |> render_click()
       html = render_async(view)
       assert html =~ "Codex is connected with your ChatGPT subscription"
       assert html =~ "Sign in again to reconnect it"
@@ -517,11 +588,36 @@ defmodule RavixWeb.OnboardingLiveTest do
     end
   end
 
-  describe "the first project" do
-    test "is created through the context as this person, finishes the walkthrough, and opens a first track",
+  describe "the first prompt" do
+    setup do
+      stub(Ravix.Fountain, :client, fn ->
+        Ravix.Fountain.Client.new("https://fountain.test", "key")
+      end)
+
+      :ok
+    end
+
+    # A project and its track as the contexts would answer, so the prompt is
+    # queued by the real `Tracks.prompt/3` on a real row.
+    defp opens_on(user, project_attrs \\ []) do
+      project = insert_project(Keyword.merge([user: user], project_attrs))
+      track = insert_track(project: project, conversation_id: "first", setup_state: "pending")
+
+      expect(Tracks, :open, fn caller, id, attrs ->
+        assert {caller.id, id} == {user.id, project.id}
+        assert attrs == %{title: "", visibility: "project", origin: %{kind: "blank"}}
+        {:ok, Tracks.present(track, role: :owner)}
+      end)
+
+      {project, track}
+    end
+
+    test "creates the project and its first track, queues the prompt, and lands in the track",
          %{conn: conn} do
       user = connected()
+      # Exactly one repository: it is already chosen.
       github([%{account: "acme", id: 42}], [%{full_name: "acme/app", installation_id: 42}])
+      {project, track} = opens_on(user)
 
       expect(Projects, :create, fn caller, attrs ->
         assert caller.id == user.id
@@ -530,42 +626,152 @@ defmodule RavixWeb.OnboardingLiveTest do
                  "name" => "",
                  "repo" => "acme/app",
                  "installation_id" => 42,
-                 "runtime" => "codex"
+                 "runtime" => "claude"
                }
 
-        {:ok, %{id: "p-new"}}
+        {:ok, Projects.present(project, :owner, Ravix.Projects.Machine.none(), caller)}
       end)
 
       {:ok, view, _} = live(log_in_user(conn, user), "/welcome/project")
       render_async(view)
 
-      render_click(view, "choose-project-agent", %{"agent" => "codex"})
+      assert has_element?(view, "#first-prompt-target option[value='repo:acme/app'][selected]")
+      assert has_element?(view, "#first-prompt-target option[value=scratch]")
+
+      assert has_element?(
+               view,
+               "label[for=first-prompt-prompt]",
+               "What do you want to work on in acme/app?"
+             )
+
+      # The agent is the default from the step before, as a chip, not a question.
+      assert has_element?(view, "#first-prompt-runtime option[value=claude][selected]")
+      refute has_element?(view, "#project-runtime")
 
       view
-      |> form("#first-project-form", new_project: [repo: "acme/app", name: "", runtime: "codex"])
+      |> form("#first-prompt-form", quick_start: [prompt: "Add a health check endpoint"])
       |> render_submit()
 
-      # The page leaves as soon as the project exists, so there is no view
-      # left to `render_async/1`; the redirect is the thing to wait for.
-      assert_redirect(view, "/p/p-new?new=track", 1_000)
+      assert_redirect(view, "/p/#{project.id}/t/#{track.id}", 1_000)
       assert %User{onboarded_at: %DateTime{}} = Repo.get!(User, user.id)
+
+      assert [item] = Repo.all(PromptQueue.Item)
+      assert {item.track_id, item.user_id, item.status} == {track.id, user.id, :queued}
+    end
+
+    test "the suggested prompts fill the composer", %{conn: conn} do
+      github([])
+      {:ok, view, _} = live(log_in_user(conn, connected()), "/welcome/project")
+      render_async(view)
+
+      for suggestion <- RavixWeb.Live.QuickStart.suggestions() do
+        view |> element(".quick-start-suggestion", suggestion) |> render_click()
+        assert has_element?(view, "#first-prompt-prompt", suggestion)
+      end
+
+      # Only what was offered fills it.
+      render_click(view, "quick-start-suggest", %{"prompt" => "rm -rf /"})
+      refute render(view) =~ "rm -rf /"
+    end
+
+    test "with more than one repository nothing is chosen for them", %{conn: conn} do
+      github([%{account: "acme", id: 42}], [
+        %{full_name: "acme/app", installation_id: 42},
+        %{full_name: "acme/api", installation_id: 42}
+      ])
+
+      reject(&Projects.create/2)
+      {:ok, view, _} = live(log_in_user(conn, connected()), "/welcome/project")
+      render_async(view)
+      refute has_element?(view, "#first-prompt-target option[selected]")
+
+      view |> form("#first-prompt-form", quick_start: [prompt: "Tidy up"]) |> render_submit()
+      assert render(view) =~ "Choose a repository, or No repository."
     end
 
     test "a repository the list never offered is not sent as one", %{conn: conn} do
       github([%{account: "acme", id: 42}], [%{full_name: "acme/app", installation_id: 42}])
-
       reject(&Projects.create/2)
 
       {:ok, view, _} = live(log_in_user(conn, connected()), "/welcome/project")
       render_async(view)
 
-      render_submit(view, "create-project", %{
-        "new_project" => %{"name" => "Mine", "repo" => "someone-elses/private"}
+      render_submit(view, "quick-start", %{
+        "quick_start" => %{"target" => "repo:someone-elses/private", "prompt" => "Mine now"}
       })
 
-      assert render_async(view) =~ "Choose a repository from the list"
-      # Not finished: they are still here and can try again.
-      refute has_element?(view, "#first-project-form button[disabled]")
+      assert render(view) =~ "Choose a repository from the list"
+
+      render_submit(view, "quick-start", %{
+        "quick_start" => %{"target" => "project:#{insert_project().id}", "prompt" => "Mine now"}
+      })
+
+      assert render(view) =~ "Choose a repository from the list"
+      refute has_element?(view, "#first-prompt-submit[disabled]")
+    end
+
+    test "an empty prompt is refused on the field and nothing is created", %{conn: conn} do
+      github([])
+      reject(&Projects.create/2)
+      {:ok, view, _} = live(log_in_user(conn, connected()), "/welcome/project")
+      render_async(view)
+
+      view |> form("#first-prompt-form", quick_start: [prompt: "  "]) |> render_submit()
+      assert has_element?(view, "#first-prompt", "Say what you want to work on.")
+    end
+
+    test "a deployment with no GitHub App starts a scratch machine named for the prompt", %{
+      conn: conn
+    } do
+      user = connected()
+      stub(Accounts, :capabilities, fn -> %{github: false} end)
+      reject(&Projects.repos/2)
+      {project, track} = opens_on(user, repo_full_name: nil)
+
+      expect(Projects, :create, fn _caller, attrs ->
+        assert attrs == %{"name" => "Explain how this codebase is", "runtime" => "codex"}
+        {:ok, Projects.present(project, :owner, Ravix.Projects.Machine.none(), user)}
+      end)
+
+      {:ok, view, html} = live(log_in_user(conn, user), "/welcome/github")
+      assert html =~ "GitHub is not configured for this deployment"
+
+      view |> element("#github-continue") |> render_click()
+      assert_patch(view, "/welcome/project")
+      assert has_element?(view, "#first-prompt-target option[value=scratch][selected]")
+
+      view |> element(".quick-start-suggestion", "Explain how this codebase") |> render_click()
+
+      view
+      |> form("#first-prompt-form", quick_start: [runtime: "codex"])
+      |> render_submit()
+
+      assert_redirect(view, "/p/#{project.id}/t/#{track.id}", 1_000)
+    end
+
+    test "a project whose track could not open is still where they land, with the reason", %{
+      conn: conn
+    } do
+      user = connected()
+      github([])
+      project = insert_project(user: user, repo_full_name: nil)
+
+      expect(Projects, :create, fn _, _ ->
+        {:ok, Projects.present(project, :owner, Ravix.Projects.Machine.none(), user)}
+      end)
+
+      expect(Tracks, :open, fn _, _, _ ->
+        {:error, {:conflict, "machine_busy", "The machine is busy."}}
+      end)
+
+      {:ok, view, _} = live(log_in_user(conn, user), "/welcome/project")
+      render_async(view)
+      view |> form("#first-prompt-form", quick_start: [prompt: "Go"]) |> render_submit()
+
+      {path, flash} = assert_redirect(view, 1_000)
+      assert path == "/p/#{project.id}"
+      assert flash["error"] =~ "The machine is busy."
+      assert Repo.all(PromptQueue.Item) == []
     end
 
     test "choosing another GitHub account re-reads the repositories for that one", %{conn: conn} do
@@ -605,37 +811,44 @@ defmodule RavixWeb.OnboardingLiveTest do
       {:ok, view, _} = live(log_in_user(conn, connected()), "/welcome/project")
       render_async(view)
 
-      view |> form("#first-project-form", new_project: [name: "Half typed"]) |> render_change()
-      assert has_element?(view, "input[name='new_project[name]'][value='Half typed']")
+      view |> form("#first-prompt-form", quick_start: [prompt: "Half typed"]) |> render_change()
+      assert has_element?(view, "#first-prompt-prompt", "Half typed")
 
-      view |> form("#first-project-form", new_project: [name: "Half typed"]) |> render_submit()
+      view |> form("#first-prompt-form", quick_start: [prompt: "Half typed"]) |> render_submit()
       # Await the monitored crash and its LiveView response, including coverage/logging overhead.
       assert render_async(view, 5_000) =~ "The operation could not finish"
-      refute has_element?(view, "#first-project-form button[disabled]")
+      refute has_element?(view, "#first-prompt-submit[disabled]")
+      assert has_element?(view, "#first-prompt-prompt", "Half typed")
     end
 
-    test "a deployment with no GitHub App says so and still offers a scratch machine", %{
-      conn: conn
-    } do
-      stub(Accounts, :capabilities, fn -> %{github: false} end)
-      reject(&Projects.repos/2)
-
-      {:ok, view, html} = live(log_in_user(conn, connected()), "/welcome/github")
-      assert html =~ "GitHub is not configured for this deployment"
-
-      view |> element("#github-continue") |> render_click()
-      assert_patch(view, "/welcome/project")
-      assert has_element?(view, "#first-project-form")
-    end
-
-    test "without an agent it offers both connections and pauses creation", %{conn: conn} do
+    test "without an agent it says where to connect one and does not start", %{conn: conn} do
       github([])
-      stub(Inference, :usable_agents, fn _ -> {:ok, []} end)
+      reject(&Projects.create/2)
       {:ok, view, _} = live(log_in_user(conn, fresh()), "/welcome/project")
       render_async(view)
-      assert has_element?(view, "#project-agent-codex", "Not connected — connect to use")
-      refute has_element?(view, "#project-runtime [aria-pressed=true]")
-      assert has_element?(view, "#first-project-form button[disabled]")
+      assert has_element?(view, "#first-prompt-no-agent a[href='/welcome/agent']")
+      assert has_element?(view, "#first-prompt-submit[disabled]")
+    end
+
+    test "a session that went without notice creates nothing", %{conn: conn} do
+      github([%{account: "acme", id: 42}], [%{full_name: "acme/app", installation_id: 42}])
+      reject(&Projects.create/2)
+      reject(&Tracks.open/3)
+      {token, session} = insert_session(connected())
+      conn = Plug.Test.init_test_session(conn, session_token: token)
+      {:ok, view, _} = live(conn, "/welcome/project")
+      render_async(view)
+
+      Repo.delete!(session)
+      :sys.replace_state(view.pid, &age_session_guard/1)
+
+      assert {:error, {:redirect, %{to: "/login"}}} =
+               view
+               |> form("#first-prompt-form", quick_start: [prompt: "Run the migration"])
+               |> render_submit()
+
+      assert Repo.all(Track) == []
+      assert Repo.all(PromptQueue.Item) == []
     end
   end
 
