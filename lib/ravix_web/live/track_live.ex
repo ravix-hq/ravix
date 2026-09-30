@@ -548,6 +548,37 @@ defmodule RavixWeb.TrackLive do
   def handle_event("queue", %{"action" => "retry", "id" => id}, socket),
     do: {:noreply, queued(socket, &PromptQueue.retry/3, id)}
 
+  # RAV-94: Edit is Cancel, then the words back in the box to change and send
+  # again. Only a waiting, text-only prompt this page is showing; the cancel
+  # is `PromptQueue.cancel/3`, with its own check of who may, and nothing is
+  # put in the box unless it succeeds. A draft in the box is not overwritten.
+  def handle_event("queue", %{"action" => "edit", "id" => id}, socket) do
+    item =
+      Enum.find(
+        socket.assigns.queue,
+        &(&1.id == id and &1.status == :queued and &1.image_count == 0)
+      )
+
+    cond do
+      is_nil(item) or not is_binary(item.prompt) ->
+        {:noreply, socket}
+
+      not socket.assigns.composer_empty? ->
+        {:noreply,
+         assign(socket, thread_error: "Send or clear your draft before editing a queued prompt.")}
+
+      true ->
+        {_speaker, body, _restored?} = visible_prompt(item.prompt)
+
+        {:noreply,
+         queued(socket, &PromptQueue.cancel/3, id, fn s ->
+           s
+           |> assign(composer_mode: :ask, thread_error: nil)
+           |> push_event("composer:insert", %{text: body})
+         end)}
+    end
+  end
+
   # Files and Changes come back from `Panel`'s cache at once and are read
   # again behind it; switching between them used to blank the tab for a
   # round trip to the machine every time. See `RavixWeb.Live.Panel`.
@@ -2317,11 +2348,19 @@ defmodule RavixWeb.TrackLive do
     end
   end
 
+  # The ordinary wait, for the running turn, is the label's "sends when the
+  # agent is free" (RAV-94); only an unusual one gets a line of its own.
   defp queue_feedback(item, runtime) do
-    if item.status == :queued && item.error_code in ["sandbox_at_capacity", "conversation_busy"],
-      do:
-        "#{RavixWeb.AgentName.label(runtime)} is at capacity on this machine; your prompt is queued.",
-      else: item.wait_reason
+    cond do
+      item.status == :queued && item.error_code in ["sandbox_at_capacity", "conversation_busy"] ->
+        "#{RavixWeb.AgentName.label(runtime)} is at capacity on this machine; your prompt is queued."
+
+      item.wait_reason == PromptQueue.busy_wait() ->
+        nil
+
+      true ->
+        item.wait_reason
+    end
   end
 
   defp agent_model(runtime, model), do: ModelMenu.agent_model(runtime, model)
@@ -3308,14 +3347,14 @@ defmodule RavixWeb.TrackLive do
 
   defp update_panel(socket, fun), do: assign(socket, panel: fun.(socket.assigns.panel))
 
-  defp queue_label(:queued), do: "Waiting"
+  defp queue_label(:queued), do: "Queued"
   defp queue_label(:sending), do: "Sending…"
   defp queue_label(:failed), do: "Needs attention"
   defp queue_label(:unconfirmed), do: "Not confirmed"
 
-  defp queued(socket, call, id) do
+  defp queued(socket, call, id, on_ok \\ & &1) do
     response = call.(socket.assigns.current_user, socket.assigns.track_id, id)
-    result(socket, response, fn s, _ -> refresh_queue(s) end)
+    result(socket, response, fn s, _ -> s |> refresh_queue() |> on_ok.() end)
   end
 
   # What each event can actually have changed for the track on screen.
@@ -4128,13 +4167,12 @@ defmodule RavixWeb.TrackLive do
 
   # The box says what it can do until somebody has used it; after the first
   # turn the conversation is under way and "a follow-up" is the honest word.
-  # While a turn runs, what is sent waits for it (RAV-94), so the box says
-  # that. One shape throughout: what to write, then what `@` and `/` do.
+  # While a turn runs, the box asks for no more than the follow-up, which
+  # waits for the turn (RAV-94).
   defp composer_placeholder(:comment, _page, _running?),
     do: "Comment for people on this thread, @mention someone"
 
-  defp composer_placeholder(:ask, _page, true),
-    do: "Queue a follow-up, @mention files, run /commands"
+  defp composer_placeholder(:ask, _page, true), do: "Add a follow up"
 
   defp composer_placeholder(:ask, page, false) do
     if Enum.any?(page.turns, & &1.visible?),

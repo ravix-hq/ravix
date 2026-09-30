@@ -260,4 +260,109 @@ defmodule RavixWeb.Live.MemberRolesLiveTest do
       assert has_element?(view, "#people-role-member", "Read")
     end
   end
+
+  # RAV-94: Edit on a queued prompt is Cancel through `PromptQueue.cancel/3`,
+  # then its words back in the box. Only the prompt's sender (or the owner)
+  # may, a forged id changes nothing, and a revoked session is sent to log in.
+  describe "editing a queued prompt" do
+    defp enqueue(ctx, user, text) do
+      id = Ecto.UUID.generate()
+
+      {:ok, _} =
+        PromptQueue.Store.enqueue(ctx.track.id, user.id, user.login, id, %PromptQueue.Body{
+          prompt: text,
+          images: []
+        })
+
+      id
+    end
+
+    defp refreshed(view, ctx) do
+      send(view.pid, {:hub, Ravix.Hub.Event.new(:queue, ctx.project.id, track_id: ctx.track.id)})
+      render_async(view)
+      view
+    end
+
+    defp status(id), do: PromptQueue.Store.get(id).status
+
+    test "the sender takes it off the queue and gets its words back", ctx do
+      id = enqueue(ctx, ctx.writer, "Tidy the scheduler")
+      {view, _parent} = track_page(ctx, ctx.writer)
+      refreshed(view, ctx)
+
+      assert has_element?(
+               view,
+               "li.queue-item [phx-value-action=edit][phx-value-id=#{id}]",
+               "Edit"
+             )
+
+      render_click(view, "queue", %{"action" => "edit", "id" => id})
+
+      assert_push_event(view, "composer:insert", %{text: "Tidy the scheduler"})
+      assert status(id) == :cancelled
+      render_async(view)
+      refute has_element?(view, "li.queue-item [phx-value-id=#{id}]")
+    end
+
+    test "a draft in the box is not overwritten, and the prompt stays queued", ctx do
+      id = enqueue(ctx, ctx.writer, "Tidy the scheduler")
+      {view, _parent} = track_page(ctx, ctx.writer)
+      refreshed(view, ctx)
+
+      render_hook(view, "composer-draft", %{"empty" => false})
+      render_click(view, "queue", %{"action" => "edit", "id" => id})
+
+      assert has_element?(view, "#thread-error", "Send or clear your draft")
+      refute_push_event(view, "composer:insert", _)
+      assert status(id) == :queued
+    end
+
+    test "another person's prompt offers no Edit, and a forged one is refused", ctx do
+      id = enqueue(ctx, ctx.owner, "Owner's plan")
+      {view, _parent} = track_page(ctx, ctx.writer)
+      refreshed(view, ctx)
+
+      assert has_element?(view, "li.queue-item", "Owner's plan")
+      refute has_element?(view, "[phx-value-action=edit]")
+
+      render_click(view, "queue", %{"action" => "edit", "id" => id})
+      refute_push_event(view, "composer:insert", _)
+      assert status(id) == :queued
+
+      # An id this page does not show (another track's) does nothing at all.
+      other = insert_track(project: ctx.project, created_by_login: ctx.owner.login)
+
+      {:ok, _} =
+        PromptQueue.Store.enqueue(other.id, ctx.writer.id, "writer", Ecto.UUID.generate(), %{
+          prompt: "Elsewhere",
+          images: []
+        })
+
+      [foreign] = Enum.filter(Repo.all(PromptQueue.Item), &(&1.track_id == other.id))
+      render_click(view, "queue", %{"action" => "edit", "id" => foreign.id})
+      refute_push_event(view, "composer:insert", _)
+      assert status(foreign.id) == :queued
+    end
+
+    test "a revoked session is sent to log in and the prompt stays queued", ctx do
+      id = enqueue(ctx, ctx.writer, "Tidy the scheduler")
+      conn = log_in_user(ctx.conn, ctx.writer)
+      {:ok, parent, _} = live(conn, "/p/#{ctx.project.id}/t/#{ctx.track.id}")
+      view = find_live_child(parent, "track-host")
+      render_async(view, 5_000)
+      refreshed(view, ctx)
+
+      token = Plug.Conn.get_session(conn, :session_token)
+      Repo.delete!(Repo.get_by!(Ravix.Accounts.Session, token_hash: Ravix.Crypto.sha256(token)))
+
+      :sys.replace_state(view.pid, fn state ->
+        update_in(state.socket.assigns.session_guard, &%{&1 | stale?: true})
+      end)
+
+      assert {:error, {:redirect, %{to: "/login"}}} =
+               render_click(view, "queue", %{"action" => "edit", "id" => id})
+
+      assert status(id) == :queued
+    end
+  end
 end
