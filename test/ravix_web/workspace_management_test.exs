@@ -490,7 +490,7 @@ defmodule RavixWeb.WorkspaceManagementTest do
     assert has_element?(ctx.view, "#settings-form button[disabled]")
     # The secret form is not the one that is out, and the page still answers.
     refute has_element?(ctx.view, "#secret-form button[disabled]")
-    assert render_click(ctx.view, "dialog", %{name: "settings"}) =~ "settings-form"
+    assert render_patch(ctx.view, "/p/#{ctx.project.id}/settings/general") =~ "settings-form"
 
     send(saving, :finish)
     render_async(ctx.view, 1000)
@@ -1237,7 +1237,7 @@ defmodule RavixWeb.WorkspaceManagementTest do
        })}
     end)
 
-    render_click(ctx.view, "dialog", %{name: "settings"})
+    render_patch(ctx.view, "/p/#{ctx.project.id}/settings/general")
     render_async(ctx.view)
   end
 end

@@ -1,6 +1,7 @@
 import { test, expect } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
 import { signIn, connectClaude } from './sign-in.js';
+import { createWorkspace } from './settings.js';
 import { openRepositories } from './new-track.js';
 
 // ADR 0009 phase 4c, RAV-10: New track's one repository list for the current
@@ -27,9 +28,7 @@ test('New track lists the workspace repositories, adds one, and keeps scratch ap
 
   // A team workspace, connected to GitHub, with one repository admitted.
   await page.locator('#workspace-switcher-trigger').click();
-  await page.locator('#workspace-menu').getByLabel('New workspace', { exact: true }).fill('Picker Team');
-  await page.getByRole('button', { name: 'Create workspace', exact: true }).click();
-  await expect(page).toHaveURL(/\/w\/[^/?]+$/);
+  await createWorkspace(page, 'Picker Team');
   await page.getByRole('link', { name: 'Connect GitHub', exact: true }).click();
   await expect(page.locator('#workspace-catalog')).toContainText('mockuser/atlas-api');
   await page.locator('#workspace-catalog li', { hasText: 'mockuser/atlas-api' })

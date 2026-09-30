@@ -93,6 +93,14 @@ defmodule RavixWeb.Router do
     get "/j/:token", AuthController, :join
     post "/j/:token", AuthController, :claim
 
+    # Settings that moved into the settings frame (RAV-72), and the bare
+    # addresses of it; each lands on a section.
+    get "/settings", SettingsRedirectController, :personal
+    get "/settings/connections", SettingsRedirectController, :personal
+    get "/w/:workspace", SettingsRedirectController, :workspace
+    get "/w/:workspace/settings", SettingsRedirectController, :workspace
+    get "/p/:project/settings", SettingsRedirectController, :project
+
     # URL selection is shared by the rail and the nested track LiveView.
     #
     # There is no marketing page. `/` is the workspace for somebody signed in
@@ -105,13 +113,16 @@ defmodule RavixWeb.Router do
       live "/login", WorkspaceLive, :login
       live "/home", WorkspaceLive, :projects
       live "/schedules", WorkspaceLive, :schedules
-      live "/settings/connections", WorkspaceLive, :connections
       live "/inbox", WorkspaceLive, :inbox
       live "/p/:project", WorkspaceLive, :project
       live "/p/:project/plans", WorkspaceLive, :plans
       live "/p/:project/t/:track", WorkspaceLive, :track
-      # A workspace's people (ADR 0009 phase 4a), behind RAVIX_WORKSPACE_ACCESS.
-      live "/w/:workspace", WorkspacePeopleLive, :show
+      # Settings pages in the shell, one URL a section; see
+      # `RavixWeb.Live.Settings`. A workspace's are behind
+      # RAVIX_WORKSPACE_ACCESS (ADR 0009).
+      live "/settings/:section", WorkspaceLive, :user_settings
+      live "/w/:workspace/settings/:section", WorkspaceLive, :workspace_settings
+      live "/p/:project/settings/:section", WorkspaceLive, :project_settings
 
       # The first visit. The same `live_session`, so the workspace can send
       # somebody here and be sent back without a page load in between.

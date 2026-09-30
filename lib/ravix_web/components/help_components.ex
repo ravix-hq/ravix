@@ -150,7 +150,7 @@ defmodule RavixWeb.HelpComponents do
           currently be canceled through these tools. A completed task leaves its track open.
         </p>
         <p>
-          Open <a href="/settings/connections">Connected applications</a> to review access or
+          Open <a href="/settings/connected-apps">Connected applications</a> to review access or
           disconnect an application. Disconnecting revokes access but does not cancel work already accepted.
         </p>
       </details>
