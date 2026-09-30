@@ -35,8 +35,8 @@ defmodule RavixWeb.Live.QuickStart do
   """
   use RavixWeb, :html
 
-  alias Ravix.{Projects, Tracks}
   alias Ravix.Accounts.User
+  alias Ravix.{Projects, Tracks}
   alias RavixWeb.Live.{Async, Form}
 
   @suggestions [

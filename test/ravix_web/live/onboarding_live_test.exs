@@ -5,9 +5,10 @@ defmodule RavixWeb.OnboardingLiveTest do
 
   alias Ravix.{Accounts, Crypto, Projects, PromptQueue, Repo, Tracks}
   alias Ravix.Accounts.{Inference, User}
-  alias Ravix.Fountain.FakeTransport
+  alias Ravix.Fountain.{Client, FakeTransport}
+  alias Ravix.Projects.Machine
   alias Ravix.Tracks.Track
-  alias RavixWeb.Live.Guard
+  alias RavixWeb.Live.{Guard, QuickStart}
 
   @sets "/api/account/inference-credential-sets"
 
@@ -591,7 +592,7 @@ defmodule RavixWeb.OnboardingLiveTest do
   describe "the first prompt" do
     setup do
       stub(Ravix.Fountain, :client, fn ->
-        Ravix.Fountain.Client.new("https://fountain.test", "key")
+        Client.new("https://fountain.test", "key")
       end)
 
       :ok
@@ -629,7 +630,7 @@ defmodule RavixWeb.OnboardingLiveTest do
                  "runtime" => "claude"
                }
 
-        {:ok, Projects.present(project, :owner, Ravix.Projects.Machine.none(), caller)}
+        {:ok, Projects.present(project, :owner, Machine.none(), caller)}
       end)
 
       {:ok, view, _} = live(log_in_user(conn, user), "/welcome/project")
@@ -664,7 +665,7 @@ defmodule RavixWeb.OnboardingLiveTest do
       {:ok, view, _} = live(log_in_user(conn, connected()), "/welcome/project")
       render_async(view)
 
-      for suggestion <- RavixWeb.Live.QuickStart.suggestions() do
+      for suggestion <- QuickStart.suggestions() do
         view |> element(".quick-start-suggestion", suggestion) |> render_click()
         assert has_element?(view, "#first-prompt-prompt", suggestion)
       end
@@ -730,7 +731,7 @@ defmodule RavixWeb.OnboardingLiveTest do
 
       expect(Projects, :create, fn _caller, attrs ->
         assert attrs == %{"name" => "Explain how this codebase is", "runtime" => "codex"}
-        {:ok, Projects.present(project, :owner, Ravix.Projects.Machine.none(), user)}
+        {:ok, Projects.present(project, :owner, Machine.none(), user)}
       end)
 
       {:ok, view, html} = live(log_in_user(conn, user), "/welcome/github")
@@ -757,7 +758,7 @@ defmodule RavixWeb.OnboardingLiveTest do
       project = insert_project(user: user, repo_full_name: nil)
 
       expect(Projects, :create, fn _, _ ->
-        {:ok, Projects.present(project, :owner, Ravix.Projects.Machine.none(), user)}
+        {:ok, Projects.present(project, :owner, Machine.none(), user)}
       end)
 
       expect(Tracks, :open, fn _, _, _ ->
