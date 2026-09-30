@@ -23,9 +23,11 @@ defmodule RavixWeb.Live.WorkspaceGuard do
   own hooks (`RavixWeb.Live.Hooks`) run before these, so an ended session
   is still the sign-in page's business.
 
-  `RavixWeb.WorkspacePeopleLive`, the workspace page the gear beside the
-  sidebar switcher's current workspace opens (phase 4a), is the first page
-  to hold one.
+  No routed page holds one today. The workspace's own page, which did
+  (phase 4a), is a section of `RavixWeb.WorkspaceLive` since RAV-72
+  (`RavixWeb.Live.WorkspaceSettings`): a component, which reads the
+  membership itself on every event and async result, while the page leaves
+  on the workspace's notice.
   """
 
   import Phoenix.Component, only: [assign: 2]

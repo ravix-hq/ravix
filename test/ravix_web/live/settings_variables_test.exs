@@ -28,7 +28,7 @@ defmodule RavixWeb.Live.SettingsVariablesTest do
     stub(Ravix.Accounts.Inference, :usable_agents, fn _ -> {:ok, [:claude]} end)
     {:ok, view, _} = live(log_in_user(ctx.conn, user), "/p/#{project.id}")
     render_async(view, 2_000)
-    render_click(view, "dialog", %{name: "settings"})
+    render_patch(view, "/p/#{project.id}/settings/variables")
     render_async(view, 2_000)
     %{view: view, user: user, project: project, env: env}
   end

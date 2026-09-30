@@ -99,7 +99,9 @@ test('browser consent connects MCP and A2A, work survives reconnect, and disconn
   }, { timeout: 60_000, intervals: [1000] }).toBe('TASK_STATE_COMPLETED');
   const finished = await rpc(request, reconnected, 'a2a', 'GetTask', { id: submitted.task.id });
   expect(finished.artifacts[0].parts[0].text.length).toBeGreaterThan(0);
+  // The old address still lands on the page (RAV-72).
   await page.goto('/settings/connections');
+  await expect(page).toHaveURL(/\/settings\/connected-apps$/);
   const connection = page.locator('section').filter({ has: page.getByRole('heading', { name: 'A2A browser test', exact: true }) });
   await connection.getByRole('button', { name: 'Disconnect', exact: true }).click();
   await expect(connection.getByText('Disconnected or expired')).toBeVisible();
@@ -115,11 +117,11 @@ test('same-name connections show activity in a wide workspace with collapsed per
     protocolVersion: '2025-11-25', capabilities: {}, clientInfo: { name: 'activity-test', version: '1' },
   });
   await page.setViewportSize({ width: 1480, height: 1000 });
-  await page.goto('/settings/connections');
+  await page.goto('/settings/connected-apps');
   await expect(page.locator('[data-phx-main]')).toHaveClass(/phx-connected/);
   await expect(page.getByRole('complementary', { name: 'Projects', exact: true })).toBeVisible();
-  await expect(page).toHaveTitle('Connected applications · Ravix');
-  const heading = page.getByRole('heading', { name: 'Connected applications', exact: true });
+  await expect(page).toHaveTitle('Connected apps · You · Ravix');
+  const heading = page.getByRole('heading', { name: 'Connected apps', exact: true });
   expect((await heading.boundingBox()).height).toBeLessThan(40);
   expect((await page.locator('.connections-list').boundingBox()).width).toBeGreaterThan(700);
   const cards = page.locator('.connection-card').filter({ has: page.getByRole('heading', { name: 'Claude', exact: true }) });

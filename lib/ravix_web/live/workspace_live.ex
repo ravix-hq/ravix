@@ -13,7 +13,9 @@ defmodule RavixWeb.WorkspaceLive do
   alias RavixWeb.Live.Form
   alias RavixWeb.Live.Guard
   alias RavixWeb.Live.QuickStart
+  alias RavixWeb.Live.Settings
   alias RavixWeb.Live.ThreadConnect
+  alias RavixWeb.Live.WorkspaceGitHub
   alias RavixWeb.Live.WorkspaceSwitcher
 
   # The four origins. One list rather than the three that had grown -- this
@@ -37,11 +39,11 @@ defmodule RavixWeb.WorkspaceLive do
     "search" => :search,
     "new-project" => :new_project,
     "new-track" => :new_track,
-    "settings" => :settings,
     "people" => :people,
     "account" => :account,
     "help" => :help,
-    "changes" => :changes
+    "changes" => :changes,
+    "new-workspace" => :new_workspace
   }
 
   @doc "The origin buttons on the new-track form, in the order they are offered."
@@ -124,6 +126,9 @@ defmodule RavixWeb.WorkspaceLive do
         selected_plan_id: nil,
         new_plan: false,
         track_id: nil,
+        # The settings page the URL names (`RavixWeb.Live.Settings.resolve/3`),
+        # drawn in the stage; nil anywhere else.
+        settings: nil,
         # The nested `RavixWeb.TrackLive`, once it has said where it is. See
         # the `:track_host` clause of `handle_info/2`, and `hand_over/4`.
         track_host: nil,
@@ -157,7 +162,7 @@ defmodule RavixWeb.WorkspaceLive do
         # projects this person may enter whole contribute; see `Plans.titles/1`.
         search_plans: [],
         # Creating a project and creating a track, and nothing else. The
-        # settings dialog owns its own; see `RavixWeb.Live.SettingsDialog`
+        # settings page owns its own; see `RavixWeb.Live.ProjectSettings`
         # for why one flag for the whole page could not answer "may I press
         # this".
         busy: false,
@@ -185,10 +190,10 @@ defmodule RavixWeb.WorkspaceLive do
       socket
       |> validate_session()
       |> navigation_notice(URI.parse(uri).path)
-      |> assign(yard_open: false, pending_url: nil)
+      |> assign(yard_open: false, pending_url: nil, settings: nil)
 
     case wrong_page(socket) do
-      nil -> {:noreply, socket |> open_url(params) |> quick_repos()}
+      nil -> {:noreply, socket |> open_url(params) |> open_settings(params) |> quick_repos()}
       to -> {:noreply, push_navigate(socket, to: to)}
     end
   end
@@ -321,13 +326,74 @@ defmodule RavixWeb.WorkspaceLive do
       params["new"] == "track" && project && project.access != :tracks ->
         open_dialog(socket, :new_track)
 
+      # The old link to the settings dialog: its first section now.
       params["settings"] == "true" && project && project.role == :owner ->
-        open_dialog(socket, :settings)
+        push_patch(socket,
+          to: Settings.section_path(:project, project.id, Settings.first(:project)),
+          replace: true
+        )
 
       true ->
         socket
     end
   end
+
+  # A settings page, in the stage, once `open_url/2` has chosen the project a
+  # project's settings are for. A workspace's settings make that workspace
+  # current, as a `/p/:id` link into another workspace does, so the switcher
+  # and the rail name the workspace being set up.
+  defp open_settings(socket, params) do
+    case Settings.resolve(socket.assigns.live_action, params, socket.assigns) do
+      {:ok, %{kind: :workspace} = page} ->
+        socket
+        |> current_for_settings(page.id)
+        |> watch_workspace(%{workspace: %{id: page.id}})
+        |> assign(settings: page)
+        |> github_notice(params)
+        |> assign_page_title()
+
+      {:ok, page} ->
+        socket |> assign(settings: page) |> assign_page_title()
+
+      # A URL the page was mounted at is left before there is a page to
+      # patch, so the sentence goes in the flash the redirect carries too.
+      {:redirect, to, message} ->
+        socket |> assign(settings: nil) |> put_flash(:info, message) |> bad_url(to, message)
+
+      _none_or_wait ->
+        assign(socket, settings: nil)
+    end
+  end
+
+  defp current_for_settings(
+         %{assigns: %{current_workspace: %{workspace: %{id: id}}}} = socket,
+         id
+       ),
+       do: socket
+
+  defp current_for_settings(socket, id) do
+    case WorkspaceSwitcher.select(socket, id) do
+      {:ok, socket} ->
+        user = socket.assigns.current_user
+
+        socket
+        |> assign(current_workspace: current_workspace(user, socket.assigns.workspaces))
+        |> recheck_rail()
+
+      {:error, socket} ->
+        socket
+    end
+  end
+
+  # Where the Connect GitHub round trip lands
+  # (`RavixWeb.WorkspaceGitHubController.finish/2`).
+  defp github_notice(socket, %{"github" => "connected"}),
+    do: flash(socket, :info, "GitHub connected.")
+
+  defp github_notice(socket, %{"github_error" => code}) when is_binary(code),
+    do: flash(socket, :error, WorkspaceGitHub.connect_error(code))
+
+  defp github_notice(socket, _params), do: socket
 
   defp url_thread(socket, track_id, %{"thread" => thread_id}) when is_binary(track_id),
     do: assign(socket, notice_thread: {track_id, thread_id})
@@ -446,6 +512,13 @@ defmodule RavixWeb.WorkspaceLive do
   # would be followed straight back (`scope_rail/2`).
   def handle_event("workspace-select", %{"workspace" => id}, socket) do
     case WorkspaceSwitcher.select(socket, id) do
+      # A workspace's settings page stays on the same section, in the new one.
+      {:ok, %{assigns: %{settings: %{kind: :workspace, section: section}}} = socket} ->
+        {:noreply,
+         socket
+         |> recheck_rail()
+         |> push_patch(to: Settings.section_path(:workspace, id, section))}
+
       {:ok, socket} ->
         open = socket.assigns.project
         socket = socket |> assign(project: nil) |> recheck_rail()
@@ -693,8 +766,8 @@ defmodule RavixWeb.WorkspaceLive do
     project = Enum.find(socket.assigns.projects, &(&1.id == id))
 
     if project && project.access != :tracks && project.role == :owner do
-      suffix = if id == project_id(socket), do: track_suffix(socket.assigns.track_id), else: ""
-      {:noreply, push_patch(socket, to: "/p/#{id}#{suffix}?settings=true")}
+      {:noreply,
+       push_patch(socket, to: Settings.section_path(:project, id, Settings.first(:project)))}
     else
       {:noreply, flash(socket, :error, "Project not available.")}
     end
@@ -1026,7 +1099,12 @@ defmodule RavixWeb.WorkspaceLive do
         {:noreply, push_navigate(socket, to: to)}
 
       params = socket.assigns.pending_url ->
-        {:noreply, socket |> assign(pending_url: nil) |> open_url(params) |> quick_repos()}
+        {:noreply,
+         socket
+         |> assign(pending_url: nil)
+         |> open_url(params)
+         |> open_settings(params)
+         |> quick_repos()}
 
       true ->
         {:noreply, quick_repos(socket)}
@@ -1159,10 +1237,9 @@ defmodule RavixWeb.WorkspaceLive do
          (socket.assigns.dialog == :new_project and NewProject.active_panel?(socket, id)),
        do: send_update(RavixWeb.Live.AgentPanel, id: id, tick: tick)
 
-    if (socket.assigns.dialog == :settings and socket.assigns.project) &&
-         socket.assigns.project.role == :owner do
-      send_update(RavixWeb.Live.SettingsDialog,
-        id: "settings-dialog-panel",
+    if match?(%{kind: :project}, socket.assigns.settings) do
+      send_update(RavixWeb.Live.ProjectSettings,
+        id: "project-settings-#{socket.assigns.settings.id}",
         agent_tick: {id, tick}
       )
     end
@@ -1241,10 +1318,9 @@ defmodule RavixWeb.WorkspaceLive do
     if socket.assigns.track_host, do: send(socket.assigns.track_host, :refresh_agent_health)
     socket = update(socket, :health_refresh, &(&1 + 1))
 
-    if (socket.assigns.dialog == :settings and socket.assigns.project) &&
-         socket.assigns.project.role == :owner do
-      send_update(RavixWeb.Live.SettingsDialog,
-        id: "settings-dialog-panel",
+    if match?(%{kind: :project}, socket.assigns.settings) do
+      send_update(RavixWeb.Live.ProjectSettings,
+        id: "project-settings-#{socket.assigns.settings.id}",
         connected_agent: agent
       )
     end
@@ -1361,6 +1437,23 @@ defmodule RavixWeb.WorkspaceLive do
   # out: scope again, falling back to the default if so. A project that goes
   # with it is left here, since this notice can beat the project's own
   # `:people` event, which would then find nothing open to leave.
+  #
+  # A workspace settings page re-reads its members too, and leaves if the
+  # viewer is not one any more; see `RavixWeb.Live.WorkspaceSettings`.
+  def handle_info(
+        {:workspace_hub, _id, :members},
+        %{assigns: %{settings: %{kind: :workspace}}} = socket
+      ) do
+    case Workspaces.get(socket.assigns.current_user, socket.assigns.settings.id) do
+      {:ok, _access} ->
+        send_update(RavixWeb.Live.WorkspaceSettings, id: "workspace-settings-page", reload: true)
+        {:noreply, recheck_or_leave(socket)}
+
+      {:error, :not_found} ->
+        {:noreply, socket |> recheck_rail() |> redirect(to: "/")}
+    end
+  end
+
   def handle_info({:workspace_hub, _id, :members}, socket),
     do: {:noreply, recheck_or_leave(socket)}
 
@@ -1739,7 +1832,9 @@ defmodule RavixWeb.WorkspaceLive do
     end
   end
 
-  defp moving_here(%{assigns: %{dialog: :settings, project: %{id: id}, all_projects: all}}) do
+  defp moving_here(%{
+         assigns: %{settings: %{kind: :project}, project: %{id: id}, all_projects: all}
+       }) do
     if Enum.any?(all, &(&1.id == id and &1.access == :owner)), do: id
   end
 
@@ -1797,7 +1892,7 @@ defmodule RavixWeb.WorkspaceLive do
   defp backfill_inbox(
          %{assigns: %{project: nil, live_action: action, replies_loading: false}} = socket
        )
-       when action not in [:projects, :schedules, :connections] do
+       when action not in [:projects, :schedules, :user_settings, :workspace_settings] do
     views =
       socket.assigns.tracks |> Map.values() |> List.flatten() |> Enum.filter(&attention?/1)
 
@@ -1857,12 +1952,31 @@ defmodule RavixWeb.WorkspaceLive do
   # before the rail has arrived; the rail's own row wins once it is here.
   defp assign_page_title(socket, requested \\ nil)
 
+  defp assign_page_title(%{assigns: %{settings: %{} = page} = assigns} = socket, _requested) do
+    scope =
+      case page do
+        %{kind: :project} ->
+          if assigns.project, do: assigns.project.display_name, else: "Project"
+
+        %{kind: :workspace, id: id} ->
+          Enum.find_value(
+            assigns.workspaces,
+            "Workspace",
+            &(&1.workspace.id == id && &1.workspace.name)
+          )
+
+        %{kind: :personal} ->
+          "You"
+      end
+
+    assign(socket, page_title: Settings.page_title(page.kind, page.section, scope))
+  end
+
   defp assign_page_title(%{assigns: %{project: nil, live_action: action}} = socket, _requested) do
     title =
       case action do
         :projects -> "Home"
         :schedules -> "Schedules"
-        :connections -> "Connected applications"
         :login -> "Sign in"
         _ -> "Inbox"
       end
@@ -1965,10 +2079,6 @@ defmodule RavixWeb.WorkspaceLive do
         search_plans: Ravix.Plans.titles(socket.assigns.current_user)
       )
 
-  # The settings dialog loads and holds its own four forms, so opening it is
-  # only opening it.
-  defp open_dialog(socket, :settings), do: assign(socket, dialog: :settings)
-
   # The people dialog loads its own list, so opening it is only opening it.
   defp open_dialog(socket, :people), do: assign(socket, dialog: :people)
 
@@ -1976,6 +2086,7 @@ defmodule RavixWeb.WorkspaceLive do
   defp open_dialog(socket, :account), do: assign(socket, dialog: :account, reconnect_agent: nil)
   defp open_dialog(socket, :help), do: assign(socket, dialog: :help)
   defp open_dialog(socket, :changes), do: assign(socket, dialog: :changes)
+  defp open_dialog(socket, :new_workspace), do: assign(socket, dialog: :new_workspace)
 
   defp unseen(socket) do
     changes = Accounts.unseen_changes(socket.assigns.current_user)
@@ -2066,8 +2177,14 @@ defmodule RavixWeb.WorkspaceLive do
   # by the server instead took the URL back from a link clicked while the
   # close was in flight, leaving that track on screen under the old address
   # (RAV-68).
-  defp dismiss(nil, _track_id), do: "dismiss"
-  defp dismiss(project, track_id), do: JS.patch("/p/#{project.id}" <> track_suffix(track_id))
+  # A settings page's URL is what a dialog opened over it goes back to.
+  defp dismiss(_project, _track_id, %{kind: :project} = page),
+    do: JS.patch(Settings.section_path(page.kind, page.id, page.section))
+
+  defp dismiss(nil, _track_id, _settings), do: "dismiss"
+
+  defp dismiss(project, track_id, _settings),
+    do: JS.patch("/p/#{project.id}" <> track_suffix(track_id))
 
   # Today's New track, while RAVIX_WORKSPACE_ACCESS is off.
   defp top_new_track(socket, project) do
@@ -2208,7 +2325,6 @@ defmodule RavixWeb.WorkspaceLive do
   defp track_project_id(socket),
     do: socket.assigns.track_project && socket.assigns.track_project.id
 
-  defp project_id(socket), do: socket.assigns.project && socket.assigns.project.id
   defp ref_id(%{number: number}), do: to_string(number)
   defp ref_id(%{name: name}), do: name
   defp ref_label(%{number: number, title: title}), do: "##{number} #{title}"

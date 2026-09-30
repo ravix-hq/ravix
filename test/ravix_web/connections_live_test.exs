@@ -28,8 +28,10 @@ defmodule RavixWeb.ConnectionsLiveTest do
       )
     )
 
-    {:ok, view, _} = live(log_in_user(conn, user), "/settings/connections")
-    assert page_title(view) == "Connected applications · Ravix"
+    {:ok, view, _} = live(log_in_user(conn, user), "/settings/connected-apps")
+    assert page_title(view) == "Connected apps · You · Ravix"
+    assert has_element?(view, ".settings-crumbs [aria-current=page]", "Connected apps")
+    assert has_element?(view, "#settings-nav-connected-apps[aria-current=page]")
     assert has_element?(view, "#yard[aria-label='Projects']")
     refute has_element?(view, ".landing, .invite, .inbox-empty")
     assert has_element?(view, "#connection-#{first.grant.id} h2", "Desktop test")
@@ -64,10 +66,30 @@ defmodule RavixWeb.ConnectionsLiveTest do
 
   test "empty connections and navigation stay in the workspace", %{conn: conn} do
     {:ok, view, _} = live(log_in_user(conn, insert_user()), "/home")
-    render_patch(view, "/settings/connections")
+    render_patch(view, "/settings/connected-apps")
     assert has_element?(view, "#connections-panel", "No applications connected.")
-    assert page_title(view) == "Connected applications · Ravix"
+    assert page_title(view) == "Connected apps · You · Ravix"
     refute has_element?(view, ".connection-card")
+  end
+
+  test "the old address and the bare one land on Connected apps", %{conn: conn} do
+    conn = log_in_user(conn, insert_user())
+    assert redirected_to(get(conn, "/settings/connections")) == "/settings/connected-apps"
+    assert redirected_to(get(conn, "/settings")) == "/settings/connected-apps"
+  end
+
+  test "an unknown personal section goes to the first one", %{conn: conn} do
+    assert {:error,
+            {:live_redirect,
+             %{to: "/settings/connected-apps", flash: %{"info" => "Settings page not found."}}}} =
+             live(log_in_user(conn, insert_user()), "/settings/nope")
+  end
+
+  test "the You menu opens personal settings", %{conn: conn} do
+    {:ok, view, _} = live(log_in_user(conn, insert_user()), "/home")
+    view |> element("#open-personal-settings") |> render_click()
+    assert_patch(view, "/settings/connected-apps")
+    assert has_element?(view, "#connections-panel")
   end
 
   test "revoking the session leaves the connections page", %{conn: conn} do
@@ -75,7 +97,7 @@ defmodule RavixWeb.ConnectionsLiveTest do
     {token, session} = insert_session(user)
 
     {:ok, view, _} =
-      live(Plug.Test.init_test_session(conn, %{session_token: token}), "/settings/connections")
+      live(Plug.Test.init_test_session(conn, %{session_token: token}), "/settings/connected-apps")
 
     Ravix.Accounts.end_session(session.token_hash)
     assert_redirect(view, "/login", 1_000)

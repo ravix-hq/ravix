@@ -287,7 +287,7 @@ defmodule RavixWeb.WorkspaceScopeLiveTest do
 
     {:ok, _} = Accounts.put_current_workspace(ctx.me, ctx.team.id)
     view = open(ctx.conn, "/p/#{ctx.team_project.id}")
-    render_click(view, "dialog", %{name: "settings"})
+    render_patch(view, "/p/#{ctx.team_project.id}/settings/workspace")
     render_async(view)
 
     move(ctx.team_project, ctx.personal.id)
@@ -377,7 +377,7 @@ defmodule RavixWeb.WorkspaceScopeLiveTest do
     # The disconnected render resolves the workspace the connected one will.
     assert switcher_name(html) == "Team"
     refute html =~ ~s(id="workspace-switcher-skeleton")
-    assert html =~ ~s(href="/w/#{ctx.team.id}")
+    assert html =~ ~s(href="/w/#{ctx.team.id}/settings/members")
     assert html =~ "rail-row-skeleton"
     assert html =~ "inbox-item-skeleton"
     refute html =~ "all caught up"
@@ -433,24 +433,25 @@ defmodule RavixWeb.WorkspaceScopeLiveTest do
     assert has_element?(view, "#workspace-switcher-trigger", "Team")
   end
 
-  test "the workspace menu opens the current workspace's settings and members", ctx do
+  test "the gear and the workspace menu open the current workspace's settings", ctx do
     view = open(ctx.conn, "/home")
+    members = "/w/#{ctx.personal.id}/settings/members"
 
+    # The header gear is named, and titled, "Workspace settings" (RAV-72).
     assert has_element?(
              view,
-             ~s(#workspace-menu #workspace-settings[href="/w/#{ctx.personal.id}"][aria-label="Settings and members of me"])
+             ~s(#workspace-settings-gear[href="#{members}"][aria-label="Workspace settings"][data-tip="Workspace settings"])
            )
 
-    # One settings entry point in the sidebar: no gear beside the name.
-    refute has_element?(view, ".workspace-gear")
+    assert has_element?(view, "#workspace-menu #workspace-settings", "Workspace settings")
 
     # The switcher's entries are choices, not links to that page.
     refute has_element?(view, ~s(#workspace-menu [role=group] a))
 
-    assert {:error, {:live_redirect, %{to: to}}} =
-             view |> element("#workspace-settings") |> render_click()
-
-    assert to == "/w/#{ctx.personal.id}"
+    view |> element("#workspace-settings-gear") |> render_click()
+    assert_patch(view, members)
+    assert has_element?(view, "#settings-title", "Members")
+    assert page_title(view) == "Members · me · Ravix"
   end
 
   test "Shared with you lists legacy projects shared into the personal workspace", ctx do
