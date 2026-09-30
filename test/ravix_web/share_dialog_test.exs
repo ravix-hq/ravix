@@ -115,6 +115,38 @@ defmodule RavixWeb.ShareDialogTest do
   end
 
   describe "the Share dialog" do
+    test "says where each person's access to the track comes from (RAV-75)", ctx do
+      open =
+        insert_track(
+          project: ctx.project,
+          title: "Open work",
+          created_by: ctx.owner.id,
+          created_by_login: ctx.owner.login
+        )
+
+      insert_project_member(ctx.project, ctx.creator, role: :write)
+      insert_track_member(open, ctx.holder, role: :read)
+      view = ctx.owner |> track_page(open) |> open_share()
+
+      assert has_element?(view, "#share-access-shareowner", "Admin")
+      assert has_element?(view, "#share-access-shareowner .people-source", "owner")
+      assert has_element?(view, "#share-access-sharecreator", "Write")
+      assert has_element?(view, "#share-access-sharecreator .people-source", "from project")
+      assert has_element?(view, "#share-access-shareholder", "Read")
+      assert has_element?(view, "#share-access-shareholder .people-source", "direct")
+      assert has_element?(view, "#share-access-sharecolleague .people-source", "from workspace")
+      refute has_element?(view, "#share-access-shareoutsider")
+
+      # A private track: its creator runs it, and a share is direct.
+      :ok = People.share(ctx.creator, ctx.secret.id, ctx.holder.id)
+      view = ctx.creator |> track_page(ctx.secret) |> open_share()
+      assert has_element?(view, "#share-access-sharecreator .people-source", "creator")
+      assert has_element?(view, "#share-access-shareholder", "Write")
+      assert has_element?(view, "#share-access-shareholder .people-source", "direct")
+      refute has_element?(view, "#share-access-shareowner")
+      refute has_element?(view, "#share-access-sharecolleague")
+    end
+
     test "replaces the invite dialog: no invitations, no invite link", ctx do
       view = ctx.creator |> track_page(ctx.secret) |> open_share()
 

@@ -294,6 +294,11 @@ defmodule Ravix.People do
   @doc """
   `set_role/4` one level up: a project member's role across every
   project-visible track and the project itself. The project's admins only.
+
+  On a workspace project a live member of its workspace with no membership
+  is given one (RAV-75, "Give a different role"): a direct grant, which
+  takes precedence over the workspace's Write whether it is higher or
+  lower. `remove_project/3` takes it away again.
   """
   @spec set_project_role(User.t(), String.t(), String.t(), String.t()) ::
           {:ok, [Store.person()]} | {:error, reason()}
@@ -302,10 +307,29 @@ defmodule Ravix.People do
          {:ok, role} <- parse_role(role),
          {:ok, target} <- find_person(strip_at(to_string(login))),
          :ok <- not_self(user, target),
-         :ok <- refuse_owner_role(project, target) do
-      if Store.set_project_member_role(project.id, target.id, role),
-        do: {:ok, Store.project_people_of(project.id, project.user_id)},
-        else: {:error, :not_found}
+         :ok <- refuse_owner_role(project, target),
+         :ok <- grant_project_role(project, target, role, user) do
+      project_people(user, project)
+    end
+  end
+
+  # A project member's role changes where it is. A member of the project's
+  # workspace with none is given one (RAV-75, "Give a different role"): a
+  # direct grant, which takes precedence over the workspace's default
+  # whether it is higher or lower. Anybody else is not in the project.
+  defp grant_project_role(project, target, role, user) do
+    cond do
+      Store.set_project_member_role(project.id, target.id, role) ->
+        :ok
+
+      Access.workspace_member?(project, target.id) ->
+        case Store.grant_project_role(project, target.id, role, user.id) do
+          :ok -> :ok
+          {:error, :not_workspace_member} -> {:error, :not_found}
+        end
+
+      true ->
+        {:error, :not_found}
     end
   end
 
@@ -429,7 +453,8 @@ defmodule Ravix.People do
          true <- workspace_sharing?(project) || {:error, :not_found},
          # ownership: `Access.track_access/2` admitted the caller to a track of
          # this workspace's project; the row is read for the name it shows.
-         %{name: name} <- Ravix.Workspaces.Store.live_workspace(project.workspace_id) do
+         %{name: name} <- Ravix.Workspaces.Store.live_workspace(project.workspace_id),
+         {:ok, reach} <- Access.track_people(user, track.id) do
       creator? = Access.creator?(user, track)
       holders = Map.get(Access.workspace_audience(project.id, [track.id]).permitted, track.id, [])
 
@@ -445,6 +470,8 @@ defmodule Ravix.People do
            track.visibility == :private and
              Access.require_track_manager(role, user, track, "share") == :ok,
          holders: Enum.map(holders, &Store.present_person/1),
+         access:
+           Enum.map(reach, fn {u, level, source} -> {Store.present_person(u), level, source} end),
          consent: if(consent_pending?(user, track), do: Ravix.Tracks.billing_notice_text(user))
        }}
     else
@@ -631,10 +658,72 @@ defmodule Ravix.People do
   @doc "Who can reach every track on this project."
   @spec list_project(User.t(), String.t()) :: {:ok, [Store.person()]} | {:error, :not_found}
   def list_project(%User{} = user, project_id) do
-    with {:ok, %{project: project}} <- Access.project_access(user, project_id) do
-      {:ok, Store.project_people_of(project.id, project.user_id)}
+    with {:ok, %{project: project}} <- Access.project_access(user, project_id),
+         do: project_people(user, project)
+  end
+
+  # Everyone who reaches the project, at their level and with where it comes
+  # from, as `Access.project_people/2` decides it (RAV-75), and the
+  # invitations nobody has taken up yet after them. A direct grant held by a
+  # member of the project's workspace says what removing it falls back to.
+  defp project_people(user, project) do
+    with {:ok, reach} <- Access.project_people(user, project.id) do
+      people =
+        Enum.map(reach, fn {person, level, source} ->
+          %{
+            Person.new(person, via_of(source))
+            | role: level,
+              source: source,
+              fallback: fallback(project, person, source)
+          }
+        end)
+
+      pending =
+        project.id
+        |> Store.project_invites_of()
+        |> Enum.map(&Person.pending(&1.login, &1.avatar_url))
+
+      {:ok, people ++ pending}
     end
   end
+
+  @typedoc "What a workspace project's people list opens with; see `workspace_base/2`."
+  @type workspace_base :: %{
+          workspace: String.t(),
+          members: non_neg_integer(),
+          level: Access.level()
+        }
+
+  @doc """
+  The base role on a project shared through its workspace (RAV-75): the
+  workspace's name, how many live members it has, and the level each of
+  them gets without a direct grant. Nil on a project that is not shared
+  that way. Anyone in the project may ask.
+  """
+  @spec workspace_base(User.t(), String.t()) ::
+          {:ok, workspace_base() | nil} | {:error, :not_found}
+  def workspace_base(%User{} = user, project_id) do
+    with {:ok, %{project: project}} <- Access.project_access(user, project_id) do
+      # ownership: `Access.project_access/2` admitted the caller to this
+      # workspace's project; the workspace is read for its name and size.
+      with true <- workspace_sharing?(project),
+           %{name: name} <- Ravix.Workspaces.Store.live_workspace(project.workspace_id) do
+        members = Ravix.Workspaces.Store.live_members(project.workspace_id)
+        {:ok, %{workspace: name, members: length(members), level: :write}}
+      else
+        _ -> {:ok, nil}
+      end
+    end
+  end
+
+  defp via_of(:owner), do: :owner
+  defp via_of(:direct), do: :project
+  defp via_of(:workspace), do: :workspace
+
+  defp fallback(project, person, :direct),
+    do: if(Access.workspace_member?(project, person.id), do: :write)
+
+  defp fallback(_project, _person, _source), do: nil
 
   @doc """
   Invite somebody to the whole project.
@@ -679,7 +768,7 @@ defmodule Ravix.People do
       # No `track_id`: this changed who is on every track of the project at
       # once, and the page re-reads the rail rather than one row.
       Ravix.Hub.publish(project.id, :people)
-      {:ok, Store.project_people_of(project.id, project.user_id)}
+      project_people(user, project)
     end
   end
 
@@ -692,6 +781,10 @@ defmodule Ravix.People do
 
   Returns the project's people, or `{:ok, :left}` when the caller has just
   removed their own access.
+
+  A live member of the project's workspace is not removed: they reach it
+  through the workspace whatever this says, so only their direct grant goes
+  and they fall back to the workspace's level (RAV-75).
   """
   @spec remove_project(User.t(), String.t(), String.t()) ::
           {:ok, [Store.person()] | :left} | {:error, reason()}
@@ -706,7 +799,7 @@ defmodule Ravix.People do
       if Access.allows?(level, :admin) and
            Store.remove_project_invite_by_login(project.id, wanted) do
         Ravix.Hub.publish(project.id, :people)
-        {:ok, Store.project_people_of(project.id, project.user_id)}
+        project_people(user, project)
       else
         remove_from_project(user, project, {role, level}, wanted)
       end
@@ -717,14 +810,26 @@ defmodule Ravix.People do
     with {:ok, target} <- find_person(wanted),
          :ok <- refuse_removing_owner(project, target),
          :ok <- may_remove(level, user, target) do
-      Store.remove_project_member(project.id, target.id)
-
-      # Nothing left to hand back to somebody who just removed their own
-      # access. The caller has to leave rather than re-render.
-      if target.id == user.id and role != :owner,
-        do: {:ok, :left},
-        else: {:ok, Store.project_people_of(project.id, project.user_id)}
+      if Access.workspace_member?(project, target.id) do
+        # RAV-75: a member of the project's workspace reaches it through the
+        # workspace whatever this says. What goes is their direct grant, and
+        # they fall back to the workspace's default; their tracks stay.
+        Store.drop_project_grant(project.id, target.id)
+        project_people(user, project)
+      else
+        leave_project(user, project, role, target)
+      end
     end
+  end
+
+  defp leave_project(user, project, role, target) do
+    Store.remove_project_member(project.id, target.id)
+
+    # Nothing left to hand back to somebody who just removed their own
+    # access. The caller has to leave rather than re-render.
+    if target.id == user.id and role != :owner,
+      do: {:ok, :left},
+      else: project_people(user, project)
   end
 
   # ── resolving a typed username ───────────────────────────────────────
