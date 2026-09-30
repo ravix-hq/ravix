@@ -714,6 +714,46 @@ defmodule Ravix.Tracks.Store do
     end
   end
 
+  @doc """
+  Close one thread of an open track (RAV-97): the row is stamped, never
+  deleted, so its transcript and history stay where they were; the tabs stop
+  showing it and the prompt queue stops sending to it. The track's last open
+  thread is not closed (`:last`): a track always has one to show. The open
+  threads are locked first, so two closes at once cannot take both of the
+  last two.
+  """
+  @spec close_thread(String.t(), String.t()) :: :ok | :last | :stale
+  def close_thread(track_id, thread_id) do
+    {:ok, result} =
+      Repo.transaction(fn ->
+        open =
+          Repo.all(
+            from(t in Thread,
+              where: t.track_id == ^track_id and is_nil(t.closed_at),
+              select: t.id,
+              lock: "FOR UPDATE"
+            )
+          )
+
+        cond do
+          thread_id not in open ->
+            :stale
+
+          length(open) < 2 ->
+            :last
+
+          true ->
+            Repo.update_all(from(t in Thread, where: t.id == ^thread_id),
+              set: [closed_at: DateTime.utc_now()]
+            )
+
+            :ok
+        end
+      end)
+
+    result
+  end
+
   @doc "The thread on this track that `conversation_id` belongs to."
   @spec thread_by_conversation(String.t(), String.t()) :: Thread.t() | nil
   def thread_by_conversation(track_id, conversation_id)

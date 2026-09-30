@@ -1467,7 +1467,7 @@ defmodule Ravix.TracksTest do
     end
   end
 
-  describe "rename_thread/4" do
+  describe "rename_thread/4 and close_thread/3" do
     setup do
       owner = insert_user(login: "owner")
       project = insert_project(user: owner)
@@ -1516,6 +1516,74 @@ defmodule Ravix.TracksTest do
                Tracks.rename_thread(ctx.owner, ctx.track.id, ctx.thread.id, "  ")
 
       assert Repo.get!(Thread, ctx.thread.id).title == "Theirs"
+    end
+
+    test "closing a thread archives it: hidden from the tabs, kept, and no longer prompted",
+         ctx do
+      test_pid = self()
+      stub(Ravix.Fountain, :client, fn -> FakeTransport.client([], verify: false) end)
+
+      stub(Ravix.Fountain, :interrupt, fn _client, id ->
+        send(test_pid, {:interrupted, id})
+        :ok
+      end)
+
+      assert :ok = Tracks.close_thread(ctx.owner, ctx.track.id, ctx.thread.id)
+      assert_receive {:hub, %Ravix.Hub.Event{name: :tracks}}
+      # A turn still running on it is stopped, off the request.
+      assert_receive {:interrupted, "next"}
+
+      # Archived, not deleted: the row and its conversation are still there.
+      assert %{closed_at: %DateTime{}, conversation_id: "next"} = Repo.get!(Thread, ctx.thread.id)
+      assert {:ok, [%{id: only}]} = Tracks.threads(ctx.owner, ctx.track.id)
+      assert only == ctx.track.id
+
+      assert {:error, {:conflict, "thread_closed", _}} =
+               Tracks.prompt(ctx.owner, ctx.track.id, %{
+                 "thread_id" => ctx.thread.id,
+                 "prompt" => "still there?"
+               })
+
+      # Closing it again finds nothing to close.
+      assert {:error, :not_found} = Tracks.close_thread(ctx.owner, ctx.track.id, ctx.thread.id)
+    end
+
+    test "the last open thread stays open, whichever it is", ctx do
+      stub(Ravix.Fountain, :client, fn -> FakeTransport.client([], verify: false) end)
+      stub(Ravix.Fountain, :interrupt, fn _client, _id -> :ok end)
+      assert :ok = Tracks.close_thread(ctx.owner, ctx.track.id, ctx.track.id)
+
+      assert {:error, {:conflict, "last_thread", _}} =
+               Tracks.close_thread(ctx.owner, ctx.track.id, ctx.thread.id)
+
+      assert is_nil(Repo.get!(Thread, ctx.thread.id).closed_at)
+      assert {:ok, [%{id: only}]} = Tracks.threads(ctx.owner, ctx.track.id)
+      assert only == ctx.thread.id
+    end
+
+    test "a reader, a stranger, another track and a closed track cannot close a thread", ctx do
+      reader = insert_user(login: "reader")
+      insert_track_member(ctx.track, reader, role: :read)
+
+      assert {:error, {:forbidden, _}} =
+               Tracks.close_thread(reader, ctx.track.id, ctx.thread.id)
+
+      stranger = insert_user(login: "stranger")
+
+      assert {:error, :not_found} =
+               Tracks.close_thread(stranger, ctx.track.id, ctx.thread.id)
+
+      other = insert_track(project: ctx.project)
+      assert {:error, :not_found} = Tracks.close_thread(ctx.owner, other.id, ctx.thread.id)
+
+      Repo.update_all(from(t in Track, where: t.id == ^ctx.track.id),
+        set: [closed_at: DateTime.utc_now()]
+      )
+
+      assert {:error, {:conflict, "track_closed", _}} =
+               Tracks.close_thread(ctx.owner, ctx.track.id, ctx.thread.id)
+
+      assert is_nil(Repo.get!(Thread, ctx.thread.id).closed_at)
     end
 
     test "a thread on another track, or a closed one, is not found", ctx do
