@@ -1211,6 +1211,16 @@ html[data-yard="closed"] .workspace-trigger-skeleton { flex: none; width: 28px; 
 /* ── the composer ──────────────────────────────────────────────────────── */
 
 .workspace-composer { width: 100%; max-width: none; padding: 8px 16px 16px; }
+/* RAV-91: the typing line is a fixed 18px just above the composer, in the
+   transcript's own 20px bottom padding rather than in the composer's flow,
+   so somebody starting or stopping typing never moves the composer, and the
+   jump-to-latest pill keeps its 12px above the box (RAV-93). */
+.workspace-composer { position: relative; }
+.workspace-composer .typing-notice {
+  position: absolute; left: 16px; right: 16px; bottom: 100%; z-index: 1;
+  height: 18px; margin: 0; font-size: 12px; line-height: 18px; pointer-events: none;
+  overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+}
 .composer-box {
   border: 1px solid var(--line-strong); border-radius: 12px; background: var(--panel);
   transition: border-color 80ms ease;
@@ -2322,6 +2332,7 @@ section.first-prompt#project-start { align-self: center; padding: 32px 24px; }
   .transcript-scroll { padding-inline: 12px; }
   .transcript-scroll::before { margin-inline: -12px; }
   .workspace-composer { padding: 12px; }
+  .workspace-composer .typing-notice { left: 12px; right: 12px; }
   /* The rail goes, and with it the picker's home; on the sign-in page it
      moves under the card instead, where the card has left room for it. */
   .signin-page { padding-bottom: 96px; }
@@ -2532,26 +2543,32 @@ section.first-prompt#project-start { align-self: center; padding: 32px 24px; }
 /* Keep the current page usable while a request or navigation is in flight.
    LiveView owns event classes, so concurrent requests and failures clear with
    the request that owns them. Async work uses a local loading-status instead.
-   It sits in the toasts' corner rather than over the page's header (RAV-91),
-   where it covered the title and Share for as long as it was up, and lifts
-   the toasts above it while it shows. */
+   RAV-91: a 2px bar along the top edge of the page, not a toast over the
+   header, which covered its chips and Share for as long as it was up. It
+   stays transparent for its first 400ms, so a quick round trip (Ask and
+   Comment, a tab) never flashes it; its words are for assistive tech. */
 #request-progress {
-  display: none; position: fixed; right: 16px; bottom: 16px;
-  z-index: 70; max-width: calc(100vw - 32px); padding: 9px 14px;
-  gap: 8px; align-items: center; pointer-events: none;
-  color: var(--ink); background: var(--panel); border: 1px solid var(--line);
-  border-radius: var(--radius); box-shadow: 0 4px 16px var(--shadow); font-size: 12px;
+  display: none; position: fixed; top: 0; left: 0; right: 0; height: 2px;
+  z-index: 70; overflow: hidden; pointer-events: none;
+  background: var(--accent-soft);
+  animation: request-progress-in 1ms linear 400ms both;
+}
+#request-progress::before {
+  content: ""; position: absolute; top: 0; bottom: 0; left: 0; width: 40%;
+  background: var(--accent);
+  animation: request-progress-slide 1100ms ease-in-out 400ms infinite;
 }
 html.page-loading #request-progress,
 body:has(.phx-click-loading, .phx-submit-loading, .phx-change-loading) #request-progress {
-  display: flex;
-}
-html.page-loading .toasts,
-body:has(.phx-click-loading, .phx-submit-loading, .phx-change-loading) .toasts {
-  bottom: 64px;
+  display: block;
 }
 body:has(.phx-error) #request-progress { display: none; }
-body:has(.phx-error) .toasts { bottom: 16px; }
+@keyframes request-progress-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes request-progress-slide { from { transform: translateX(-100%); } to { transform: translateX(250%); } }
+/* Still after 400ms, but a full bar rather than a moving one. */
+@media (prefers-reduced-motion: reduce) {
+  #request-progress::before { width: 100%; animation: none; }
+}
 .loading-status { display: flex; align-items: center; gap: 8px; color: var(--dim); font-size: 13px; }
 .loading-spinner {
   display: inline-block; width: 14px; height: 14px; flex: none;

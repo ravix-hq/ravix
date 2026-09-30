@@ -1325,7 +1325,8 @@ test('slow navigation and requests show feedback until their response arrives', 
   await page.emulateMedia({ reducedMotion: 'reduce' });
   await page.locator('#new-project-dialog button.x').click();
   await expect(page.locator('#request-progress')).toBeVisible();
-  await expect(page.locator('#request-progress .loading-spinner')).toHaveCSS('animation-name', 'none');
+  // RAV-91: a still, full bar under reduced motion.
+  expect(await page.locator('#request-progress').evaluate(el => getComputedStyle(el, '::before').animationName)).toBe('none');
   await expect(page.locator('#request-progress')).toBeHidden();
   await page.evaluate(() => window.liveSocket.disableLatencySim());
 });
