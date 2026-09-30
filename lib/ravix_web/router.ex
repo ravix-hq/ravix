@@ -10,6 +10,7 @@ defmodule RavixWeb.Router do
   use RavixWeb, :router
 
   pipeline :browser do
+    plug :unknown_page_format
     plug :accepts, ["html"]
     plug :fetch_session
     plug :fetch_live_flash
@@ -22,6 +23,7 @@ defmodule RavixWeb.Router do
     }
 
     plug RavixWeb.Plugs.CurrentUser
+    plug :unknown_page
   end
 
   pipeline :api do
@@ -130,6 +132,35 @@ defmodule RavixWeb.Router do
       live "/welcome/agent", OnboardingLive, :agent
       live "/welcome/github", OnboardingLive, :github
       live "/welcome/project", OnboardingLive, :project
+
+      # Anything else, last: for somebody signed in, "Page not found" in the
+      # app shell rather than a page with no way on (RAV-100). See
+      # `unknown_page/2` for everybody else.
+      live "/*unknown_path", WorkspaceLive, :not_found
     end
   end
+
+  # The catch-all above is a page, so only a browser asking for HTML gets it;
+  # anything else (an OAuth or MCP client probing for a document) keeps the
+  # plain 404 that falls back cleanly. Runs before `accepts`, which would
+  # otherwise answer such a client 406.
+  defp unknown_page_format(%{path_params: %{"unknown_path" => _}} = conn, _opts) do
+    Phoenix.Controller.accepts(conn, ["html"])
+  rescue
+    Phoenix.NotAcceptableError ->
+      raise Phoenix.Router.NoRouteError, conn: conn, router: __MODULE__
+  end
+
+  defp unknown_page_format(conn, _opts), do: conn
+
+  # A stranger has no shell to be shown and gets the static 404 page
+  # (`RavixWeb.ErrorHTML`); somebody signed in gets the shell's, still as a
+  # 404, which is what the dead render sends.
+  defp unknown_page(%{path_params: %{"unknown_path" => _}} = conn, _opts) do
+    if conn.assigns[:current_user],
+      do: Plug.Conn.put_status(conn, :not_found),
+      else: raise(Phoenix.Router.NoRouteError, conn: conn, router: __MODULE__)
+  end
+
+  defp unknown_page(conn, _opts), do: conn
 end

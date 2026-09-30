@@ -706,22 +706,33 @@ defmodule RavixWeb.WorkspaceLiveTest do
     assert {:error, {:live_redirect, %{to: "/"}}} = live(log_in_user(conn, user), "/login")
   end
 
-  test "home actions open fresh project forms and recent projects stay scoped", %{conn: conn} do
+  test "Add a project opens a fresh form and Home's recent tracks stay scoped", %{conn: conn} do
     user = insert_user()
     own = insert_project(user: user, name: "Recent work")
+    track = insert_track(project: own, created_by_login: user.login, title: "Tidy the router")
     hidden = insert_project(user: insert_user(), name: "Private work")
+    insert_track(project: hidden, title: "Somebody else's work")
     {:ok, view, _} = live(log_in_user(conn, user), "/home")
     render_async(view)
-    assert has_element?(view, ".home-recent a[href='/p/#{own.id}']", "Recent work")
+
+    assert has_element?(
+             view,
+             "#home-track-#{track.id}[href='/p/#{own.id}/t/#{track.id}']",
+             "Recent work"
+           )
+
     refute render(view) =~ hidden.name
-    refute has_element?(view, ".home-action[disabled]", "Open a local project")
-    view |> element(".home-action", "New project") |> render_click()
+    refute render(view) =~ "Somebody else"
+    # The sidebar's "Add a project" is the one way in; Home has no copy of it.
+    refute has_element?(view, "#home button")
+    add = element(view, "#yard button.yard-item", "Add a project")
+    render_click(add)
     view |> form("#new-project-form", new_project: [name: "Abandoned name"]) |> render_change()
     render_click(view, "dismiss")
-    view |> element(".home-action", "New project") |> render_click()
+    render_click(add)
     # A pristine form renders no `value` at all, which is how the field
     # comes up empty; the point of the assertion is that the abandoned name
-    # is not still in it. The one home action opens the repository form.
+    # is not still in it. Add a project opens the repository form.
     assert has_element?(view, "#project-name:not([value])")
     assert has_element?(view, "#project-repo")
     refute render(view) =~ "Abandoned name"
@@ -1258,7 +1269,12 @@ defmodule RavixWeb.WorkspaceLiveTest do
     People.add_project_member(project.id, member.id, owner.id)
     {:ok, project_member, _} = live(log_in_user(conn, member), "/home")
     render_async(project_member)
-    assert has_element?(project_member, ".home-recent a[href='/p/#{project.id}']", label)
+
+    assert has_element?(
+             project_member,
+             ".home-recent a[href='/p/#{project.id}/t/#{track.id}'] .recent-meta",
+             label
+           )
 
     {:ok, own, _} = live(log_in_user(conn, owner), "/p/#{project.id}")
     render_async(own)

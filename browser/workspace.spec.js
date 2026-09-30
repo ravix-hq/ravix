@@ -12,20 +12,32 @@ async function primaryAppearance(locator) {
   });
 }
 
+// Home's recent tracks (RAV-100): the title and the age line up row to row,
+// and a long name wraps inside its row rather than pushing it wider.
 async function recentColumns(page) {
-  const rows = page.locator('.home-recent .pick-row');
+  const rows = page.locator('.home-recent .recent-row');
   expect(await rows.count()).toBeGreaterThanOrEqual(2);
   const columns = await rows.evaluateAll((elements) => elements.map((row) => {
-    const name = row.querySelector('.project-label').getBoundingClientRect();
-    const repo = row.querySelector('.meta').getBoundingClientRect();
-    return { name: name.x, repo: repo.x, right: repo.right, overflow: row.scrollWidth > row.clientWidth };
+    const title = row.querySelector('.recent-main').getBoundingClientRect();
+    const age = row.querySelector('.track-age').getBoundingClientRect();
+    return { title: title.x, age: age.right, right: row.getBoundingClientRect().right, overflow: row.scrollWidth > row.clientWidth };
   }));
   for (const column of columns) {
-    expect(column.name).toBeCloseTo(columns[0].name, 0);
-    expect(column.repo).toBeCloseTo(columns[0].repo, 0);
+    expect(column.title).toBeCloseTo(columns[0].title, 0);
+    expect(column.age).toBeCloseTo(columns[0].age, 0);
     expect(column.right).toBeLessThanOrEqual(page.viewportSize().width);
     expect(column.overflow).toBe(false);
   }
+}
+
+// A track in the open project, from the sidebar's +, with the defaults.
+// Its setup turn finishes while it is on screen, so it leaves nothing
+// unread behind for the Inbox.
+async function openTrackHere(page) {
+  await page.locator('#yard .workspace-project.current .project-add').click();
+  await page.getByRole('button', { name: 'Create track', exact: true }).click();
+  await expect(page).toHaveURL(url => url.pathname.includes('/t/'));
+  await expect(page.locator('#track-setup-status')).toHaveCount(0, { timeout: 60_000 });
 }
 
 async function accessible(page) {
@@ -324,16 +336,19 @@ test.describe.serial('first visit, then the account dialog', () => {
 });
 
 test('home quick start creates a scratch project and recent navigation survives theme changes', async ({ page }) => {
-  await signIn(page);
+  // Its own person: the tracks made here would otherwise be in every other
+  // test's rail and Inbox.
+  await signInAs(page, 'homerecent');
   await connectClaude(page);
   await page.getByRole('link', { name: 'Home', exact: true }).first().click();
   await expect(page.getByRole('button', { name: /Open a local project/ })).toHaveCount(0);
   await accessible(page);
   await capture(page, 'home-empty');
-  // With no project yet, /home is the first-prompt form (first-run.spec.js),
-  // with New project still there for a project without a track.
+  // With no project yet, /home is the first-prompt form (first-run.spec.js);
+  // a project without a track is the sidebar's "Add a project" (RAV-100).
   await expect(page.locator('#home-start')).toBeVisible();
-  await page.getByRole('button', { name: /^New project/ }).click();
+  await expect(page.locator('#home').getByRole('button', { name: /New project/ })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Add a project', exact: true }).first().click();
   await page.getByLabel('Project name', { exact: true }).fill('Quick start quality');
   const repository = page.getByLabel('Repository', { exact: true });
   await expect(repository).toHaveValue('');
@@ -346,15 +361,20 @@ test('home quick start creates a scratch project and recent navigation survives 
   await expect(page.locator('.crumbs')).toContainText('Quick start quality');
   await capture(page, 'project-empty');
   await page.getByRole('link', { name: 'Home', exact: true }).first().click();
-  const recent = page.getByRole('region', { name: 'Recent projects' });
-  await expect(recent).toContainText('Quick start quality');
-  await expect(recent).toContainText('no repository');
-  await page.getByRole('button', { name: /^New project/ }).click();
+  const recent = page.getByRole('region', { name: 'Recent tracks' });
+  await expect(recent).toContainText('No open tracks yet');
+  await page.locator('#yard .workspace-project', { hasText: 'Quick start quality' })
+    .getByRole('link', { name: /Quick start quality/ }).first().click();
+  await openTrackHere(page);
+  await page.getByRole('button', { name: 'Add a project', exact: true }).first().click();
   await page.getByLabel('Project name', { exact: true }).fill('A much longer project name to verify columns and narrow screen wrapping');
   await page.getByRole('button', { name: 'Create project', exact: true }).click();
   await expect(page.locator('#crumb-plans')).toBeVisible();
+  await openTrackHere(page);
   await page.getByRole('link', { name: 'Home', exact: true }).first().click();
   await expect(recent.getByRole('link')).toHaveCount(2);
+  await expect(recent).toContainText('Quick start quality');
+  await expect(recent).toContainText('@homerecent');
   await recentColumns(page);
   for (const theme of ['Ravix', 'Daylight']) {
     await chooseTheme(page, theme);
@@ -363,10 +383,14 @@ test('home quick start creates a scratch project and recent navigation survives 
   }
   await page.reload();
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'daylight');
-  await recent.getByRole('link', { name: /Quick start quality/ }).click();
-  await expect(page).toHaveURL(/\/p\//);
-  await expect(page.locator('#crumb-plans')).toBeVisible();
-  await expect(page.locator('.crumbs')).toContainText('Quick start quality');
+  // Opening each track reads its setup reply, so the Inbox below is empty.
+  await recent.getByRole('link', { name: /in A much longer project name/ }).click();
+  await expect(page).toHaveURL(/\/p\/.+\/t\//);
+  await expect(page.locator('.track-crumbs')).toBeVisible();
+  await page.getByRole('link', { name: 'Home', exact: true }).first().click();
+  await recent.getByRole('link', { name: /in Quick start quality/ }).click();
+  await expect(page).toHaveURL(/\/p\/.+\/t\//);
+  await expect(page.locator('.track-crumbs')).toBeVisible();
   // Exact: an empty inbox must not put a "0" badge in the link's name.
   await page.getByRole('link', { name: 'Inbox', exact: true }).first().click();
   await expect(page.getByRole('heading', { name: "You're all caught up" })).toBeVisible();
@@ -1165,7 +1189,7 @@ test('shared project prefixes stay muted and truncate across every theme', async
   await signIn(page);
   await connectClaude(page);
   await page.getByRole('link', { name: 'Home', exact: true }).first().click();
-  await page.getByRole('button', { name: /^New project/ }).click();
+  await page.getByRole('button', { name: 'Add a project', exact: true }).first().click();
   const name = 'Shared project with a deliberately long name for a narrow rail';
   await page.getByLabel('Project name', { exact: true }).fill(name);
   await page.getByRole('button', { name: 'Create project', exact: true }).click();
