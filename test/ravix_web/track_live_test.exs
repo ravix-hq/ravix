@@ -4370,6 +4370,29 @@ defmodule RavixWeb.TrackLiveTest do
       assert has_element?(ctx.view, "#panel-asleep")
       chip(ctx.view, "Asleep", "Your next message wakes it.")
       assert has_element?(ctx.view, "#thread-tab-#{ctx.track.id}[aria-label$='· Idle']")
+
+      # Something else woke it (a terminal): the dock's probe finds it
+      # running, the refused tab is read again, and both leave Asleep.
+      stub(Tracks, :files, fn _, _, path ->
+        {:ok,
+         %Files.Listing{
+           path: path || ctx.track.workdir,
+           truncated: false,
+           entries: [%Files.Entry{name: "awake.txt", type: "file", size: 1}]
+         }}
+      end)
+
+      send(
+        ctx.view.pid,
+        {:machine_probe, ctx.track.id,
+         %Terminal.Status{available: true, why: nil, cwd: ctx.track.workdir}}
+      )
+
+      render(ctx.view)
+      render_async(ctx.view)
+      assert has_element?(ctx.view, ".file-explorer", "awake.txt")
+      refute has_element?(ctx.view, "#panel-asleep")
+      assert has_element?(ctx.view, "#track-machine-state .chip-label", "Idle")
     end
   end
 

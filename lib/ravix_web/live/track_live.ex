@@ -899,7 +899,12 @@ defmodule RavixWeb.TrackLive do
   def handle_info({:machine_probe, track_id, probe}, socket) do
     if track_id == socket.assigns.track_id do
       slept = socket.assigns.track && socket.assigns.track.sandbox_suspended_at
-      {:noreply, socket |> assign(machine_probe: probe && {probe, slept}) |> assign_turn()}
+
+      {:noreply,
+       socket
+       |> assign(machine_probe: probe && {probe, slept})
+       |> reread_refused(probe)
+       |> assign_turn()}
     else
       {:noreply, socket}
     end
@@ -3000,6 +3005,18 @@ defmodule RavixWeb.TrackLive do
   defp refused_asleep?(%{panel: panel, git: git}),
     do: panel.data == :machine_asleep or match?(%{asleep?: true}, git)
 
+  # A probe that finds the machine running (a terminal woke it, say) is the
+  # machine awake, so a pane or Git status it had refused as asleep is read
+  # again (RAV-91): the refusal is `@turn`'s Asleep, and is not left to hold
+  # the chip there once the machine answers.
+  defp reread_refused(socket, %{available: true}) do
+    socket
+    |> then(&if(&1.assigns.panel.data == :machine_asleep, do: reload_panel(&1), else: &1))
+    |> then(&if(match?(%{asleep?: true}, &1.assigns.git), do: load_git(&1), else: &1))
+  end
+
+  defp reread_refused(socket, _probe), do: socket
+
   # The header chip's state, corrected and qualified by what the dock's probe
   # knows that the track row does not: that the machine is in fact running
   # (the row's Asleep is cleared on the way --- unless the row has recorded
@@ -3251,11 +3268,8 @@ defmodule RavixWeb.TrackLive do
   defp after_turn(
          socket,
          %TranscriptEvent{kind: :stage, stage: "turn", state: "started"}
-       ) do
-    socket
-    |> then(&if(&1.assigns.panel.data == :machine_asleep, do: reload_panel(&1), else: &1))
-    |> then(&if(match?(%{asleep?: true}, &1.assigns.git), do: load_git(&1), else: &1))
-  end
+       ),
+       do: reread_refused(socket, %{available: true})
 
   defp after_turn(socket, %TranscriptEvent{} = event) do
     cond do
