@@ -184,13 +184,70 @@ defmodule Ravix.Tracks.Track do
 
   A track opens titled with its branch; once RAV-48 titles it, or a person
   renames it, that title is the name and the branch is not repeated beside
-  it. Until then the branch stands in, less the `ravix/` every Ravix branch
-  shares, which tells no two tracks apart.
+  it. Until then the branch stands in, read as words: less the `ravix/`
+  every Ravix branch shares, which tells no two tracks apart, with its
+  hyphens as spaces, an issue key and the usual acronyms in capitals, and a
+  capital first letter, so `ravix/draft-adr-0009-proposed-workspaces` is
+  "Draft ADR 0009 proposed workspaces". The raw branch is `tooltip/1`'s.
   """
   @spec label(%{:title => String.t(), optional(atom()) => any()}) :: String.t()
+  def label(%{title: title, branch: title}) when is_binary(title), do: humanize(title)
+
   def label(%{title: title}) when is_binary(title) do
     namespace = Ravix.Ids.branch_namespace()
     if title != namespace, do: String.replace_prefix(title, namespace, ""), else: title
+  end
+
+  @doc """
+  What a track's name says on hover: `label/1`, and under it the branch,
+  raw, whenever the label does not already spell it out.
+  """
+  @spec tooltip(%{:title => String.t(), optional(atom()) => any()}) :: String.t()
+  def tooltip(%{branch: branch} = track) when is_binary(branch) do
+    case label(track) do
+      ^branch -> branch
+      label -> label <> "\n" <> branch
+    end
+  end
+
+  def tooltip(track), do: label(track)
+
+  # Words that are read as letters. Short and common on purpose: a word not
+  # here keeps the case the branch gave it.
+  @acronyms MapSet.new(~w(
+    acp adr ai api aws ci cd cli css csv db dns gh html http https id ios js json jwt
+    llm mcp oauth pr sdk sql ssh sso ts ui url ux xml yaml
+  ))
+
+  defp humanize(branch) do
+    name = label(%{title: branch})
+
+    words =
+      name
+      |> String.split(~r/[-_\s]+/u, trim: true)
+      |> issue_key()
+      |> Enum.map(&if(MapSet.member?(@acronyms, &1), do: String.upcase(&1), else: &1))
+
+    case words do
+      [] -> name
+      [first | rest] -> Enum.join([upcase_first(first) | rest], " ")
+    end
+  end
+
+  # `rav-83-…` names issue RAV-83: the key keeps its hyphen, in capitals.
+  defp issue_key([key, number | rest]) do
+    if String.match?(key, ~r/^[a-z]{2,10}$/) and String.match?(number, ~r/^\d+$/),
+      do: [String.upcase(key) <> "-" <> number | rest],
+      else: [key, number | rest]
+  end
+
+  defp issue_key(words), do: words
+
+  defp upcase_first(word) do
+    case String.next_grapheme(word) do
+      {first, rest} -> String.upcase(first) <> rest
+      nil -> word
+    end
   end
 
   @doc "The four things a track can be started from."
