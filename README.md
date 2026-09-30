@@ -51,6 +51,37 @@ Phoenix; no real GitHub account or cloud machine is used. For alternate ports,
 set `PORT`, `MOCK_PORT`, and `MOCK_SPRITES_PORT`; set the mock's `RAVIX_URL` to
 the corresponding Phoenix URL when launching `bun mock/server.ts` directly.
 
+### Against the real dev GitHub App
+
+`ravix-hq-dev` is a private GitHub App in the `ravix-hq` org for local
+development (RAV-35). It has production's permissions, but its callback is
+`http://localhost:4000/api/auth/callback` (and the `127.0.0.1` equivalent) and
+its setup URL is `http://localhost:4000/api/auth/install`. Its credentials are in
+the Infisical `ravix` project, **dev** environment, under the **`/app`** folder:
+`GITHUB_APP_ID`, `GITHUB_APP_SLUG`, `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`,
+`GITHUB_PRIVATE_KEY` and `PREVIEW_DOMAIN` (`preview.localhost`).
+
+```sh
+infisical run --projectId f382332b-11a1-4573-a986-78c1729dbc70 \
+  --env=dev --path=/app -- mix phx.server
+```
+
+Then sign in at [localhost:4000](http://localhost:4000) with your GitHub
+account. Install the app on the `ravix-hq` repositories you want to use from
+<https://github.com/apps/ravix-hq-dev>. Because it is private, it can't be
+installed on repositories outside the org.
+
+- **Fountain and Sprites aren't included.** To open tracks or run previews, add
+  `FOUNTAIN_URL`/`FOUNTAIN_API_KEY` for a Fountain team you own, and
+  `SPRITES_TOKEN` for previews and the terminal.
+- **The values are kept out of the environment's root on purpose.** `mix mcp.env`
+  exports only the root, and `config/runtime.exs` reads `GITHUB_*` in every
+  environment. A shell carrying them would change what `mix test` sees, and a
+  multi-line PEM would break `.env`. Don't run the tests inside `infisical run
+  --path=/app`.
+- **Another port needs another callback URL.** Add it to the app's settings
+  before signing in on a `PORT` other than 4000.
+
 ## Product surfaces
 
 - `/` and `/inbox`: projects and tracks needing attention.
