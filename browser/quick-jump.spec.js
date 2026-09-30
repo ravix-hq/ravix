@@ -72,7 +72,8 @@ test('Ctrl+K opens quick jump from the composer, keeps every key and stays put',
   const label = dialog.locator('[data-jump-result] .search-label', { hasText: 'rav-83-' });
   expect(await label.evaluate(el => [getComputedStyle(el).textOverflow, el.scrollWidth > el.clientWidth]))
     .toEqual(['ellipsis', true]);
-  await expect(label.locator('xpath=..')).toHaveAttribute('title', `ravix/${long}`);
+  // The full name is the row's tooltip: `Track.label/1`, as the sidebar says it (RAV-83).
+  await expect(label.locator('xpath=..')).toHaveAttribute('title', long);
   // The group header is muted text with a count, not a link-blue heading.
   const header = dialog.locator('h3').first();
   await expect(header.locator('.search-count')).toHaveText('2');

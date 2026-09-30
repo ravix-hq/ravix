@@ -4,11 +4,11 @@ defmodule RavixWeb.WorkspaceLive do
 
   alias RavixWeb.Live.NewProject
 
-  alias Ravix.{Accounts, Hub, Ids, People, Projects, Schedules, Tracks, Workspaces}
+  alias Ravix.{Accounts, Hub, People, Projects, Schedules, Tracks, Workspaces}
   alias Ravix.Accounts.Access
   alias Ravix.Hub.Event
   alias Ravix.Projects.Sections
-  alias Ravix.Tracks.MachineState
+  alias Ravix.Tracks.{MachineState, Track}
   alias Ravix.Workspaces.{Picker, Repositories}
   alias RavixWeb.Live.Form
   alias RavixWeb.Live.Guard
@@ -1997,7 +1997,7 @@ defmodule RavixWeb.WorkspaceLive do
              (requested && requested.id == assigns.track_id && requested) do
         nil when assigns.live_action == :plans -> "Plans · " <> project.display_name
         nil -> project.display_name
-        track -> track.title <> " · " <> project.display_name
+        track -> Track.label(track) <> " · " <> project.display_name
       end
 
     assign(socket, page_title: title <> " · Ravix")
@@ -2040,7 +2040,7 @@ defmodule RavixWeb.WorkspaceLive do
   end
 
   defp notice_threads(%{status: :setup_failed} = track),
-    do: [%{id: track.id, title: track.title, status: :failed}]
+    do: [%{id: track.id, title: Track.label(track), status: :failed}]
 
   defp notice_threads(%{setup_state: state}) when state in ["pending", "running", "retry"],
     do: []
@@ -2053,7 +2053,11 @@ defmodule RavixWeb.WorkspaceLive do
     %{
       id: track.id,
       thread_id: thread.id,
-      title: if(thread.id == track.id, do: track.title, else: "#{track.title} · #{thread.title}"),
+      title:
+        if(thread.id == track.id,
+          do: Track.label(track),
+          else: "#{Track.label(track)} · #{thread.title}"
+        ),
       project: project && project.display_name,
       status: thread.status,
       mention: Map.get(thread, :mention) && thread.mention.author_login
@@ -2423,17 +2427,10 @@ defmodule RavixWeb.WorkspaceLive do
     end
   end
 
-  # A track's display name, wherever a track is listed by name: the sidebar
-  # and quick jump. One place, so real titles (RAV-83) change both.
-  defp tab_label(%{title: title}) do
-    namespace = Ids.branch_namespace()
-    if title != namespace, do: String.replace_prefix(title, namespace, ""), else: title
-  end
-
   # The link's accessible name: what the tab draws, less the abbreviation.
   defp tab_name(track) do
     [
-      track.title,
+      Track.label(track),
       "created by @#{track.created_by_login}",
       track.origin.kind == :plan && "from a project plan",
       MachineState.label(tab_machine(track).state),
@@ -2620,10 +2617,10 @@ defmodule RavixWeb.WorkspaceLive do
         id={"search-track-link-#{track.id}"}
         patch={"/p/#{project.id}/t/#{track.id}"}
         class="workspace-track"
-        title={track.title}
+        title={Track.label(track)}
         data-jump-result
       >
-        <span class="search-label">{tab_label(track)}</span><span :if={track.visibility == :private}><.icon name="lock" />
+        <span class="search-label">{Track.label(track)}</span><span :if={track.visibility == :private}><.icon name="lock" />
         Private</span>
         <span :if={attention?(track)} class="badge" aria-label="1 unread">1</span>
       </.link>

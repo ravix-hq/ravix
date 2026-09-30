@@ -781,7 +781,6 @@ html[data-yard="closed"] .workspace-trigger-skeleton { flex: none; width: 28px; 
 .track-crumbs .project-crumb.long { flex: 0 1 auto; min-width: calc(25px + 12ch); }
 .track-crumbs .track-title-crumb { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .track-crumbs .track-title-crumb.long { flex: 0 1 auto; min-width: 17ch; }
-.track-crumbs .track-branch { display: block; flex: 0 10000 auto; min-width: 3.5rem; max-width: 33%; }
 /* Label columns are `minmax(0, max-content)`: a grid's smallest width
    counts a column's minimum rather than its text, which is what lets a chip
    give way to its icon while a flex chip would stop at its longest word. */
@@ -1969,7 +1968,6 @@ section.first-prompt#project-start { align-self: center; padding: 32px 24px; }
   .track-crumbs { flex-wrap: nowrap; }
   .track-crumbs .project-crumb.long { min-width: calc(25px + 4ch); }
   .track-crumbs .track-title-crumb.long { min-width: 8ch; }
-  .track-crumbs .track-branch { min-width: 2.5rem; }
   .workspace-welcome { padding: 24px; }
   .said { max-width: 100%; }
   .transcript-scroll { padding-inline: 12px; }

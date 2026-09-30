@@ -10,7 +10,7 @@ defmodule RavixWeb.WorkspaceLiveTest do
   alias Ravix.GitHub.{ChecksReport, Shapes}
   alias Ravix.Hub.Event
   alias Ravix.People.Store, as: People
-  alias Ravix.Tracks.{Diff, Files, Follower, Setup}
+  alias Ravix.Tracks.{Diff, Files, Follower, Setup, Track}
   alias Ravix.Tracks.Transcript
   alias RavixWeb.Live.Guard
 
@@ -105,6 +105,55 @@ defmodule RavixWeb.WorkspaceLiveTest do
   test "sign in has its own document title", %{conn: conn} do
     {:ok, view, _} = live(conn, "/login")
     assert page_title(view) == "Sign in · Ravix"
+  end
+
+  test "a titled track is named by its title, never its branch, wherever it is listed",
+       %{conn: conn} do
+    user = insert_user()
+    project = insert_project(user: user, name: "Label project")
+    titled = insert_track(project: project, title: "Pull Latest Main", branch: "ravix/crewe")
+    untitled = insert_track(project: project, title: "ravix/fix-login", branch: "ravix/fix-login")
+
+    rows =
+      for row <- [titled, untitled],
+          do: %{Tracks.present(row, project: project) | status: :ready, unread: true}
+
+    stub(Tracks, :list, fn _, _, _opts -> {:ok, rows} end)
+    {:ok, view, _} = live(log_in_user(conn, user), "/inbox")
+    render_async(view)
+
+    card = fn row -> element(view, ~s|.inbox-item[href^="/p/#{project.id}/t/#{row.id}?"]|) end
+    tab = fn row -> element(view, "#project-track-tab-#{row.id}") end
+
+    # The Inbox and the sidebar say the title, and nothing of the branch.
+    assert render(card.(titled)) =~ "<strong>Pull Latest Main</strong>"
+    refute render(card.(titled)) =~ "crewe"
+    assert render(tab.(titled)) =~ ~s|<span class="track-title">Pull Latest Main</span>|
+    refute render(tab.(titled)) =~ "crewe"
+
+    # Until it is titled, a track goes by its branch less the namespace.
+    assert render(card.(untitled)) =~ "<strong>fix-login</strong>"
+    refute render(card.(untitled)) =~ "ravix/fix-login"
+    assert render(tab.(untitled)) =~ ~s|<span class="track-title">fix-login</span>|
+    refute render(tab.(untitled)) =~ "ravix/fix-login"
+
+    # Quick jump reads the same label, and still finds a track by its branch.
+    render_click(view, "dialog", %{name: "search"})
+    view |> form("#search-form", q: "crewe") |> render_change()
+    result = element(view, "#search-track-link-#{titled.id}")
+    assert render(result) =~ ~s|<span class="search-label">Pull Latest Main</span>|
+    refute render(result) =~ "ravix/crewe"
+
+    # The project's recent tracks, and the page title of an open track.
+    render_patch(view, "/p/#{project.id}")
+    recent = view |> element("#project-start") |> render()
+    assert recent =~ "Pull Latest Main"
+    assert recent =~ "fix-login"
+    refute recent =~ "ravix/"
+
+    stub_track(titled)
+    render_patch(view, "/p/#{project.id}/t/#{titled.id}")
+    assert page_title(view) == "Pull Latest Main · Label project · Ravix"
   end
 
   test "inbox opens the unread non-default thread and clears all unread indicators", %{conn: conn} do
@@ -1076,17 +1125,18 @@ defmodule RavixWeb.WorkspaceLiveTest do
       closing
     ] = tracks
 
-    # The namespace every default title shares is left off the tab; the full
-    # title, its creator and its machine state are its accessible name, the
-    # title its tooltip. The age the `RelativeTime` hook keeps current ends it.
+    # The namespace every default title shares is left off the tab, its
+    # tooltip and its accessible name alike (`Track.label/1`); the name, its
+    # creator and its machine state are the accessible name. The age the
+    # `RelativeTime` hook keeps current ends it.
     assert has_element?(
              view,
-             "#{tab.(idle)}[data-label='ravix/idle, created by @user, Idle'][title='ravix/idle']"
+             "#{tab.(idle)}[data-label='idle, created by @user, Idle'][title='idle']"
            )
 
     assert has_element?(
              view,
-             "#{tab.(idle)}[aria-label^='ravix/idle, created by @user, Idle, active ']"
+             "#{tab.(idle)}[aria-label^='idle, created by @user, Idle, active ']"
            )
 
     assert render(element(view, "#{tab.(idle)} .track-title")) =~ ~r{>idle</span>}
@@ -1120,7 +1170,7 @@ defmodule RavixWeb.WorkspaceLiveTest do
 
       assert has_element?(
                view,
-               "#{tab.(track)}[data-label=\"#{track.title}, created by @user, #{name}\"]"
+               "#{tab.(track)}[data-label=\"#{Track.label(track)}, created by @user, #{name}\"]"
              )
     end
 
@@ -1130,7 +1180,7 @@ defmodule RavixWeb.WorkspaceLiveTest do
 
     assert has_element?(
              view,
-             "#{tab.(broken)}[data-label='ravix/broken, created by @user, Idle']"
+             "#{tab.(broken)}[data-label='broken, created by @user, Idle']"
            )
 
     # Idle and active tracks alike omit decorative numbering.
