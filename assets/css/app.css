@@ -1201,9 +1201,14 @@ html[data-yard="closed"] .workspace-trigger-skeleton { flex: none; width: 28px; 
 /* ── the composer ──────────────────────────────────────────────────────── */
 
 .workspace-composer { width: 100%; max-width: none; padding: 8px 16px 16px; }
-/* RAV-91: the typing line keeps its height empty or not, so it never moves the composer. */
+/* RAV-91: the typing line is a fixed 18px just above the composer, in the
+   transcript's own 20px bottom padding rather than in the composer's flow,
+   so somebody starting or stopping typing never moves the composer, and the
+   jump-to-latest pill keeps its 12px above the box (RAV-93). */
+.workspace-composer { position: relative; }
 .workspace-composer .typing-notice {
-  height: 18px; margin: 0 0 2px; font-size: 12px; line-height: 18px;
+  position: absolute; left: 16px; right: 16px; bottom: 100%; z-index: 1;
+  height: 18px; margin: 0; font-size: 12px; line-height: 18px; pointer-events: none;
   overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
 }
 .composer-box {
@@ -2278,6 +2283,7 @@ section.first-prompt#project-start { align-self: center; padding: 32px 24px; }
   .transcript-scroll { padding-inline: 12px; }
   .transcript-scroll::before { margin-inline: -12px; }
   .workspace-composer { padding: 12px; }
+  .workspace-composer .typing-notice { left: 12px; right: 12px; }
   /* The rail goes, and with it the picker's home; on the sign-in page it
      moves under the card instead, where the card has left room for it. */
   .signin-page { padding-bottom: 96px; }

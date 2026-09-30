@@ -519,8 +519,9 @@
           />
           <%!-- Other people only: presence counts you too, and "@you is
             typing…" was an `@` beside the composer's popovers (RAV-95). One
-            line, always drawn and a fixed height (RAV-91), so somebody
-            starting or stopping typing never moves the composer. --%>
+            line, always drawn and a fixed height, laid over the transcript's
+            bottom padding (RAV-91), so somebody starting or stopping typing
+            never moves the composer. --%>
           <p id="typing-notice" class="hint typing-notice" aria-live="polite">
             {typing_notice(@present, @current_user)}
           </p>
