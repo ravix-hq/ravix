@@ -550,14 +550,14 @@
                   composer_placeholder(
                     @composer_mode,
                     @page,
-                    turn_running?(@threads, @thread_states, @thread_id, @track)
+                    @turn.running?
                   )
                 }
                 data-placeholder-ask={
                   composer_placeholder(
                     :ask,
                     @page,
-                    turn_running?(@threads, @thread_states, @thread_id, @track)
+                    @turn.running?
                   )
                 }
                 data-placeholder-comment={composer_placeholder(:comment, @page, false)}
