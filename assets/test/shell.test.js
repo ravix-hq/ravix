@@ -34,6 +34,12 @@ class FakeTerminal {
     if (bytes.length) this.written.push(new TextDecoder().decode(bytes))
     done?.()
   }
+  resize(cols, rows) {
+    this.resizes = [...(this.resizes || []), [cols, rows]]
+    this.cols = cols
+    this.rows = rows
+    this.resized?.({cols, rows})
+  }
   scrollToBottom() {
     this.scrolled = "bottom"
     this.buffer.active.viewportY = this.buffer.active.baseY
@@ -217,6 +223,53 @@ test("a pane shown after output arrived behind another tab opens at the end, not
   await frame()
   expect(term.scrolled).toBe("bottom")
   expect(term.buffer.active.viewportY).toBe(30)
+})
+
+// RAV-105: xterm 6 scrolls its viewport's scroll area, clamped to the height
+// it last measured, and a pane just shown may not have measured it yet. The
+// first scrolls then land nowhere; the pane keeps trying until one lands.
+test("a scroll lost to a viewport that has not measured yet is tried again", async () => {
+  const {hook, events} = mountHook(Shell, "#shell-b")
+  await tick()
+  const term = FakeTerminal.made[0]
+  term.buffer.active.baseY = 30
+  term.buffer.active.viewportY = 0
+  let unmeasured = 2
+  const scrollToBottom = term.scrollToBottom.bind(term)
+  term.scrollToBottom = () => (unmeasured-- > 0 ? (term.scrolled = "clamped") : scrollToBottom())
+
+  document.getElementById("pane-b").hidden = false
+  observers[0].fn()
+  await frame()
+  expect(term.buffer.active.viewportY).toBe(0)
+  // A lost scroll resizes the terminal through one row more and back, once,
+  // which is what makes xterm take its viewport's height again ...
+  const {cols, rows} = term
+  expect(term.resizes).toEqual([[cols, rows + 1], [cols, rows]])
+  await frame()
+  await frame()
+  expect(term.scrolled).toBe("bottom")
+  expect(term.buffer.active.viewportY).toBe(30)
+  expect(term.resizes).toHaveLength(2)
+  expect(hook.visible).toBe(true)
+  // ... and the shell is never sent the row it went through: only the size
+  // the pane was fitted to when shown.
+  await tick(120)
+  expect(events.filter(e => e.name === "shell-resize").map(e => e.payload)).toEqual([{id: "b", cols, rows}])
+})
+
+test("a scroll that never lands gives up after a bounded number of frames", async () => {
+  mountHook(Shell, "#shell-b")
+  await tick()
+  const term = FakeTerminal.made[0]
+  term.buffer.active.baseY = 30
+  let tries = 0
+  term.scrollToBottom = () => tries++
+
+  document.getElementById("pane-b").hidden = false
+  observers[0].fn()
+  for (let i = 0; i < 40; i++) await frame()
+  expect(tries).toBe(30)
 })
 
 test("a pane hidden while scrolled back comes back on the same line", async () => {
