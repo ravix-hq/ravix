@@ -413,6 +413,40 @@ defmodule RavixWeb.Live.MachineDockShellTest do
       refute render(view) =~ "did not answer"
     end
 
+    test "one that fell asleep after the page opened is woken too, by the track's own state",
+         ctx do
+      SpritesFake.install(fn conn, call ->
+        if call.method == "POST",
+          do: SpritesFake.exec_response(conn, ""),
+          else: status(conn, call)
+      end)
+
+      %{view: view} = open(ctx, ctx.owner)
+
+      # The dock's status read (at mount) found it running; the track hears
+      # since that its dedicated machine is suspended.
+      track_as(:owner,
+        setup_state: "ready",
+        status: :ready,
+        sandbox_layout: :dedicated,
+        sandbox_suspended_at: DateTime.utc_now()
+      )
+
+      Ravix.Hub.publish(ctx.project.id, :machine, track_id: ctx.track.id)
+      assert_eventually(fn -> has_element?(view, "#track-machine-state", "Asleep") end)
+      SpritesFake.calls()
+
+      id = new_terminal(view)
+
+      view
+      |> element("#shell-#{id}")
+      |> render_hook("shell-attach", %{id: id, cols: 90, rows: 25})
+
+      render_async(view, 5_000)
+      assert Enum.any?(SpritesFake.calls(), &(&1.argv == ["true"]))
+      assert_receive {SpritesFake, :exec, {:spawn, %{"cols" => "90", "rows" => "25"}}}, 2_000
+    end
+
     test "a pane that asks before the wake has answered is attached when it does", ctx do
       asleep(ctx)
       %{view: view} = open(ctx, ctx.owner)
@@ -585,12 +619,16 @@ defmodule RavixWeb.Live.MachineDockShellTest do
     assert {:ok, []} = Terminal.tabs(reader, ctx.track.id)
   end
 
-  # The track page as a member at `level` sees it.
-  defp track_as(level) do
+  # The track page as a member at `level` sees it;
+  # `seen` is what the page is told of the track beyond its row.
+  defp track_as(level, seen \\ []) do
     stub(Tracks, :get, fn _, id, _opts ->
       {:ok,
        %{
-         track: Tracks.present(Repo.get!(Track, id), role: :member, level: level),
+         track:
+           Repo.get!(Track, id)
+           |> Tracks.present(role: :member, level: level)
+           |> Map.merge(Map.new(seen)),
          header: %Ravix.Tracks.Header{
            copy_of: nil,
            branched_from: nil,

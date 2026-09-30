@@ -89,7 +89,9 @@ defmodule RavixWeb.Live.MachineDock do
        shell_waking?: false,
        # Whether this person may open a shell (Write, ADR 0010). Hiding the
        # button is courtesy; `Ravix.Terminal` refuses a Read member anyway.
-       can_write: true
+       can_write: true,
+       # Whether the track's machine is asleep, as the page's header says.
+       asleep: false
      )}
   end
 
@@ -221,10 +223,10 @@ defmodule RavixWeb.Live.MachineDock do
     end)
   end
 
-  # Asleep by the track's own state, or by the dock's passive status read
-  # (a machine that is not running). Either way an attach would wait out
-  # the handshake for an answer that is not coming.
-  defp asleep?(%{assigns: %{machine: %{state: :asleep}}}), do: true
+  # Asleep by the track's own state (`asleep`, from the page), or by the
+  # dock's passive status read: a machine that is not running. Either way an
+  # attach would wait out the handshake for an answer that is not coming.
+  defp asleep?(%{assigns: %{asleep: true}}), do: true
 
   defp asleep?(%{
          assigns: %{machine_status: %Terminal.Status{available: false, why: :unreachable}}
@@ -267,7 +269,7 @@ defmodule RavixWeb.Live.MachineDock do
   # Awake: every tab that was held is attached at the size its pane asked
   # for; one whose pane has not asked yet will, and is attached then.
   defp woke(socket) do
-    socket = assign(socket, shell_waking?: false, machine_status: awake(socket))
+    socket = socket |> assign(shell_waking?: false) |> probe(awake(socket))
 
     Enum.reduce(socket.assigns.shells, socket, fn
       %{status: :waking, size: nil, tab: %{id: id}}, s -> put_status(s, id, :connecting)
@@ -367,14 +369,12 @@ defmodule RavixWeb.Live.MachineDock do
 
         # A reconnect remounts this component with the dock closed; the pane
         # that was in front before it says so, and is put back.
+        socket = put_shell(socket, id, &%{&1 | size: size})
+
         socket =
-          socket
-          |> put_shell(id, &%{&1 | size: size})
-          |> then(fn s ->
-            if params["select"] == true,
-              do: assign(s, dock: {:shell, id}, dock_open: true),
-              else: s
-          end)
+          if params["select"] == true,
+            do: assign(socket, dock: {:shell, id}, dock_open: true),
+            else: socket
 
         cond do
           # Held for a wake under way, or for somebody to press Wake.
@@ -482,9 +482,11 @@ defmodule RavixWeb.Live.MachineDock do
   # The probe's answer belongs to the header's machine chip, which is the
   # page's, not this strip's. A component runs in its page's process, so the
   # page hears it as a message; see `RavixWeb.TrackLive.handle_info/2`.
+  # The strip keeps its own copy too: whether a terminal must wake the
+  # machine before attaching (`asleep?/1`) is asked of it.
   defp probe(socket, status) do
     send(self(), {:machine_probe, socket.assigns.track_id, status})
-    socket
+    assign(socket, machine_status: status)
   end
 
   # Why there is nothing to show, in words. `Vitals` answers with an atom so

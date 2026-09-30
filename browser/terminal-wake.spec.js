@@ -37,7 +37,7 @@ test('a terminal opened on a sleeping machine wakes it, then connects', async ({
   const sandbox = await newTrack(page, request, 'Terminal wake');
   expect((await request.post(`${mock}/__browser/sandbox-status`, { data: { id: sandbox, status: 'suspended', wake_ms: 1500 } })).ok()).toBe(true);
   await page.getByRole('button', { name: 'Refresh', exact: true }).click();
-  await expect(page.locator('#track-machine-status')).toHaveText('Asleep.');
+  await expect(page.locator('#track-machine-state')).toHaveText('Asleep');
 
   await page.getByRole('button', { name: 'New terminal', exact: true }).click();
   const pane = page.locator('.shell-pane:not([hidden])');
@@ -45,7 +45,7 @@ test('a terminal opened on a sleeping machine wakes it, then connects', async ({
   await expect(pane.locator('.xterm-rows')).toContainText(/\S+ \$ /, { timeout: 20_000 });
   await expect(pane.locator('.empty')).toHaveCount(0);
   await expect(pane.locator('.shell-status')).toHaveCount(0);
-  await expect(page.locator('#track-machine-status')).not.toHaveText('Asleep.');
+  await expect(page.locator('#track-machine-state')).not.toHaveText('Asleep');
 
   await page.keyboard.type('pwd');
   await page.keyboard.press('Enter');
