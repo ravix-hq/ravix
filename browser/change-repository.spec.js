@@ -13,12 +13,12 @@ test('Danger zone changes the repository behind a typed confirmation', async ({ 
   test.setTimeout(120_000);
   await signIn(page, 'dana', '/home');
   await connectClaude(page);
-  await page.getByRole('button', { name: 'Add a project', exact: true }).first().click();
-  const create = page.getByRole('dialog', { name: 'New project' });
+  await page.getByRole('button', { name: 'Add a repository', exact: true }).first().click();
+  const create = page.getByRole('dialog', { name: 'Add a repository' });
   await create.getByLabel('Project name', { exact: true }).fill('Repository move');
-  await expect(page.locator('#project-repositories option')).not.toHaveCount(0);
-  await create.getByLabel('Repository', { exact: true }).fill('mockuser/atlas-api');
-  await create.getByRole('button', { name: 'Create project', exact: true }).click();
+  await expect(page.locator('#project-repositories input[type=radio]')).not.toHaveCount(0);
+  await create.getByRole('radio', { name: 'mockuser/atlas-api', exact: true }).check();
+  await create.getByRole('button', { name: 'Add repository', exact: true }).click();
   await expect(create).not.toBeVisible();
 
   // A track for the change to close.
