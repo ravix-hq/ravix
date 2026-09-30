@@ -43,8 +43,9 @@ defmodule Ravix.UntrackedDiffTest do
     File.write!(Path.join(root, "src/new.ex"), "a\nb\n")
     File.write!(Path.join(root, "$(touch injected).txt"), "x\n")
     File.write!(Path.join(root, "tracked.txt"), "one\ntwo\n")
-    index = File.stat!(Path.join(root, ".git/index"), time: :posix).mtime
+    # `git status` refreshes the index itself, so it goes first.
     status = System.cmd("git", ["-C", root, "status", "--porcelain"])
+    index = File.read!(Path.join(root, ".git/index"))
 
     edit =
       "diff --git a/tracked.txt b/tracked.txt\n--- a/tracked.txt\n+++ b/tracked.txt\n" <>
@@ -64,7 +65,7 @@ defmodule Ravix.UntrackedDiffTest do
 
     refute diff.truncated
     refute File.exists?(Path.join(root, "injected"))
-    assert File.stat!(Path.join(root, ".git/index"), time: :posix).mtime == index
+    assert File.read!(Path.join(root, ".git/index")) == index
     assert System.cmd("git", ["-C", root, "status", "--porcelain"]) == status
   end
 
