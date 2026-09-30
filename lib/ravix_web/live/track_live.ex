@@ -14,7 +14,8 @@ defmodule RavixWeb.TrackLive do
     "close" => :close,
     "rebuild" => :rebuild,
     "people" => :people,
-    "pull" => :pull
+    "pull" => :pull,
+    "commit" => :commit
   }
 
   # How often the page re-reads everything without being told to.
@@ -132,6 +133,15 @@ defmodule RavixWeb.TrackLive do
         close_info: nil,
         rename_form: Form.new(:rename_track),
         pull: nil,
+        # The Checks tab's Git status: `nil` until read, then
+        # `%{status: Git.Status.t() | nil, error: String.t() | nil}`. A commit
+        # or push out is `:git` in `pending`; `git_step` says which, and
+        # `git_failure` is the last one's refusal, kept until the next try.
+        git: nil,
+        git_loading?: false,
+        git_step: nil,
+        git_failure: nil,
+        commit_message: "",
         # The ribbon's three writes that are out --- `:interrupt`, `:retry`,
         # `:pull` --- each disabling the button that would repeat it. See
         # `begin/3`.
@@ -596,6 +606,18 @@ defmodule RavixWeb.TrackLive do
     {:noreply, begin(socket, :pull, &Tracks.open_pull(&1, &2, attrs))}
   end
 
+  # The Checks tab's two Git writes. The message typed is kept on the page,
+  # so a refused commit comes back to the words that were refused.
+  def handle_event("commit-push", %{"message" => message}, socket) when is_binary(message) do
+    {:noreply,
+     socket
+     |> assign(commit_message: message)
+     |> git_write(:commit, &Tracks.commit_and_push(&1, &2, message))}
+  end
+
+  def handle_event("push", _, socket),
+    do: {:noreply, git_write(socket, :push, &Tracks.push/2)}
+
   # Closing and rebuilding a dedicated track both delete its machine, so both
   # say what that machine still holds before anyone confirms.
   defp open_dialog(%{assigns: %{track: %{sandbox_layout: :dedicated}}} = socket, dialog)
@@ -617,6 +639,17 @@ defmodule RavixWeb.TrackLive do
         dialog: :rename,
         rename_form: Form.new(:rename_track, %{"title" => socket.assigns.track.title})
       )
+
+  # Commit and push opens on the track's title, which is what the work is
+  # for, unless an earlier attempt left a message of somebody's own.
+  defp open_dialog(socket, :commit) do
+    message =
+      if String.trim(socket.assigns.commit_message) == "",
+        do: socket.assigns.track.title,
+        else: socket.assigns.commit_message
+
+    assign(socket, dialog: :commit, commit_message: message)
+  end
 
   defp open_dialog(socket, dialog), do: assign(socket, dialog: dialog)
 
@@ -1126,6 +1159,56 @@ defmodule RavixWeb.TrackLive do
   defp async_result(:pull, {:ok, response}, socket),
     do: result(settle(socket, :pull), response, &assign(&1, pull: &2, dialog: nil))
 
+  # A read for the track this page has since left is not this track's status.
+  defp async_result({:git_status, track_id}, _response, %{assigns: %{track_id: id}} = socket)
+       when track_id != id,
+       do: socket
+
+  defp async_result({:git_status, _}, {:ok, {:ok, status}}, socket),
+    do: assign(socket, git: %{status: status, error: nil}, git_loading?: false)
+
+  defp async_result({:git_status, _}, {:ok, {:error, reason}}, socket),
+    do:
+      assign(socket, git: %{status: nil, error: Error.from(reason).message}, git_loading?: false)
+
+  defp async_result({:git_status, _}, {:exit, reason}, socket),
+    do:
+      assign(socket,
+        git: %{status: nil, error: Error.from({:async_exit, reason}).message},
+        git_loading?: false
+      )
+
+  defp async_result({:git_write, track_id}, _response, %{assigns: %{track_id: id}} = socket)
+       when track_id != id,
+       do: socket
+
+  # Either way the worktree may have moved --- a push can fail after its
+  # commit landed --- so the status is read again. A refusal stays on the
+  # page, in the dialog if it is open, until the next attempt.
+  defp async_result({:git_write, _}, {:ok, :ok}, socket) do
+    notice = if socket.assigns.git_step == :commit, do: "Committed and pushed.", else: "Pushed."
+
+    socket
+    |> settle(:git)
+    |> assign(git_failure: nil, commit_message: "", dialog: nil)
+    |> flash(:info, notice)
+    |> after_git_write()
+  end
+
+  defp async_result({:git_write, _}, {:ok, {:error, reason}}, socket),
+    do:
+      socket
+      |> settle(:git)
+      |> assign(git_failure: Error.from(reason).message)
+      |> after_git_write()
+
+  defp async_result({:git_write, _}, {:exit, reason}, socket),
+    do:
+      socket
+      |> settle(:git)
+      |> assign(git_failure: Error.from({:async_exit, reason}).message)
+      |> after_git_write()
+
   # One of the ribbon's writes that did not answer. Not the loading clause
   # below: nothing was being loaded, and "could not finish loading" about a
   # Stop that crashed would be a sentence about the wrong thing.
@@ -1528,7 +1611,15 @@ defmodule RavixWeb.TrackLive do
       preview_url: nil,
       dialog: nil,
       rename_form: Form.new(:rename_track),
-      pull: nil
+      pull: nil,
+      git: nil,
+      git_loading?: false,
+      git_step: nil,
+      git_failure: nil,
+      commit_message: "",
+      # A commit or push still running belongs to the track it was for; its
+      # answer is dropped when it arrives here. See `async_result/3`.
+      pending: MapSet.delete(socket.assigns.pending, :git)
     )
   end
 
@@ -1866,6 +1957,40 @@ defmodule RavixWeb.TrackLive do
   end
 
   defp settle(socket, name), do: update(socket, :pending, &MapSet.delete(&1, name))
+
+  # One Git write at a time: a second press while one is out is dropped
+  # rather than queued behind it. The track rides in the name, so an answer
+  # for a track this page has left is recognised and dropped.
+  defp git_write(%{assigns: %{pending: pending}} = socket, step, call) do
+    if MapSet.member?(pending, :git) do
+      socket
+    else
+      user = socket.assigns.current_user
+      id = socket.assigns.track_id
+
+      socket
+      |> update(:pending, &MapSet.put(&1, :git))
+      |> assign(git_step: step, git_failure: nil)
+      |> traced_async({:git_write, id}, fn -> call.(user, id) end)
+    end
+  end
+
+  # On Checks the pull request may have moved too, and `load_panel/2` reads
+  # both; anywhere else only the status is kept current.
+  defp after_git_write(socket) do
+    if socket.assigns.panel.tab == :checks,
+      do: load_panel(socket, &Panel.reloading/1),
+      else: load_git(socket)
+  end
+
+  defp load_git(socket) do
+    user = socket.assigns.current_user
+    id = socket.assigns.track_id
+
+    socket
+    |> assign(git_loading?: true)
+    |> traced_async({:git_status, id}, fn -> Tracks.git_status(user, id) end)
+  end
 
   # The four preview buttons all do the same thing to the page -- mark the
   # panel busy and answer later -- and differ only in which context call they
@@ -2340,17 +2465,113 @@ defmodule RavixWeb.TrackLive do
       <a :if={@data.pull} href={@data.pull.url} target="_blank" rel="noreferrer">
         View on GitHub
       </a>
-      <button
-        :if={@project.repo && !@data.pull}
-        class="primary"
-        phx-click={JS.push_focus() |> JS.push("dialog")}
-        phx-value-name="pull"
-      >
-        Create pull request
-      </button>
     </div>
     """
   end
+
+  attr :git, :map, default: nil, doc: "`%{status:, error:}`, or nil before the first read"
+  attr :loading, :boolean, default: false
+  attr :checks, :any, default: nil, doc: "the loaded `ChecksReport`, if there is one"
+  attr :checks_error, :string, default: nil
+  attr :project, :any, required: true
+  attr :writing, :atom, default: nil, doc: "`:commit` or `:push` while one is out"
+  attr :failure, :string, default: nil
+
+  # What the worktree holds that GitHub does not, and the one action for
+  # each: commit what is uncommitted, push what is unpushed, open a pull
+  # request for what is pushed. The counts are the machine's own
+  # (`Ravix.Tracks.git_status/2`); the pull request is the checks report's.
+  defp git_status(assigns) do
+    status = assigns.git && assigns.git.status
+    assigns = assign(assigns, status: status)
+
+    ~H"""
+    <section id="git-status" class="git-status" aria-labelledby="git-status-title">
+      <h3 id="git-status-title" class="git-status-title">
+        Git status
+        <span :if={@status && @status.branch} class="git-branch">
+          <.icon name="branch" size={12} /><code>{@status.branch}</code>
+        </span>
+      </h3>
+      <.loading_status :if={@loading && !@status} id="git-status-loading">
+        Reading Git status…
+      </.loading_status>
+      <p :if={@git && @git.error} id="git-status-error" class="git-note" role="alert">
+        {@git.error}
+      </p>
+      <ul class="git-rows">
+        <li :if={@status} id="git-uncommitted" class="git-row">
+          <span class={["chip", if(@status.uncommitted > 0, do: "warn", else: "ok")]}>
+            {@status.uncommitted}
+          </span>
+          <span class="git-row-label">
+            {count_label(@status.uncommitted, "uncommitted change", "uncommitted changes")}
+          </span>
+          <button
+            :if={@status.uncommitted > 0}
+            id="git-commit"
+            type="button"
+            class="primary"
+            phx-click={JS.push_focus() |> JS.push("dialog")}
+            phx-value-name="commit"
+            disabled={@writing != nil}
+          >
+            Commit and push
+          </button>
+        </li>
+        <li :if={@status} id="git-unpushed" class="git-row">
+          <span class={["chip", if(@status.unpushed > 0, do: "warn", else: "ok")]}>
+            {@status.unpushed}
+          </span>
+          <span class="git-row-label">
+            {count_label(@status.unpushed, "unpushed commit", "unpushed commits")}<span
+              :if={!@status.upstream? && @status.unpushed > 0}
+              class="git-hint"
+            > · branch not on GitHub yet</span>
+          </span>
+          <button
+            :if={@status.unpushed > 0}
+            id="git-push"
+            type="button"
+            phx-click="push"
+            disabled={@writing != nil}
+          >
+            Push
+          </button>
+        </li>
+        <li id="git-pull" class="git-row">
+          <.icon name="pull" size={14} class="git-row-icon" />
+          <span :if={@checks && @checks.pull} class="git-row-label">
+            <a href={@checks.pull.url} target="_blank" rel="noreferrer">
+              Pull request #{@checks.pull.number}
+            </a>
+            <span class="chip pull-state">{pull_state_label(@checks.pull.state)}</span>
+          </span>
+          <span :if={@checks && !@checks.pull} class="git-row-label">No pull request</span>
+          <span :if={!@checks && @checks_error} class="git-row-label">Pull request unknown</span>
+          <span :if={!@checks && !@checks_error} class="git-row-label">Checking pull request…</span>
+          <button
+            :if={@project.repo && @checks && !@checks.pull}
+            id="git-create-pull"
+            type="button"
+            phx-click={JS.push_focus() |> JS.push("dialog")}
+            phx-value-name="pull"
+          >
+            Create pull request
+          </button>
+        </li>
+      </ul>
+      <.loading_status :if={@writing} id="git-writing">
+        {if @writing == :commit, do: "Committing and pushing…", else: "Pushing…"}
+      </.loading_status>
+      <p :if={@failure} id="git-failure" class="git-failure" role="alert"><span>{@failure}</span></p>
+    </section>
+    """
+  end
+
+  defp count_label(0, _one, many), do: "No " <> many
+  defp count_label(1, one, _many), do: "1 " <> one
+  defp count_label(n, _one, many), do: "#{n} " <> many
 
   # Setup is waiting on a sleeping shared machine that it will not wake by
   # itself; a prompt or the wake button does. See `Ravix.Tracks.Setup`.
@@ -2508,9 +2729,17 @@ defmodule RavixWeb.TrackLive do
 
   defp after_turn(socket, %TranscriptEvent{} = event) do
     cond do
-      not TranscriptEvent.settles?(event) -> socket
-      socket.assigns.panel.tab == :changes -> load_panel(socket, &Panel.reloading/1)
-      true -> update_panel(socket, &Panel.forget_changes/1)
+      not TranscriptEvent.settles?(event) ->
+        socket
+
+      socket.assigns.panel.tab == :changes ->
+        load_panel(socket, &Panel.reloading/1)
+
+      socket.assigns.panel.tab == :checks ->
+        socket |> update_panel(&Panel.forget_changes/1) |> load_git()
+
+      true ->
+        update_panel(socket, &Panel.forget_changes/1)
     end
   end
 
@@ -2540,6 +2769,10 @@ defmodule RavixWeb.TrackLive do
     user = socket.assigns.current_user
     id = socket.assigns.track_id
     tab = socket.assigns.panel.tab
+
+    # Git status is read beside the checks rather than inside them, so
+    # GitHub being down does not hide what the machine holds, or the reverse.
+    socket = if tab == :checks, do: load_git(socket), else: socket
 
     socket
     |> update_panel(mark)

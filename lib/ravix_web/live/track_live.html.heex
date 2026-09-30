@@ -717,6 +717,16 @@
           <.loading_status :if={@panel.busy? && !is_struct(@panel.data, Ravix.Tracks.Diff)}>
             Loading inspector…
           </.loading_status>
+          <.git_status
+            :if={@panel.tab == :checks}
+            git={@git}
+            loading={@git_loading?}
+            checks={match?(%Ravix.GitHub.ChecksReport{}, @panel.data) && @panel.data}
+            checks_error={@panel.error}
+            project={@project}
+            writing={if :git in @pending, do: @git_step}
+            failure={@git_failure}
+          />
           <p :if={@panel.error} role="alert">{@panel.error}</p>
           <.panel_body
             :if={@panel.data}
@@ -960,6 +970,34 @@
       current_user={@current_user}
       session_hash={@session_hash}
     />
+    <.dialog
+      :if={@dialog == :commit}
+      id="commit-dialog"
+      title="Commit and push"
+      on_close="dismiss"
+    >
+      <p>
+        Stages every change in this track's worktree, commits it and pushes the branch to GitHub.
+      </p>
+      <form id="commit-form" phx-submit="commit-push">
+        <.input
+          name="message"
+          id="commit-message"
+          type="textarea"
+          label="Commit message"
+          value={@commit_message}
+          maxlength={Ravix.Tracks.Git.message_max()}
+          required
+        />
+        <p :if={@git_failure} id="commit-failure" class="git-failure" role="alert">
+          <span>{@git_failure}</span>
+        </p>
+        <.loading_status :if={:git in @pending}>Committing and pushing…</.loading_status>
+        <button class="primary" phx-disable-with="Committing…" disabled={:git in @pending}>
+          Commit and push
+        </button>
+      </form>
+    </.dialog>
     <.dialog :if={@dialog == :pull} id="pull-dialog" title="Open pull request" on_close="dismiss">
       <p>Commit and push your branch before opening a pull request.</p>
       <form id="pull-form" phx-submit="open-pull">

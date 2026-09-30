@@ -93,6 +93,20 @@ defmodule Ravix.Tracks.Attribution do
   end
 
   @doc """
+  A commit message Ravix commits for `user` from the Checks tab, ending with
+  their trailer: they pressed the button, so the commit is theirs to be
+  credited with. Unchanged when the switch is off or the trailer is there.
+  """
+  @spec commit_message(String.t(), User.t()) :: String.t()
+  def commit_message(message, %User{} = user) do
+    trailer = trailer(user)
+
+    if Ravix.Config.workspace_access?() and not String.contains?(message, trailer),
+      do: String.trim_trailing(message) <> "\n\n" <> trailer,
+      else: message
+  end
+
+  @doc """
   A pull request body naming the track's starter, `starter`, after `body`.
   Unchanged when there is nobody to name or the switch is off.
   """

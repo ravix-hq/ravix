@@ -72,6 +72,7 @@ defmodule Ravix.Tracks do
     Diff,
     Files,
     Follower,
+    Git,
     Header,
     Names,
     Opening,
@@ -2139,6 +2140,105 @@ defmodule Ravix.Tracks do
   defp unpushed_state("unknown"), do: :unknown
   defp unpushed_state("0"), do: false
   defp unpushed_state(_), do: true
+
+  # ── Git on the machine, for the Checks tab ────────────────────────────
+
+  # A commit hook or a slow remote gets the terminal's longest timeout, and
+  # the task waiting on it a little longer, so the timeout that fires is the
+  # machine's and says so.
+  @git_write_sec Ravix.Terminal.Request.max_timeout_sec()
+  @git_wait_ms (@git_write_sec + 10) * 1_000
+
+  @doc """
+  What the track's worktree holds that its remote does not: uncommitted
+  entries (`git status --porcelain`) and unpushed commits
+  (`git rev-list @{u}..HEAD`). Read on the machine through
+  `Ravix.Terminal.exec/3`, which is the door: anybody who may run a command
+  on the track may read this. Opening a tab never wakes a machine, so one
+  that is not running answers `{:error, :machine_asleep}` without an exec.
+  """
+  @spec git_status(User.t(), String.t()) ::
+          {:ok, Git.Status.t()} | {:error, reason() | Ravix.Terminal.reason()}
+  def git_status(%User{} = user, track_id) do
+    with {:ok, status} <- Ravix.Terminal.status(user, track_id, passive: true),
+         :ok <- check(status.why != :unreachable, :machine_asleep),
+         {:ok, result} <-
+           Ravix.Terminal.exec(user, track_id, %{command: Git.status_command(), timeout_sec: 15}) do
+      Git.parse_status(result)
+    end
+  end
+
+  @doc """
+  Stage everything in the worktree, commit it with `message` and push the
+  branch, setting its upstream.
+
+  Open to whoever may prompt the agent or run a command on the track, for
+  the reason `open_pull/3` gives: the agent would do this if asked. The
+  person pressing the button is credited with a trailer
+  (`Attribution.commit_message/2`). The Git work runs under
+  `Ravix.TaskSupervisor`, unlinked, so a page that goes away mid-push does
+  not take a half-finished push with it. A refusal names the step that
+  failed; see `Ravix.Tracks.Git`.
+  """
+  @spec commit_and_push(User.t(), String.t(), String.t() | nil) ::
+          :ok | {:error, reason() | Ravix.Terminal.reason()}
+  def commit_and_push(%User{} = user, track_id, message) do
+    message = text(message, Git.message_max() + 1)
+
+    with {:ok, _track} <- writable_worktree(user, track_id),
+         :ok <-
+           check(message != "", {:unprocessable, "empty_message", "Write a commit message."}),
+         :ok <-
+           check(
+             String.length(message) <= Git.message_max(),
+             {:unprocessable, "message_too_long",
+              "Keep the commit message under #{Git.message_max()} characters."}
+           ) do
+      command = Git.commit_and_push_command(Attribution.commit_message(message, user))
+      git_write(user, track_id, command, :commit)
+    end
+  end
+
+  @doc "Push the branch as it stands, setting its upstream. Access as `commit_and_push/3`."
+  @spec push(User.t(), String.t()) :: :ok | {:error, reason() | Ravix.Terminal.reason()}
+  def push(%User{} = user, track_id) do
+    with {:ok, _track} <- writable_worktree(user, track_id),
+         do: git_write(user, track_id, Git.push_command(), :push)
+  end
+
+  defp writable_worktree(user, track_id) do
+    with {:ok, %{track: track}} <- Access.track_access(user, track_id),
+         :ok <-
+           check(
+             is_nil(track.closed_at) and track.sandbox_state not in [:closing, :terminated],
+             {:conflict, "closed_track", "This track is closing or closed."}
+           ) do
+      {:ok, track}
+    end
+  end
+
+  defp git_write(user, track_id, command, step) do
+    task =
+      Task.Supervisor.async_nolink(
+        Ravix.TaskSupervisor,
+        Trace.link(fn ->
+          Ravix.Terminal.exec(user, track_id, %{command: command, timeout_sec: @git_write_sec})
+        end)
+      )
+
+    case Task.yield(task, @git_wait_ms) || Task.shutdown(task, :brutal_kill) do
+      {:ok, {:ok, result}} ->
+        Git.written(result, step)
+
+      {:ok, {:error, _} = error} ->
+        error
+
+      _ ->
+        {:error,
+         {:unavailable, "git_unanswered",
+          "The machine did not answer. Refresh to see where Git got to."}}
+    end
+  end
 
   @doc "Rebuild an isolated machine only after explicit destructive confirmation."
   def rebuild_machine(%User{} = user, track_id, force: true) do
