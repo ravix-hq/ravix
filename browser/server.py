@@ -46,7 +46,7 @@ env = dict(os.environ, MIX_ENV="prod", PORT=str(ports[0]), PHX_SERVER="true",
            # workspace-teams.spec.js, workspace-github.spec.js,
            # workspace-sharing.spec.js, workspace-new-track.spec.js,
            # workspace-scope.spec.js, workspace-attribution.spec.js,
-           # settings-frame.spec.js).
+           # settings-frame.spec.js, workspace-settings-pages.spec.js).
            RAVIX_WORKSPACE_ACCESS=os.environ.get("RAVIX_WORKSPACE_ACCESS", "false"))
 # Only a generated database name is ever created/dropped. Credentials can differ locally.
 base = os.environ.get("BROWSER_DATABASE_SERVER", "postgres://postgres:postgres@localhost:5432")

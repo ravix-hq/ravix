@@ -15,6 +15,9 @@ test('connect GitHub to a workspace, add a repository, and re-add it', async ({ 
   await expect(page.locator('[data-phx-main]')).toHaveClass(/phx-connected/);
 
   await createWorkspace(page, 'Repo Team');
+  // GitHub is the workspace's Repositories page (RAV-73).
+  await page.locator('#settings-nav-repositories').click();
+  await expect(page).toHaveURL(/\/settings\/repositories$/);
   const workspacePath = new URL(page.url()).pathname;
 
   // To GitHub's install page and straight back through the callback.
@@ -25,7 +28,7 @@ test('connect GitHub to a workspace, add a repository, and re-add it', async ({ 
   await expect(catalog).toContainText('mockuser/atlas-api');
 
   const row = catalog.locator('li', { hasText: 'mockuser/ledger' });
-  await row.getByRole('button', { name: 'Add', exact: true }).click();
+  await row.getByRole('button', { name: 'Add project', exact: true }).click();
   await expect(page).toHaveURL(/\/p\/[^/]+$/);
   const projectPath = new URL(page.url()).pathname;
 
@@ -33,7 +36,7 @@ test('connect GitHub to a workspace, add a repository, and re-add it', async ({ 
   await page.goto(workspacePath);
   await expect(page.locator('[data-phx-main]')).toHaveClass(/phx-connected/);
   const again = page.locator('#workspace-catalog li', { hasText: 'mockuser/ledger' });
-  await again.getByRole('link', { name: 'Open project', exact: true }).click();
+  await again.getByRole('link', { name: 'Open project ledger', exact: true }).click();
   await expect(page).toHaveURL(new RegExp(`${projectPath}$`));
 });
 
@@ -49,6 +52,8 @@ test('add one of your GitHub accounts to a workspace from its empty state', asyn
   await expect(page.locator('[data-phx-main]')).toHaveClass(/phx-connected/);
 
   await createWorkspace(page, 'Add Team');
+  await page.locator('#settings-nav-repositories').click();
+  await expect(page).toHaveURL(/\/settings\/repositories$/);
   await expect(page.locator('[data-phx-main]')).toHaveClass(/phx-connected/);
 
   await expect(page.locator('#github-empty')).toContainText('No GitHub account is connected yet.');
@@ -59,5 +64,5 @@ test('add one of your GitHub accounts to a workspace from its empty state', asyn
   await expect(page.locator('#github-empty')).toHaveCount(0);
   await expect(page.locator('#available-installations')).toHaveCount(0);
   await expect(page.locator('#workspace-catalog')).toContainText('mockuser/atlas-api');
-  expect(new URL(page.url()).pathname).toMatch(/^\/w\/[^/]+\/settings\/members$/);
+  expect(new URL(page.url()).pathname).toMatch(/^\/w\/[^/]+\/settings\/repositories$/);
 });

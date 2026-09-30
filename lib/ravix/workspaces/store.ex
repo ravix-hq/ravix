@@ -140,9 +140,22 @@ defmodule Ravix.Workspaces.Store do
   @spec revoke_membership(String.t(), String.t(), String.t()) ::
           {:ok, Membership.t()}
           | {:error, :not_found | :actor_gone | :not_manager | :owner_only | :last_owner}
-  def revoke_membership(workspace_id, user_id, actor_id) do
-    # ownership: `Workspaces.remove_member/3` went through `Access.workspace_access/2`;
-    # the permission rows deleted inside are this membership's (see below).
+  def revoke_membership(workspace_id, user_id, actor_id),
+    do: revoke(workspace_id, user_id, actor_id, &manager/1)
+
+  @doc """
+  Revoke `user_id`'s own membership: leaving. As `revoke_membership/3`,
+  under the same lock, except that nobody needs to manage members to leave;
+  the last owner still cannot, so a workspace is never left without one.
+  """
+  @spec leave(String.t(), String.t()) ::
+          {:ok, Membership.t()} | {:error, :actor_gone | :last_owner}
+  def leave(workspace_id, user_id), do: revoke(workspace_id, user_id, user_id, fn _ -> :ok end)
+
+  defp revoke(workspace_id, user_id, actor_id, may_remove) do
+    # ownership: `Workspaces.remove_member/3` and `Workspaces.leave/2` went
+    # through `Access.workspace_access/2`; the permission rows deleted inside
+    # are this membership's (see below).
     Repo.transaction(fn ->
       live =
         Repo.all(
@@ -153,7 +166,7 @@ defmodule Ravix.Workspaces.Store do
         )
 
       with {:ok, actor} <- live_member(live, actor_id, :actor_gone),
-           :ok <- manager(actor),
+           :ok <- may_remove.(actor),
            {:ok, target} <- live_member(live, user_id, :not_found),
            :ok <- removable(target, actor, Enum.count(live, &(&1.role == :owner))) do
         revoked =
@@ -585,6 +598,95 @@ defmodule Ravix.Workspaces.Store do
       nil -> {:error, :not_found}
       workspace -> {:ok, workspace |> Ecto.Changeset.change(name: name) |> Repo.update!()}
     end
+  end
+
+  @doc """
+  Archive a live workspace on `actor_id`'s word: its delete. Under the
+  membership lock the other people changes take, so an owner demoted or
+  removed at the same moment cannot finish it, and only while it holds no
+  live project, which would otherwise be left in a workspace nobody can
+  open. Memberships, invitations and connections are kept as they are, and
+  every reader already skips an archived workspace.
+  """
+  @spec archive_workspace(String.t(), String.t()) ::
+          {:ok, Workspace.t()}
+          | {:error, :not_found | :actor_gone | :not_owner | {:has_projects, pos_integer()}}
+  def archive_workspace(workspace_id, actor_id) do
+    Repo.transaction(fn ->
+      live =
+        Repo.all(
+          from m in Membership,
+            where: m.workspace_id == ^workspace_id and is_nil(m.revoked_at),
+            order_by: m.user_id,
+            lock: "FOR UPDATE"
+        )
+
+      workspace =
+        Repo.one(
+          from w in Workspace,
+            where: w.id == ^workspace_id and is_nil(w.archived_at),
+            lock: "FOR UPDATE"
+        )
+
+      with %Workspace{} <- workspace || {:error, :not_found},
+           {:ok, actor} <- live_member(live, actor_id, :actor_gone),
+           :ok <- owner(actor),
+           0 <- live_project_count(workspace_id) do
+        workspace |> Ecto.Changeset.change(archived_at: DateTime.utc_now()) |> Repo.update!()
+      else
+        count when is_integer(count) -> Repo.rollback({:has_projects, count})
+        {:error, reason} -> Repo.rollback(reason)
+      end
+    end)
+  end
+
+  defp live_project_count(workspace_id) do
+    # ownership: `Workspaces.delete/3` admitted an owner through
+    # `Access.workspace_grant/3`; the count is of this workspace's projects.
+    Repo.aggregate(
+      from(p in Project,
+        where:
+          p.workspace_id == ^workspace_id and is_nil(p.archived_at) and
+            is_nil(p.deletion_requested_at)
+      ),
+      :count
+    )
+  end
+
+  @doc """
+  A workspace's live projects with their owners, by name: its Projects
+  settings page (RAV-73).
+  """
+  @spec projects(String.t()) :: [{Project.t(), User.t()}]
+  def projects(workspace_id) do
+    # ownership: `Workspaces.projects/2` admitted a live member through
+    # `Access.workspace_access/2`; every live member reaches these projects
+    # (`Access.access_of/3`), and the user rows are their owners.
+    Repo.all(
+      from p in Project,
+        join: u in User,
+        on: u.id == p.user_id,
+        where:
+          p.workspace_id == ^workspace_id and is_nil(p.archived_at) and
+            is_nil(p.deletion_requested_at),
+        order_by: [asc: fragment("lower(?)", p.name), asc: p.id],
+        select: {p, u}
+    )
+  end
+
+  @doc "The user ids holding a direct grant on each of `project_ids`."
+  @spec direct_member_ids([String.t()]) :: %{String.t() => [String.t()]}
+  def direct_member_ids([]), do: %{}
+
+  def direct_member_ids(project_ids) do
+    # ownership: `Workspaces.projects/2` admitted a live member through
+    # `Access.workspace_access/2`; these are the grants on the projects it listed.
+    Repo.all(
+      from pm in Ravix.Projects.ProjectMember,
+        where: pm.project_id in ^project_ids,
+        select: {pm.project_id, pm.user_id}
+    )
+    |> Enum.group_by(&elem(&1, 0), &elem(&1, 1))
   end
 
   defp owner(%Membership{role: :owner}), do: :ok

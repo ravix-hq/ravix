@@ -2,8 +2,9 @@ defmodule RavixWeb.WorkspaceSettingsLiveTest do
   @moduledoc """
   ADR 0009 phase 4a in the browser's terms: the sidebar's workspace
   switcher, creating a workspace from it, and a workspace's settings in the
-  settings frame (RAV-72): General, and Members with its invitations and
-  role controls. All of it hidden while `RAVIX_WORKSPACE_ACCESS` is off.
+  settings frame (RAV-72, RAV-73): General; Members with its role list,
+  invitations and role controls; Repositories; Projects; and Danger zone.
+  All of it hidden while `RAVIX_WORKSPACE_ACCESS` is off.
 
   Not async: the tests flip the switch, which is application-wide.
   """
@@ -245,7 +246,306 @@ defmodule RavixWeb.WorkspaceSettingsLiveTest do
     end
   end
 
+  defp in_workspace(project, workspace_id),
+    do: project |> Ecto.Changeset.change(workspace_id: workspace_id) |> Ravix.Repo.update!()
+
+  defp add(ctx, login, role) do
+    user = insert_user(login: login)
+    :ok = Store.add_member(ctx.team.id, user.id, role, ctx.owner.id)
+    user
+  end
+
+  describe "every section" do
+    test "has its own URL on the frame, in nav order, Danger zone alone and last", ctx do
+      {view, _html} = open(ctx.owner, ctx.team.id, "projects")
+
+      for {key, label} <- [
+            {"general", "General"},
+            {"members", "Members"},
+            {"repositories", "Repositories"},
+            {"projects", "Projects"},
+            {"danger", "Danger zone"}
+          ] do
+        assert has_element?(
+                 view,
+                 ~s(#settings-nav-#{key}[href="/w/#{ctx.team.id}/settings/#{key}"]),
+                 label
+               )
+
+        view |> element("#settings-nav-#{key}") |> render_click()
+        assert_patch(view, "/w/#{ctx.team.id}/settings/#{key}")
+        assert has_element?(view, "#settings-title", label)
+        assert page_title(view) == "#{label} · Acme · Ravix"
+      end
+
+      assert has_element?(view, ".settings-group.danger #settings-nav-danger.danger")
+      refute has_element?(view, ".settings-group.danger #settings-nav-members")
+    end
+  end
+
+  describe "Members" do
+    test "says what each role can do, and an owner is offered all three", ctx do
+      {view, _html} = open(ctx.owner, ctx.team.id)
+
+      for role <- ~w(owner admin member),
+          do: assert(has_element?(view, "#workspace-roles [data-role=#{role}] dd"))
+
+      assert has_element?(
+               view,
+               "#workspace-roles [data-role=admin]",
+               "Invites and removes members"
+             )
+
+      for role <- ~w(member admin owner),
+          do: assert(has_element?(view, "#workspace-invite-role option[value=#{role}]"))
+    end
+
+    test "the chosen role survives the redraw a suggestion causes, and is the one granted", ctx do
+      bo = insert_user(login: "bo")
+      {view, _html} = open(ctx.owner, ctx.team.id)
+
+      view |> form("#workspace-invite-form", login: "b", role: "admin") |> render_change()
+      assert has_element?(view, "#workspace-invite-role option[value=admin][selected]")
+
+      view |> form("#workspace-invite-form", login: "bo", role: "admin") |> render_submit()
+      assert %{role: :admin} = Store.membership(ctx.team.id, bo.id)
+      # And back to Member for the next one.
+      assert has_element?(view, "#workspace-invite-role option[value=member][selected]")
+    end
+
+    test "an admin is offered Member only, and a forged Admin is refused", ctx do
+      admin = add(ctx, "adm", :admin)
+      insert_user(login: "bo")
+      {view, _html} = open(admin, ctx.team.id)
+
+      assert has_element?(view, "#workspace-invite-role option[value=member]")
+      refute has_element?(view, "#workspace-invite-role option[value=admin]")
+
+      view
+      |> with_target("#workspace-settings-content")
+      |> render_hook("invite", %{"login" => "bo", "role" => "admin"})
+
+      assert render(view) =~ "Your role in this workspace cannot do that."
+      assert length(Store.members(ctx.team.id)) == 2
+    end
+  end
+
+  describe "Repositories" do
+    test "shows the connections and the catalog, with Configure on GitHub for owners and admins",
+         ctx do
+      {:ok, installation} = Store.bind_installation(ctx.team.id, 77, "acme", ctx.owner.id)
+      # Read just now, so opening the page does not ask GitHub again.
+      :ok = Store.record_refresh(installation, :active, nil, [])
+      admin = add(ctx, "adm", :admin)
+      member = add(ctx, "mem", :member)
+
+      for user <- [ctx.owner, admin] do
+        {view, _html} = open(user, ctx.team.id, "repositories")
+        assert has_element?(view, "#workspace-installations", "@acme")
+        link = view |> element("#configure-github") |> render()
+        assert link =~ ~s(target="_blank")
+        assert link =~ ~s(rel="noopener noreferrer")
+        assert link =~ "/installations/new"
+        refute link =~ "state="
+      end
+
+      {view, _html} = open(member, ctx.team.id, "repositories")
+      assert has_element?(view, "#workspace-installations", "@acme")
+      refute has_element?(view, "#configure-github")
+      refute has_element?(view, "#connect-github")
+    end
+
+    test "Members no longer carries GitHub", ctx do
+      {view, _html} = open(ctx.owner, ctx.team.id, "members")
+      refute has_element?(view, "#workspace-github")
+    end
+
+    test "Settings › Profile › Repository access links the current workspace's Repositories",
+         ctx do
+      {:ok, view, _html} = live(log_in_user(build_conn(), ctx.owner), "/settings/profile")
+      current = Ravix.Repo.reload!(ctx.owner).current_workspace_id || ctx.personal.id
+
+      view |> element("#profile-workspace-repositories") |> render_click()
+      assert_patch(view, "/w/#{current}/settings/repositories")
+      assert has_element?(view, "#settings-title", "Repositories")
+    end
+  end
+
+  describe "Projects" do
+    test "lists each project with owner, repository, agent and people", ctx do
+      member = add(ctx, "mem", :member)
+
+      mine =
+        insert_project(user: ctx.owner, name: "web", repo_full_name: "acme/web", runtime: "codex")
+        |> in_workspace(ctx.team.id)
+
+      theirs =
+        insert_project(user: member, name: "notes", repo_full_name: nil)
+        |> in_workspace(ctx.team.id)
+
+      {view, _html} = open(ctx.owner, ctx.team.id, "projects")
+      assert has_element?(view, "#settings-nav-projects .settings-count", "2")
+      row = "#workspace-project-#{mine.id}"
+      assert has_element?(view, "#{row} th a[href='/p/#{mine.id}']", "web")
+      assert has_element?(view, "#{row} td", "@owner")
+      assert has_element?(view, "#{row} td", "acme/web")
+      assert has_element?(view, "#{row} td", "Codex")
+      assert has_element?(view, "#{row} td", "2")
+      assert has_element?(view, "#{row} a[href='/p/#{mine.id}/settings/general']")
+
+      # Somebody else's project: no settings link, whose settings are theirs.
+      assert has_element?(view, "#workspace-project-#{theirs.id} td", "No repository")
+      refute has_element?(view, "#workspace-project-#{theirs.id} a[href$='/settings/general']")
+    end
+
+    test "an empty workspace points at Repositories", ctx do
+      {view, _html} = open(ctx.owner, ctx.team.id, "projects")
+
+      assert has_element?(
+               view,
+               ~s(#workspace-projects-empty a[href="/w/#{ctx.team.id}/settings/repositories"])
+             )
+    end
+  end
+
+  describe "Danger zone" do
+    test "a member leaves and is sent home", ctx do
+      member = add(ctx, "mem", :member)
+      {view, _html} = open(member, ctx.team.id, "danger")
+      refute has_element?(view, "#delete-workspace-form")
+      assert has_element?(view, "#delete-owner-only")
+
+      assert {:error, {:live_redirect, %{to: "/home"}}} =
+               view |> element("#leave-workspace") |> render_click()
+
+      assert %{"info" => "You left Acme."} = assert_redirect(view, "/home")
+
+      assert Store.membership(ctx.team.id, member.id) == nil
+    end
+
+    test "the last owner is told why they cannot leave", ctx do
+      {view, _html} = open(ctx.owner, ctx.team.id, "danger")
+      view |> element("#leave-workspace") |> render_click()
+      assert render(view) =~ "only owner"
+      assert Store.membership(ctx.team.id, ctx.owner.id)
+    end
+
+    test "a personal workspace offers neither leave nor delete, and refuses a forged leave",
+         ctx do
+      {view, _html} = open(ctx.owner, ctx.personal.id, "danger")
+      refute has_element?(view, "#leave-workspace")
+      refute has_element?(view, "#delete-workspace-form")
+
+      view |> with_target("#workspace-settings-content") |> render_hook("leave", %{})
+      assert render(view) =~ "You cannot leave your personal workspace."
+      assert Store.membership(ctx.personal.id, ctx.owner.id)
+    end
+
+    test "an owner deletes with the name typed; others' open pages leave", ctx do
+      member = add(ctx, "mem", :member)
+      {other, _html} = open(member, ctx.team.id, "members")
+      {view, _html} = open(ctx.owner, ctx.team.id, "danger")
+
+      assert has_element?(view, "#delete-workspace-form button[disabled]")
+      view |> form("#delete-workspace-form", confirm: "Acme") |> render_change()
+      refute has_element?(view, "#delete-workspace-form button[disabled]")
+
+      view |> form("#delete-workspace-form", confirm: "nope") |> render_submit()
+      assert render(view) =~ "Type the workspace&#39;s name to delete it."
+      assert Store.live_workspace(ctx.team.id)
+
+      assert {:error, {:live_redirect, %{to: "/home"}}} =
+               view |> form("#delete-workspace-form", confirm: "Acme") |> render_submit()
+
+      assert %{"info" => "Deleted Acme."} = assert_redirect(view, "/home")
+
+      assert Store.live_workspace(ctx.team.id) == nil
+      assert_redirect(other, "/")
+    end
+
+    test "a workspace with projects cannot be deleted yet", ctx do
+      insert_project(user: ctx.owner) |> in_workspace(ctx.team.id)
+      {view, _html} = open(ctx.owner, ctx.team.id, "danger")
+      assert has_element?(view, "#delete-workspace-form button[disabled]")
+
+      view
+      |> with_target("#workspace-settings-content")
+      |> render_hook("delete", %{"confirm" => "Acme"})
+
+      assert render(view) =~ "Acme still has 1 project."
+      assert Store.live_workspace(ctx.team.id)
+    end
+
+    test "an admin's forged delete is refused", ctx do
+      admin = add(ctx, "adm", :admin)
+      {view, _html} = open(admin, ctx.team.id, "danger")
+      refute has_element?(view, "#delete-workspace-form")
+
+      view
+      |> with_target("#workspace-settings-content")
+      |> render_hook("delete", %{"confirm" => "Acme"})
+
+      assert render(view) =~ "Your role in this workspace cannot do that."
+      assert Store.live_workspace(ctx.team.id)
+    end
+
+    test "a revoked session can neither leave nor delete", ctx do
+      member = add(ctx, "mem", :member)
+
+      for {user, event, params} <- [
+            {member, "leave", %{}},
+            {ctx.owner, "delete", %{"confirm" => "Acme"}}
+          ] do
+        {token, session} = insert_session(user)
+        conn = Plug.Test.init_test_session(build_conn(), session_token: token)
+        {:ok, view, _html} = live(conn, "/w/#{ctx.team.id}/settings/danger")
+        Ravix.Repo.delete!(session)
+
+        assert {:error, {:redirect, %{to: "/login"}}} =
+                 view |> with_target("#workspace-settings-content") |> render_hook(event, params)
+      end
+
+      assert Store.membership(ctx.team.id, member.id)
+      assert Store.live_workspace(ctx.team.id)
+    end
+
+    test "somebody removed while the page is open cannot delete and is sent home", ctx do
+      other_owner = add(ctx, "own2", :owner)
+      {view, _html} = open(other_owner, ctx.team.id, "danger")
+      # An owner's page reads their own GitHub accounts in the background;
+      # let that answer first, or it is what notices the removal.
+      render_async(view)
+
+      # Removed without the notice reaching the page: the event itself asks.
+      assert {:ok, _} = Store.revoke_membership(ctx.team.id, other_owner.id, ctx.owner.id)
+
+      assert {:error, {:redirect, %{to: "/"}}} =
+               view
+               |> with_target("#workspace-settings-content")
+               |> render_hook("delete", %{"confirm" => "Acme"})
+
+      assert Store.live_workspace(ctx.team.id)
+    end
+
+    test "another workspace's danger zone is not found", ctx do
+      stranger = insert_user()
+      {:ok, other} = Workspaces.create(stranger, "Other")
+
+      assert {:error,
+              {:live_redirect, %{to: "/home", flash: %{"info" => "Workspace not found."}}}} =
+               live(log_in_user(build_conn(), ctx.owner), "/w/#{other.id}/settings/danger")
+
+      assert Store.live_workspace(other.id)
+    end
+  end
+
   describe "General" do
+    test "offers New workspace…, which opens the dialog", ctx do
+      {view, _html} = open(ctx.owner, ctx.team.id, "general")
+      view |> element("#general-new-workspace") |> render_click()
+      assert has_element?(view, "#new-workspace-dialog #new-workspace-form")
+    end
+
     test "an owner renames the workspace; the switcher and title follow", ctx do
       {view, _html} = open(ctx.owner, ctx.team.id, "general")
       assert has_element?(view, "#workspace-general-unsaved-bar[hidden]")
