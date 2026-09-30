@@ -2125,6 +2125,55 @@ defmodule RavixWeb.WorkspaceLive do
     """
   end
 
+  # A row's last-activity age. The server writes it once, relative to the
+  # render; the `RelativeTime` hook keeps it current and puts the time in the
+  # viewer's own zone in the tooltip.
+  attr :id, :string, required: true
+  attr :at, DateTime, default: nil
+
+  defp age(assigns) do
+    ~H"""
+    <time
+      :if={@at}
+      id={@id}
+      class="track-age"
+      phx-hook="RelativeTime"
+      datetime={DateTime.to_iso8601(@at)}
+      title={"Last active #{Calendar.strftime(@at, "%b %-d, %Y %H:%M UTC")}"}
+    >{elem(ago(@at), 0)}</time>
+    """
+  end
+
+  # The link's accessible name, with the age the hook keeps current in words.
+  defp row_label(track, label) do
+    case track.activity_at do
+      nil -> label
+      at -> "#{label}, active #{elem(ago(at), 1)}"
+    end
+  end
+
+  @ages [
+    {365 * 86_400, "y", "year"},
+    {30 * 86_400, "mo", "month"},
+    {86_400, "d", "day"},
+    {3_600, "h", "hour"},
+    {60, "m", "minute"}
+  ]
+
+  # `{short, words}`, as assets/js/hooks/relative_time.js's `age` answers it.
+  defp ago(at, now \\ DateTime.utc_now()) do
+    seconds = max(DateTime.diff(now, at), 0)
+
+    case Enum.find(@ages, fn {size, _, _} -> seconds >= size end) do
+      nil ->
+        {"now", "just now"}
+
+      {size, short, word} ->
+        n = div(seconds, size)
+        {"#{n}#{short}", "#{n} #{word}#{if n == 1, do: "", else: "s"} ago"}
+    end
+  end
+
   defp initials(login) do
     case String.split(login || "", ~r/[-_.]+/, trim: true) do
       [first, second | _] -> String.first(first) <> String.first(second)

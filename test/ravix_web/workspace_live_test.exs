@@ -1071,10 +1071,15 @@ defmodule RavixWeb.WorkspaceLiveTest do
 
     # The namespace every default title shares is left off the tab; the full
     # title, its creator and its machine state are its accessible name, the
-    # title its tooltip.
+    # title its tooltip. The age the `RelativeTime` hook keeps current ends it.
     assert has_element?(
              view,
-             "#{tab.(idle)}[aria-label='ravix/idle, created by @user, Idle'][title='ravix/idle']"
+             "#{tab.(idle)}[data-label='ravix/idle, created by @user, Idle'][title='ravix/idle']"
+           )
+
+    assert has_element?(
+             view,
+             "#{tab.(idle)}[aria-label^='ravix/idle, created by @user, Idle, active ']"
            )
 
     assert render(element(view, "#{tab.(idle)} .track-title")) =~ ~r{>idle</span>}
@@ -1083,7 +1088,7 @@ defmodule RavixWeb.WorkspaceLiveTest do
 
     assert has_element?(
              view,
-             "#{tab.(feature)}[aria-label='feature/login, created by @user, from a project plan, Idle']"
+             "#{tab.(feature)}[data-label='feature/login, created by @user, from a project plan, Idle']"
            )
 
     # One `MachineState` per row: the dot's class, its label and tooltip, and
@@ -1108,7 +1113,7 @@ defmodule RavixWeb.WorkspaceLiveTest do
 
       assert has_element?(
                view,
-               "#{tab.(track)}[aria-label=\"#{track.title}, created by @user, #{name}\"]"
+               "#{tab.(track)}[data-label=\"#{track.title}, created by @user, #{name}\"]"
              )
     end
 
@@ -1118,7 +1123,7 @@ defmodule RavixWeb.WorkspaceLiveTest do
 
     assert has_element?(
              view,
-             "#{tab.(broken)}[aria-label='ravix/broken, created by @user, Idle']"
+             "#{tab.(broken)}[data-label='ravix/broken, created by @user, Idle']"
            )
 
     # Idle and active tracks alike omit decorative numbering.

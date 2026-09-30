@@ -71,7 +71,8 @@ defmodule Ravix.Accounts.Access do
   `closed:` maps projects whose closed tracks are wanted too to how many:
   the most recently closed first, ranked after the visibility test, so
   another person's private track stays out and never takes a place. Still
-  one query however many projects ask. Each row carries its creator's avatar.
+  one query however many projects ask. Each row carries its creator's avatar
+  and when its newest prompt was accepted (`last_prompt_at`).
   """
   @spec open_tracks(User.t(), [String.t()], closed: %{String.t() => pos_integer()}) ::
           [{Track.t(), Project.t()}]
@@ -104,19 +105,36 @@ defmodule Ravix.Accounts.Access do
         dynamic([t, r], ^acc or (t.project_id == ^id and r.rank <= ^limit))
       end)
 
-    # ownership: no door before this one; this query establishes project and track membership.
+    # ownership: no door before this one; this query establishes project and
+    # track membership. The prompt queue is read for the admitted rows only,
+    # and only its newest timestamp, never a prompt's body.
     Repo.all(
       from(t in Track,
+        as: :row,
         join: r in subquery(ranked),
         on: r.id == t.id,
         join: p in Project,
         on: p.id == t.project_id,
         left_join: u in User,
         on: u.id == t.created_by,
+        left_lateral_join: q in subquery(last_prompt()),
+        on: true,
         where: ^within,
         order_by: [asc: t.created_at, asc: t.id],
-        select: {%{t | creator_avatar_url: u.avatar_url}, p}
+        select: {%{t | creator_avatar_url: u.avatar_url, last_prompt_at: q.created_at}, p}
       )
+    )
+  end
+
+  # `sequence` is the order prompts were accepted in, and is indexed by track.
+  defp last_prompt do
+    import Ecto.Query
+
+    from(q in Ravix.PromptQueue.Item,
+      where: q.track_id == parent_as(:row).id,
+      order_by: [desc: q.sequence],
+      limit: 1,
+      select: %{created_at: q.created_at}
     )
   end
 

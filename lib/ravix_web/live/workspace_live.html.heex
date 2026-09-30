@@ -387,7 +387,8 @@
                       patch={"/p/#{project.id}/t/#{track.id}"}
                       class={["workspace-track track-tab", @track_id == track.id && "selected"]}
                       aria-current={if @track_id == track.id, do: "page"}
-                      aria-label={tab_name(track)}
+                      data-label={tab_name(track)}
+                      aria-label={row_label(track, tab_name(track))}
                       title={track.title}
                     >
                       <.status_dot
@@ -398,7 +399,10 @@
                       />
                       <.creator track={track} />
                       <span class="track-title">{tab_label(track)}</span>
-                      <span :if={track.visibility == :private}><.icon name="lock" /> Private</span>
+                      <span :if={track.visibility == :private} class="track-private">
+                        <.icon name="lock" /> Private
+                      </span>
+                      <.age id={"track-age-#{track.id}"} at={track.activity_at} />
                     </.link>
                     <div :if={MapSet.member?(@track_errors, project.id)} role="status">
                       <p class="hint">Couldn't load tracks</p>
@@ -445,9 +449,10 @@
                           <span class="track-title truncate" title={track.title}>
                             {tab_label(track)}<span class="sr-only">, closed</span>
                           </span>
-                          <span :if={track.visibility == :private}>
+                          <span :if={track.visibility == :private} class="track-private">
                             <.icon name="lock" /> Private
                           </span>
+                          <.age id={"closed-track-age-#{track.id}"} at={track.activity_at} />
                           <button
                             :if={reopenable?(project)}
                             type="button"
