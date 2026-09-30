@@ -7,10 +7,10 @@ const mock = `http://localhost:${process.env.MOCK_PORT || 8893}`;
 test('readable project variables add, edit, reject auth names and remove through Fountain', async ({ page, request }) => {
   await signIn(page, 'dana');
   await connectClaude(page);
-  await page.getByRole('button', { name: 'Add a project', exact: true }).first().click();
-  const create = page.getByRole('dialog', { name: 'New project' });
+  await page.getByRole('button', { name: 'Add a repository', exact: true }).first().click();
+  const create = page.getByRole('dialog', { name: 'Add a repository' });
   await create.getByLabel('Project name', { exact: true }).fill('Readable variables browser');
-  await create.getByRole('button', { name: 'Create project', exact: true }).click();
+  await create.getByRole('button', { name: 'Create scratch project', exact: true }).click();
   await expect(create).not.toBeVisible();
   // RAV-74: variables are a part of the Machine page, saved with the rest.
   const dialog = await openProjectSettings(page, 'machine');

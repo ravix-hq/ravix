@@ -15,10 +15,10 @@ async function newTrack(page, request, name) {
   await page.setViewportSize({ width: 1440, height: 900 });
   await signIn(page, 'threadruntime', '/home');
   await connectClaude(page);
-  await page.getByRole('button', { name: 'Add a project', exact: true }).first().click();
-  const dialog = page.getByRole('dialog', { name: 'New project', exact: true });
+  await page.getByRole('button', { name: 'Add a repository', exact: true }).first().click();
+  const dialog = page.getByRole('dialog', { name: 'Add a repository', exact: true });
   await dialog.getByLabel('Project name', { exact: true }).fill(name);
-  await dialog.getByRole('button', { name: 'Create project', exact: true }).click();
+  await dialog.getByRole('button', { name: 'Create scratch project', exact: true }).click();
   await expect(dialog).toHaveCount(0);
   await page.locator('#yard .workspace-project.current .project-add').click();
   await page.getByRole('button', { name: 'Create track', exact: true }).click();

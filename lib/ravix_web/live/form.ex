@@ -91,7 +91,7 @@ defmodule RavixWeb.Live.Form do
     # its value: see `RavixWeb.OnboardingLive`.
     credential: {%{value: :string}, %{"bad_credential" => :value, "no_credential" => :value}},
     new_project:
-      {%{name: :string, repo: :string, runtime: :string},
+      {%{name: :string, repo: :string, runtime: :string, query: :string},
        %{
          "no_name" => :name,
          "invalid_repository" => :repo,

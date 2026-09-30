@@ -12,9 +12,9 @@ test('sidebar rows keep one rhythm, spin while working and keep the open track i
   await page.setViewportSize({ width: 1280, height: 640 });
   await signIn(page, 'sidebarpolish', '/home');
   await connectClaude(page);
-  await page.getByRole('button', { name: 'Add a project', exact: true }).first().click();
+  await page.getByRole('button', { name: 'Add a repository', exact: true }).first().click();
   await page.getByLabel('Project name', { exact: true }).fill(`Sidebar polish ${Date.now().toString(36)}`);
-  await page.getByRole('button', { name: 'Create project', exact: true }).click();
+  await page.getByRole('button', { name: 'Create scratch project', exact: true }).click();
   const projectRow = page.locator('#yard .workspace-project.current');
   const projectId = await projectRow.getAttribute('data-project-id');
 
@@ -164,9 +164,9 @@ test('the sidebar nav and You menu keep one pitch and say what they do', async (
   await page.setViewportSize({ width: 1440, height: 900 });
   await signIn(page, 'sidebarpolish', '/home');
   await connectClaude(page);
-  await page.getByRole('button', { name: 'Add a project', exact: true }).first().click();
+  await page.getByRole('button', { name: 'Add a repository', exact: true }).first().click();
   await page.getByLabel('Project name', { exact: true }).fill(`Sidebar nav ${Date.now().toString(36)}`);
-  await page.getByRole('button', { name: 'Create project', exact: true }).click();
+  await page.getByRole('button', { name: 'Create scratch project', exact: true }).click();
   const projectRow = page.locator('#yard .workspace-project.current');
   await projectRow.locator('.project-add').click();
   await page.getByRole('button', { name: 'Create track', exact: true }).click();

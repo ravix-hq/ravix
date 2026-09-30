@@ -28,12 +28,12 @@ test('Checks shows uncommitted and unpushed work, commits and pushes it, and sur
   test.setTimeout(150_000);
   await signIn(page, 'gitstatus');
   await connectClaude(page);
-  await page.getByRole('button', { name: 'Add a project', exact: true }).first().click();
-  const project = page.getByRole('dialog', { name: 'New project' });
+  await page.getByRole('button', { name: 'Add a repository', exact: true }).first().click();
+  const project = page.getByRole('dialog', { name: 'Add a repository' });
   await project.getByLabel('Project name', { exact: true }).fill('Atlas API');
-  await expect(project.locator('#project-repositories option')).not.toHaveCount(0);
-  await project.getByLabel('Repository', { exact: true }).fill('mockuser/atlas-api');
-  await project.getByRole('button', { name: 'Create project' }).click();
+  await expect(project.locator('#project-repositories input[type=radio]')).not.toHaveCount(0);
+  await project.getByRole('radio', { name: 'mockuser/atlas-api', exact: true }).check();
+  await project.getByRole('button', { name: 'Add repository' }).click();
   await expect(project).not.toBeVisible();
 
   await openChecks(page, 'search-endpoint');

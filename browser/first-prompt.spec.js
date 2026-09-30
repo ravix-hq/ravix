@@ -8,10 +8,10 @@ test('a first prompt typed in the create dialog opens the track with it waiting 
   test.setTimeout(180_000);
   await signIn(page, 'threadruntime', '/home');
   await connectClaude(page);
-  await page.getByRole('button', { name: 'Add a project', exact: true }).first().click();
-  const project = page.getByRole('dialog', { name: 'New project', exact: true });
+  await page.getByRole('button', { name: 'Add a repository', exact: true }).first().click();
+  const project = page.getByRole('dialog', { name: 'Add a repository', exact: true });
   await project.getByLabel('Project name', { exact: true }).fill('First prompt');
-  await project.getByRole('button', { name: 'Create project', exact: true }).click();
+  await project.getByRole('button', { name: 'Create scratch project', exact: true }).click();
   await expect(project).toHaveCount(0);
   await page.locator('#yard .workspace-project.current .project-add').click();
 
