@@ -1370,10 +1370,17 @@ html[data-yard="closed"] .workspace-trigger-skeleton { flex: none; width: 28px; 
 /* An empty tab or dock pane is the shared `.empty`, sized for a side panel
    rather than a page. */
 .panel-empty .empty, .dock-empty .empty { min-height: 0; padding: 24px 12px; }
+/* The dock is 240px, and its empty state has to fit whole beneath the tab
+   strip and the command line: a tighter mark and gap, and a wider measure so
+   the sentence takes three lines rather than five. It is centred by its
+   margins in a column rather than by the pane's `justify-content`, so a pane
+   too short for it scrolls to its top instead of cutting that off. */
 .dock-empty { font-family: var(--sans); }
-.dock-empty .empty { padding: 14px 12px; gap: 6px; }
-.dock-empty .empty .mark { width: 30px; height: 30px; margin-bottom: 0; }
-.dock-empty .empty p { font-size: 12px; }
+.workspace-terminal .term-scroll:has(> .dock-empty) { display: flex; flex-direction: column; padding: 8px 12px; }
+.term-scroll > .dock-empty { margin-block: auto; }
+.dock-empty .empty { padding: 8px 12px; gap: 4px; }
+.dock-empty .empty .mark { width: 28px; height: 28px; margin-bottom: 0; }
+.dock-empty .empty p { font-size: 12px; max-width: 60ch; }
 /* The preview is somebody else's page in a frame; the panel colour is the
    ground it paints over, so the wait for it is not a hole in the inspector. */
 .workspace-preview { width: 100%; height: 360px; background: var(--panel); border: 0; margin: 12px 0; }
@@ -1452,9 +1459,6 @@ html[data-yard="closed"] .workspace-trigger-skeleton { flex: none; width: 28px; 
 .workspace-terminal { height: 210px; min-height: 140px; flex-shrink: 0; display: flex; flex-direction: column; }
 .workspace-terminal .term-scroll { flex: 1; min-height: 0; overflow: auto; padding: 12px; }
 .term-input { display: flex; align-items: baseline; gap: 6px; padding: 6px 10px; border-top: 1px solid var(--line); font-family: var(--mono); font-size: 12px; }
-/* Whose machine an open pane runs on: a quiet line at the top of the pane,
-   not a heading, since the header's badge is where that is said first. */
-.dock-context { margin: 0; padding: 6px 12px 0; font-family: var(--sans); font-size: 11px; color: var(--dim); }
 .term-input .ps1 { color: var(--accent); flex: none; }
 .term-input input { border: none; background: transparent; padding: 0; font-family: var(--mono); font-size: 12px; }
 .term-input input:focus { box-shadow: none; }
