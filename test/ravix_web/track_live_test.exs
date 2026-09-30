@@ -1655,7 +1655,8 @@ defmodule RavixWeb.TrackLiveTest do
         assert has_element?(view, "#track-machine-detail.sr-only", detail)
       else
         refute has_element?(view, "#track-machine-detail")
-        refute has_element?(view, "#track-machine-state[title]")
+        # A narrow header shows only the dot, so the word is its tooltip.
+        assert has_element?(view, "#track-machine-state[title=\"#{label}\"]")
       end
     end
 

@@ -89,7 +89,7 @@ defmodule RavixWeb.Live.TrackPlanItems do
         navigate={@summary.plan.url}
         class="chip track-plan-chip"
         title={@summary.plan.title}
-      >Plan: {@summary.plan.title}</.link>
+      ><.icon name="document" size={12} /><span class="truncate">Plan: {@summary.plan.title}</span></.link>
       <button
         :if={@items != []}
         type="button"
@@ -100,7 +100,7 @@ defmodule RavixWeb.Live.TrackPlanItems do
         aria-expanded={to_string(@expanded)}
         aria-controls={"#{@id}-panel"}
       >
-        <span class="truncate">{if @summary.plan,
+        <.icon name="document" size={12} /><span class="truncate">{if @summary.plan,
           do: "Plan: #{@summary.plan.title}",
           else: "Plan items"}</span><span class="track-plan-count">{" · " <> count(@items)}</span>
         <.icon name="chevron" size={11} open={@expanded} />

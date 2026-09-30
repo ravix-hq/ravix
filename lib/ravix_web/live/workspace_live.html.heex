@@ -287,17 +287,6 @@
                         aria-label={"#{project_attention(@tracks, project.id)} unread"}
                       >{project_attention(@tracks, project.id)}</span>
                     </.link>
-                    <button
-                      :if={@project && @project.id == project.id && project.access != :tracks}
-                      type="button"
-                      class="project-action"
-                      aria-label={"People in #{project.display_name}"}
-                      title="People"
-                      phx-click={JS.push_focus() |> JS.push("dialog")}
-                      phx-value-name="people"
-                    >
-                      <.icon name="add-person" size={13} />
-                    </button>
                     <.link
                       :if={project.access != :tracks}
                       id={"project-plans-#{project.id}"}
@@ -345,6 +334,28 @@
                       role="menu"
                       aria-label={"More for #{project.display_name}"}
                     >
+                      <%!-- People lives in here rather than on the row: it
+                        only ever showed on the open project, so opening a
+                        track made that one row an icon wider and cut its
+                        name short (RAV-63). --%>
+                      <button
+                        :if={@project && @project.id == project.id}
+                        type="button"
+                        class="account-item"
+                        role="menuitem"
+                        aria-label={"People in #{project.display_name}"}
+                        popovertarget={"project-menu-#{project.id}"}
+                        popovertargetaction="hide"
+                        phx-click={
+                          JS.push_focus(to: "#project-menu-trigger-#{project.id}")
+                          |> JS.push("dialog")
+                        }
+                        phx-value-name="people"
+                      >
+                        <span class="menu-check" aria-hidden="true">
+                          <.icon name="add-person" size={14} />
+                        </span>People
+                      </button>
                       <button
                         type="button"
                         id={"show-closed-#{project.id}"}

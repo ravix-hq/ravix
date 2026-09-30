@@ -23,65 +23,89 @@
     <button class="primary" phx-click="retry-load">Try again</button>
   </div>
   <div :if={@track} class="track-workspace-body" data-narrow-view={@narrow_view}>
+    <%!-- Two groups either side of the spacer: what the track is on the
+      left, how it is on the right beside the actions. The status half is
+      where anything that arrives late (the plan chip) or changes length
+      (the machine's state) lives, so it grows into the spacer and never
+      moves the title. When the strip is short the status chips give way
+      first, down to their icon or count, then the branch, and the title
+      last; see "the track's own header" in app.css. --%>
     <header class="crumbs track-crumbs">
-      <.link navigate={"/p/#{@project.id}"} class="project-crumb">
-        <span class="project-mark" aria-hidden="true">
-          {String.first(@project.name) |> String.upcase()}
+      <div class="track-path">
+        <.link
+          navigate={"/p/#{@project.id}"}
+          class={["project-crumb", !fits?(@project.display_name, 12) && "long"]}
+        >
+          <span class="project-mark" aria-hidden="true">
+            {String.first(@project.name) |> String.upcase()}
+          </span>
+          <strong><.project_name project={@project} /></strong>
+        </.link>
+        <span class="dimmer" aria-hidden="true">›</span>
+        <button
+          :if={owner_or_creator?(@current_user, @track)}
+          class={["ghost track-title-crumb", !fits?(@track.title, 16) && "long"]}
+          phx-click={JS.push_focus() |> JS.push("dialog")}
+          phx-value-name="rename"
+          title="Rename track"
+          aria-label={"Rename track: #{@track.title}"}
+        >
+          {@track.title}
+        </button>
+        <strong
+          :if={!owner_or_creator?(@current_user, @track)}
+          class={["track-title-crumb", !fits?(@track.title, 16) && "long"]}
+          title={@track.title}
+        >{@track.title}</strong>
+        <%!-- A new track is titled with its branch, so the chip appears only
+          once the two say different things: after a rename, say. --%>
+        <span
+          :if={@track.branch != @track.title}
+          class="chip mono track-branch"
+          title={@track.branch}
+        >{@track.branch}</span>
+      </div>
+      <span class="spacer"></span>
+      <div class="track-status">
+        <.live_component
+          module={RavixWeb.Live.TrackPlanItems}
+          id={"track-plan-items-#{@track.id}"}
+          current_user={@current_user}
+          session_hash={@session_hash}
+          track_id={@track.id}
+          summary={@assigned_plan}
+        />
+        <span :if={@track.visibility == :private} class="chip" title="Private">
+          <.icon name="lock" /><span class="chip-label">Private</span>
         </span>
-        <strong><.project_name project={@project} /></strong>
-      </.link>
-      <span class="dimmer" aria-hidden="true">›</span>
+        <.machine_chip machine={machine(@track, @threads, @thread_states, @setup_now)} />
+        <span
+          :if={
+            @track.sandbox_layout == :dedicated ||
+              Ravix.Config.dedicated_opens_enabled?(@current_user)
+          }
+          class="chip"
+          id="track-machine-scope"
+          title={machine_scope(@track)}
+        ><.icon name="machine" size={12} /><span class="chip-label">{machine_scope(@track)}</span></span>
+        <span
+          :if={@track.billing == :creator}
+          id="track-payer"
+          class="dim status-note"
+          title={payer_label(@track)}
+        >
+          {payer_label(@track)}
+        </span>
+        <span
+          :if={@track.billing != :creator && @project.role != :owner}
+          id="track-agent-owner"
+          class="dim status-note"
+          title={agent_owner_label(@project, @track)}
+        >
+          {agent_owner_label(@project, @track)}
+        </span>
+      </div>
       <button
-        :if={owner_or_creator?(@current_user, @track)}
-        class="ghost"
-        phx-click={JS.push_focus() |> JS.push("dialog")}
-        phx-value-name="rename"
-        title="Rename track"
-        aria-label={"Rename track: #{@track.title}"}
-      >
-        {@track.title}
-      </button>
-      <strong :if={!owner_or_creator?(@current_user, @track)}>{@track.title}</strong>
-      <span :if={@track.visibility == :private}><.icon name="lock" /> Private</span>
-      <.machine_chip machine={machine(@track, @threads, @thread_states, @setup_now)} />
-      <.live_component
-        module={RavixWeb.Live.TrackPlanItems}
-        id={"track-plan-items-#{@track.id}"}
-        current_user={@current_user}
-        session_hash={@session_hash}
-        track_id={@track.id}
-        summary={@assigned_plan}
-      />
-      <%!-- A new track is titled with its branch, so the chip appears only
-        once the two say different things: after a rename, say. --%>
-      <span
-        :if={@track.branch != @track.title}
-        class="chip mono track-branch"
-        title={@track.branch}
-      >{@track.branch}</span>
-      <span
-        :if={
-          @track.sandbox_layout == :dedicated ||
-            Ravix.Config.dedicated_opens_enabled?(@current_user)
-        }
-        class="chip"
-        id="track-machine-scope"
-      >{if @track.sandbox_layout == :dedicated,
-        do: "Own machine",
-        else: "Shared project machine"}</span>
-      <span :if={@track.billing == :creator} id="track-payer" class="dim">
-        {payer_label(@track)}
-      </span>
-      <span
-        :if={@track.billing != :creator && @project.role != :owner}
-        id="track-agent-owner"
-        class="dim"
-      >
-        Runs on @{@project.owner_login}'s {RavixWeb.AgentName.label(
-          @track.runtime || @project.runtime
-        )}
-      </span>
-      <span class="spacer"></span><button
         :if={
           Ravix.People.workspace_sharing?(@project) && owner_or_creator?(@current_user, @track)
         }
