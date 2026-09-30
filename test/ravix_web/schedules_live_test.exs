@@ -47,8 +47,9 @@ defmodule RavixWeb.SchedulesLiveTest do
     conn = conn |> log_in_user(user) |> put_connect_params(%{"timezone" => "Asia/Kolkata"})
     {:ok, view, _} = live(conn, "/schedules")
     render_async(view)
-    assert has_element?(view, "#schedules-panel header", "a prompt that runs on a timer")
-    assert has_element?(view, "#schedules-panel header", "every weekday at 9:00")
+    # One line, and the rest behind "Learn more" (RAV-100).
+    assert has_element?(view, "#schedules-panel header", "A prompt that runs on a timer")
+    assert has_element?(view, "#schedules-panel header details", "every weekday at 9:00")
     assert has_element?(view, "#schedule_timezone[value='Asia/Kolkata']")
 
     view

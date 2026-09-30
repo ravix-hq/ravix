@@ -8,7 +8,7 @@ import { expectHeaderUnobstructed } from './header-layout.js';
 test('assigned plan items stay compact across widths and themes', async ({ page }) => {
   await signIn(page, 'eli', '/home');
   await connectClaude(page);
-  await page.getByRole('button', { name: /^New project/ }).click();
+  await page.getByRole('button', { name: 'Add a project', exact: true }).first().click();
   await page.getByLabel('Project name', { exact: true }).fill('Assigned items');
   await page.getByRole('button', { name: 'Create project', exact: true }).click();
   await page.locator('#yard .workspace-project.current .project-add').click();
