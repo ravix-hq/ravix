@@ -2105,7 +2105,17 @@ defmodule RavixWeb.TrackLiveTest do
 
     test "is disabled while a turn runs, and a plain label with no catalog", ctx do
       ctx.serve.(:running, nil)
-      assert has_element?(ctx.view, "#model-trigger[disabled]")
+      # RAV-87: marked busy, which keeps its contrast, and its title says why.
+      assert has_element?(ctx.view, "#model-trigger[disabled][data-busy]")
+
+      assert has_element?(
+               ctx.view,
+               "#model-trigger[title$=\"(can't change while the agent is working)\"]"
+             )
+
+      ctx.serve.(:ready, nil)
+      refute has_element?(ctx.view, "#model-trigger[data-busy]")
+      refute render(ctx.view) =~ "can&#39;t change while the agent"
 
       html =
         render_component(&RavixWeb.TrackLive.model_menu/1,
@@ -3515,8 +3525,13 @@ defmodule RavixWeb.TrackLiveTest do
       refute has_element?(ctx.view, button <> "[phx-disable-with]")
       assert has_element?(ctx.view, button <> "[disabled]") == is_nil(conversation_id)
 
-      assert has_element?(ctx.view, "#composer-form button", "Stop") ==
-               status in [:opening, :running]
+      # RAV-87: Stop is an icon button in send's place, never a row of its own.
+      assert has_element?(
+               ctx.view,
+               "#composer-form #composer-stop[type=button][phx-click=interrupt][aria-label='Stop agent'] svg"
+             ) == status in [:opening, :running]
+
+      refute has_element?(ctx.view, "#composer-form button", "Stop")
 
       assert has_element?(ctx.view, "#composer-form button", "Wake / retry") ==
                status in [:opening, :failed]
@@ -3640,7 +3655,7 @@ defmodule RavixWeb.TrackLiveTest do
 
     ctx.view |> element("button", "Wake / retry") |> render_click()
     render_async(ctx.view)
-    ctx.view |> element("button", "Stop") |> render_click()
+    ctx.view |> element("#composer-stop") |> render_click()
     # Both are Fountain round trips and run off the page.
     render_async(ctx.view)
     assert has_element?(ctx.view, "#composer-form")
@@ -3659,7 +3674,7 @@ defmodule RavixWeb.TrackLiveTest do
       end
     end)
 
-    ctx.view |> element("button", "Stop") |> render_click()
+    ctx.view |> element("#composer-stop") |> render_click()
 
     assert_receive {:stopping, stopping}
     assert has_element?(ctx.view, "button[phx-click=interrupt][disabled]")
@@ -3671,10 +3686,23 @@ defmodule RavixWeb.TrackLiveTest do
     refute has_element?(ctx.view, "button[phx-click=interrupt][disabled]")
   end
 
+  test "a revoked session cannot interrupt", ctx do
+    reject(Tracks, :interrupt, 3)
+    token = Plug.Conn.get_session(ctx.conn, :session_token)
+    Repo.delete!(Repo.get_by!(Session, token_hash: Ravix.Crypto.sha256(token)))
+
+    :sys.replace_state(ctx.view.pid, fn state ->
+      update_in(state.socket.assigns.session_guard, &%{&1 | stale?: true})
+    end)
+
+    assert {:error, {:redirect, %{to: "/login"}}} =
+             ctx.view |> element("#composer-stop") |> render_click()
+  end
+
   @tag capture_log: true
   test "a stop that crashes says so, and not that something failed to load", ctx do
     stub(Tracks, :interrupt, fn _, _, _thread_opts -> raise "Fountain fell over" end)
-    ctx.view |> element("button", "Stop") |> render_click()
+    ctx.view |> element("#composer-stop") |> render_click()
 
     render_async(ctx.view)
     html = toasted(ctx)

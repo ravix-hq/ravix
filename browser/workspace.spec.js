@@ -1123,11 +1123,11 @@ test('composer Send stays compact and keeps its arrow after repeated submissions
     // Acknowledgement clears the input before the agent finishes. Keep this
     // button-rendering regression sequential instead of queuing another turn.
     await expect(page.locator('#transcript-turns .turn-footer')).toHaveCount(++completedAnswers, { timeout: 20_000 });
-    await expect(page.locator('#composer-form').getByRole('button', { name: 'Stop', exact: true })).toHaveCount(0, { timeout: 30_000 });
+    await expect(page.locator('#composer-form').getByRole('button', { name: 'Stop agent', exact: true })).toHaveCount(0, { timeout: 30_000 });
   }
   await page.evaluate(() => window.liveSocket.disableLatencySim());
   await expect(page.locator('#transcript-turns')).toContainText('Send regression Enter', { timeout: 20_000 });
-  await expect(page.locator('#composer-form').getByRole('button', { name: 'Stop', exact: true })).toHaveCount(0, { timeout: 30_000 });
+  await expect(page.locator('#composer-form').getByRole('button', { name: 'Stop agent', exact: true })).toHaveCount(0, { timeout: 30_000 });
   const fixture = composerFixture(new URL(page.url()).pathname.split('/').pop());
   const palettes = await page.locator('[data-theme-choice]').evaluateAll(els => [...new Set(els.map(el => el.dataset.themeChoice))]);
   expect(palettes).toHaveLength(22);
@@ -1140,9 +1140,17 @@ test('composer Send stays compact and keeps its arrow after repeated submissions
     await expect(async () => {
       await page.reload();
       await expect(page.locator('[data-phx-main]')).toHaveClass(/phx-connected/);
-      await expect(page.locator('#composer-form').getByRole('button', { name: 'Stop', exact: true })).toHaveCount(['opening', 'running'].includes(status) ? 1 : 0, { timeout: 1_000 });
+      await expect(page.locator('#composer-form').getByRole('button', { name: 'Stop agent', exact: true })).toHaveCount(['opening', 'running'].includes(status) ? 1 : 0, { timeout: 1_000 });
       await expect(page.locator('#composer-form').getByRole('button', { name: 'Wake / retry', exact: true })).toHaveCount(['opening', 'failed'].includes(status) ? 1 : 0, { timeout: 1_000 });
     }).toPass({ timeout: 15_000 });
+    // RAV-87: with a turn running and nothing typed, Stop stands where send
+    // is and send steps aside; something to send brings it back, so the
+    // matrix below still measures it. The value is set without an input
+    // event, so no draft is saved for the next state.
+    if (['opening', 'running'].includes(status)) {
+      await expect(send).toBeHidden();
+      await composer.evaluate(el => { el.value = 'Queued while the agent works'; });
+    }
     await expect(send).toBeVisible();
     if (connected) await expect(send).toBeEnabled();
     else await expect(send).toBeDisabled();

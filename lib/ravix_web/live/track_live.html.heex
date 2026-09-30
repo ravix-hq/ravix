@@ -714,6 +714,7 @@
                     is_nil(@track.conversation_id) or @track.status in [:running, :opening] or
                       :model in @pending or @track.level == :read
                   }
+                  busy={@track.status in [:running, :opening] and @track.level != :read}
                 /><span class="spacer"></span>
                 <span
                   id="composer-shortcut"
@@ -724,6 +725,28 @@
                 >
                   <kbd>Ctrl+L</kbd> to focus
                 </span>
+                <%!-- RAV-87: while a turn runs, Stop takes the send button's
+                  place, same size and spot. Send stays beside it only while
+                  there is something to send (text or images), which the
+                  browser knows and the server does not until submit; the
+                  CSS rule on `.composer-stop` hides it otherwise. The
+                  server still checks `interrupt` against the viewer's
+                  access, and a Read member is never shown the button. --%>
+                <button
+                  :if={
+                    !@thread_draft[:selected?] && @track.status in [:running, :opening] &&
+                      @track.level != :read
+                  }
+                  id="composer-stop"
+                  type="button"
+                  class="composer-stop"
+                  aria-label="Stop agent"
+                  title="Stop agent"
+                  phx-click="interrupt"
+                  disabled={:interrupt in @pending}
+                >
+                  <.icon name="stop" size={18} />
+                </button>
                 <button
                   type="submit"
                   class="primary composer-send"
@@ -738,18 +761,6 @@
                   }
                 >
                   <.icon name="arrow-up" size={16} />
-                </button>
-                <button
-                  :if={
-                    !@thread_draft[:selected?] && @track.status in [:running, :opening] &&
-                      @track.level != :read
-                  }
-                  type="button"
-                  class="ghost"
-                  phx-click="interrupt"
-                  disabled={:interrupt in @pending}
-                >
-                  Stop
                 </button>
                 <button
                   :if={

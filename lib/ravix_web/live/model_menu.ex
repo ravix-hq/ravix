@@ -20,6 +20,7 @@ defmodule RavixWeb.Live.ModelMenu do
 
   attr :id, :string, required: true, doc: "the chip is `<id>-trigger`, the popover `<id>-menu`"
   attr :label, :string, required: true, doc: "the chip's accessible name and title"
+  attr :title, :string, default: nil, doc: "the chip's title, when it says more than its label"
   attr :haspopup, :string, default: "menu", values: ~w(menu dialog)
   attr :disabled, :boolean, default: false
   attr :class, :any, default: nil, doc: "the chip's classes"
@@ -43,7 +44,7 @@ defmodule RavixWeb.Live.ModelMenu do
         aria-expanded="false"
         aria-controls={"#{@id}-menu"}
         aria-label={@label}
-        title={@label}
+        title={@title || @label}
         disabled={@disabled}
         phx-mounted={JS.ignore_attributes(["aria-expanded"])}
         style={"anchor-name: --#{@id}"}
@@ -143,6 +144,7 @@ defmodule RavixWeb.Live.ModelMenu do
   attr :project_model, :string, required: true
   attr :models, :list, required: true, doc: "the catalog's models for the project's runtime"
   attr :disabled, :boolean, default: false
+  attr :busy, :boolean, default: false, doc: "a turn is running, which is why it is disabled"
 
   @doc """
   The model under the composer, and the menu that changes it for the shown
@@ -151,7 +153,9 @@ defmodule RavixWeb.Live.ModelMenu do
   Choosing an item hides the menu. The project's model is marked as the
   default, and choosing it puts the conversation back on whatever the
   project runs. With no catalog to offer, or while a turn runs, it is the
-  plain label it used to be, or a disabled trigger.
+  plain label it used to be, or a disabled trigger. A turn in progress
+  (RAV-87) keeps the label at full contrast and says in the title why it
+  cannot change, rather than greying out without a reason.
 
   Effort and Fast (RAV-52) come from what the runtime advertised on the
   conversation's latest turn (Fountain ADR 0062): the `thought_level`
@@ -192,6 +196,8 @@ defmodule RavixWeb.Live.ModelMenu do
       menu_label="Model"
       sr_suffix=", change model"
       disabled={@disabled}
+      title={if @busy, do: "#{@label}\nCan't change while the agent is working"}
+      data-busy={@busy}
     >
       <p class="model-default-hint">Also your default for new threads</p>
       <.option

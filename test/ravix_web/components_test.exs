@@ -47,7 +47,8 @@ defmodule RavixWeb.ComponentsTest do
                arrow-up arrow-down external settings sparkle info machine add-person github code
                document copy more refresh person sign-out lock moon)
 
-      assert Enum.sort(spa) == RavixWeb.Icons.names()
+      # Ravix's own additions, beyond the SPA's set.
+      assert Enum.sort(spa ++ ~w(stop)) == RavixWeb.Icons.names()
     end
   end
 
