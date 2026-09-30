@@ -1,5 +1,5 @@
 import {afterEach, beforeEach, expect, test} from "bun:test"
-import {Shell, decode, loadXterm, monoFont, theme} from "../js/hooks/shell.js"
+import {Shell, decode, loadXterm, monoFont, theme, xtermStyles} from "../js/hooks/shell.js"
 import {mountHook} from "./setup.js"
 
 // xterm.js itself is not what is under test: a stand-in with its surface.
@@ -101,6 +101,52 @@ test("a pane draws a terminal, measures it and asks to be attached at that size"
   expect(term.focused).toBe(1)
 })
 
+// RAV-88: the open request is the size the shell draws its first prompt at,
+// so it is the fitted size, measured only once xterm's stylesheet applies.
+test("the open request carries the fitted size, measured after xterm's stylesheet has applied", async () => {
+  // Not the pane an earlier test left in front.
+  sessionStorage.clear()
+  const link = document.createElement("link")
+  link.dataset.xterm = ""
+  document.head.appendChild(link)
+  try {
+    const {hook, events} = mountHook(Shell, "#shell-a")
+    await tick(10)
+    expect(events).toEqual([])
+    expect(hook.fit?.fits).toBeUndefined()
+
+    link.dispatchEvent(new Event("load"))
+    await tick(10)
+    expect(hook.fit.fits).toBe(1)
+    expect(events.map(e => [e.name, e.payload])).toEqual([["shell-attach", {id: "a", cols: 132, rows: 43, select: false}]])
+
+    // The size it opened at is not sent again as a resize: the shell would
+    // only redraw its prompt for it.
+    FakeTerminal.made[0].resized({cols: 132, rows: 43})
+    await tick(120)
+    expect(events.filter(e => e.name === "shell-resize")).toEqual([])
+  } finally {
+    link.remove()
+  }
+})
+
+test("a stylesheet that never loads, or already has, does not hold the terminal back", async () => {
+  expect(await xtermStyles()).toBeUndefined()
+  const link = document.createElement("link")
+  link.dataset.xterm = ""
+  document.head.appendChild(link)
+  try {
+    expect(await xtermStyles(document, 5)).toBeUndefined()
+    const failed = xtermStyles()
+    link.dispatchEvent(new Event("error"))
+    expect(await failed).toBeUndefined()
+    link.dataset.settled = ""
+    expect(await xtermStyles()).toBeUndefined()
+  } finally {
+    link.remove()
+  }
+})
+
 test("keystrokes are batched into one event, and a resize settles before it is sent", async () => {
   const {events} = mountHook(Shell, "#shell-a")
   await tick()
@@ -117,6 +163,12 @@ test("keystrokes are batched into one event, and a resize settles before it is s
   term.resized({cols: 120, rows: 40})
   await tick(120)
   expect(events.at(-1)).toEqual({name: "shell-resize", payload: {id: "a", cols: 120, rows: 40}})
+  expect(events.filter(e => e.name === "shell-resize")).toHaveLength(1)
+
+  // Settling back where it already is sends nothing more.
+  term.resized({cols: 100, rows: 30})
+  term.resized({cols: 120, rows: 40})
+  await tick(120)
   expect(events.filter(e => e.name === "shell-resize")).toHaveLength(1)
 })
 
@@ -299,6 +351,8 @@ test("the bundle is loaded once, with its stylesheet, and a failed load is tried
   expect(script.src).toBe("/assets/js/xterm.js")
 
   window.RavixXterm = {Terminal: FakeTerminal, FitAddon: FakeFit}
+  link.onload()
+  expect(link.dataset.settled).toBe("")
   script.onload()
   expect(await first).toBe(window.RavixXterm)
   expect(await loadXterm("/other.js", null, doc)).toBe(window.RavixXterm)

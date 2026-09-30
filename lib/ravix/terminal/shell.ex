@@ -15,6 +15,9 @@ defmodule Ravix.Terminal.Shell do
       (Sprites no longer has the shell), or a `Ravix.Sprites.Error`
     * `{:terminal, tab_id, :disconnected}` --- the socket dropped but the
       shell may still be running; attaching again resumes it
+    * `{:terminal, tab_id, {:failed, error}}` --- a new shell could not be
+      started because the machine did not answer (asleep, or unreachable);
+      the tab is kept, so attaching again is a retry
 
   ## Access is watched here, not only on the page
 
@@ -66,6 +69,7 @@ defmodule Ravix.Terminal.Shell do
   alias Ravix.Accounts.User
   alias Ravix.Hub
   alias Ravix.Hub.Event
+  alias Ravix.Sprites.Error
   alias Ravix.Sprites.Pty
   alias Ravix.Terminal.Store
   alias Ravix.Terminal.Tab
@@ -75,6 +79,24 @@ defmodule Ravix.Terminal.Shell do
   @max_owner_queue 256
   @resume_ms 10
   @recheck_ms 15_000
+
+  # A new shell's prompt names the directory and nothing else: neither the
+  # machine's user nor its provider hostname. This is a session's rcfile,
+  # not the machine's: it reads the login files `bash -l` would, in the
+  # order bash does, and only then sets the prompt, so nothing in the
+  # person's own shell configuration is changed or skipped.
+  @shell_argv [
+    "bash",
+    "-c",
+    ~S"""
+    exec bash --rcfile <(cat <<'RAVIX_RC'
+    [ -r /etc/profile ] && . /etc/profile
+    if [ -r ~/.bash_profile ]; then . ~/.bash_profile; elif [ -r ~/.bash_login ]; then . ~/.bash_login; elif [ -r ~/.profile ]; then . ~/.profile; fi
+    PS1='\W \$ '
+    RAVIX_RC
+    ) -i
+    """
+  ]
 
   @typedoc "What `start_link/1` needs: all of it established by `Ravix.Terminal`."
   @type opts :: %{
@@ -162,7 +184,7 @@ defmodule Ravix.Terminal.Shell do
         nil ->
           {:spawn,
            %{
-             argv: ["bash", "-l"],
+             argv: @shell_argv,
              dir: state.dir,
              env: [{"TERM", "xterm-256color"}, {"COLORTERM", "truecolor"}],
              cols: state.cols,
@@ -180,7 +202,7 @@ defmodule Ravix.Terminal.Shell do
 
         # An attach replays at the size the shell last had; tell it this
         # page's size, which is what the replay should be drawn at.
-        state = if tab.session_id, do: resize_pty(state, state.cols, state.rows), else: state
+        state = if tab.session_id, do: send_resize(state, state.cols, state.rows), else: state
         events(events, state)
 
       {:error, %{status: 404}} when tab.session_id != nil ->
@@ -193,6 +215,11 @@ defmodule Ravix.Terminal.Shell do
         # The shell may well still be running; the tab keeps its session for
         # the next attempt.
         {:stop, :normal, disconnected(state)}
+
+      {:error, %Error{status: status} = error} when status in [502, 504] ->
+        # No answer at all: a machine asleep or unreachable, not a refusal.
+        # Nothing was started, so the tab is kept for the retry.
+        {:stop, :normal, failed(state, error)}
 
       {:error, error} ->
         forget(state)
@@ -321,7 +348,12 @@ defmodule Ravix.Terminal.Shell do
     end
   end
 
-  defp resize_pty(state, cols, rows) do
+  # The shell already has this size: telling it again would only make it
+  # redraw its prompt.
+  defp resize_pty(%{cols: cols, rows: rows} = state, cols, rows), do: state
+  defp resize_pty(state, cols, rows), do: send_resize(state, cols, rows)
+
+  defp send_resize(state, cols, rows) do
     case Pty.resize(state.pty, cols, rows) do
       {:ok, pty} -> %{state | pty: pty, cols: cols, rows: rows}
       {:error, _reason} -> %{state | cols: cols, rows: rows}
@@ -375,6 +407,11 @@ defmodule Ravix.Terminal.Shell do
 
   defp ended(state, reason) do
     notify(state, {:ended, reason})
+    %{state | owner: nil}
+  end
+
+  defp failed(state, error) do
+    notify(state, {:failed, error})
     %{state | owner: nil}
   end
 

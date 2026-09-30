@@ -18,7 +18,14 @@
 //                                      `select` puts the pane back in front after
 //                                      a reconnect if it was in front before
 //   "shell-input"   {id, data}         to the page, for every keystroke or paste
-//   "shell-resize"  {id, cols, rows}   to the page, when the pane changes size
+//   "shell-resize"  {id, cols, rows}   to the page, when the pane's size differs
+//                                      from the one the shell was last given
+//
+// A new shell draws its first prompt at the size in `shell-attach`, so the
+// pane is measured only once it is really laid out: xterm's stylesheet
+// applied, the monospace font loaded, and a frame drawn. Measured any sooner
+// it attaches at one width, is refitted to another a moment later, and the
+// shell redraws its prompt for the new width under the first one.
 //
 // Events handled, for every pane on the page, so each checks the id:
 //
@@ -34,6 +41,8 @@
 /** Keystrokes and pastes waiting to be sent, flushed on the next frame. */
 const INPUT_FLUSH_MS = 8
 const RESIZE_SETTLE_MS = 80
+/** How long a pane waits for xterm's stylesheet before measuring anyway. */
+const STYLE_WAIT_MS = 3_000
 /** How long a pane that was in front is remembered across its page remounting. */
 const FRONT_MS = 15_000
 const FRONT_KEY = "ravix.shell.front"
@@ -50,6 +59,8 @@ export function loadXterm(src, css, doc = document) {
       link.rel = "stylesheet"
       link.href = css
       link.dataset.xterm = ""
+      // Settled either way, for the panes that ask `xtermStyles` later.
+      link.onload = link.onerror = () => (link.dataset.settled = "")
       doc.head.appendChild(link)
     }
     const script = doc.createElement("script")
@@ -63,6 +74,29 @@ export function loadXterm(src, css, doc = document) {
     loading = null
   })
   return loading
+}
+
+/**
+ * xterm's stylesheet, applied (or given up on) before xterm is measured: the
+ * fit addon measures elements that stylesheet lays out.
+ */
+export function xtermStyles(doc = document, wait = STYLE_WAIT_MS) {
+  const link = doc.querySelector("link[data-xterm]")
+  if (!link || link.sheet || link.dataset.settled !== undefined) return Promise.resolve()
+  return new Promise(resolve => {
+    const done = () => {
+      clearTimeout(timer)
+      resolve()
+    }
+    const timer = setTimeout(done, wait)
+    link.addEventListener("load", done, {once: true})
+    link.addEventListener("error", done, {once: true})
+  })
+}
+
+/** After the next frame is laid out, where there are frames. */
+export function laidOut() {
+  return new Promise(resolve => (typeof requestAnimationFrame === "function" ? requestAnimationFrame(() => resolve()) : setTimeout(resolve, 0)))
 }
 
 /** The theme's monospace font, loaded (or given up on) before xterm measures it. */
@@ -151,7 +185,7 @@ export const Shell = {
     term.onData(data => this.type(data))
     term.onResize(({cols, rows}) => {
       clearTimeout(this.resizeTimer)
-      this.resizeTimer = setTimeout(() => this.pushEvent("shell-resize", {id: this.id, cols, rows}), RESIZE_SETTLE_MS)
+      this.resizeTimer = setTimeout(() => this.resize(cols, rows), RESIZE_SETTLE_MS)
     })
 
     this.observer = new ResizeObserver(() => this.refit())
@@ -160,9 +194,21 @@ export const Shell = {
     this.themeObserver.observe(document.documentElement, {attributes: true, attributeFilter: ["data-theme", "style"]})
 
     for (const data of this.backlog.splice(0)) term.write(decode(data))
+    const front = this.wasInFront()
+    // A hidden pane cannot be measured, so there is nothing to wait for: it
+    // attaches at once and is fitted when shown. One in view is measured
+    // only once it is really laid out, so the shell starts at its size.
+    if (this.el.closest("[hidden]")) return this.opened(front)
+    xtermStyles()
+      .then(laidOut)
+      .then(() => this.opened(front))
+  },
+
+  opened(front) {
+    if (this.gone) return
     this.refit()
-    this.attach(this.wasInFront())
-    if (this.visible) term.focus()
+    this.attach(front)
+    if (this.visible) this.term.focus()
   },
 
   // A hidden pane measures as nothing; it keeps the size it had until shown.
@@ -210,7 +256,17 @@ export const Shell = {
 
   attach(select = false) {
     if (!this.term) return
-    this.pushEventTo(this.el, "shell-attach", {id: this.id, cols: this.term.cols, rows: this.term.rows, select})
+    const {cols, rows} = this.term
+    this.sent = {cols, rows}
+    this.pushEventTo(this.el, "shell-attach", {id: this.id, cols, rows, select})
+  },
+
+  // Only a size the shell does not already have: the same size again would
+  // only make it redraw its prompt.
+  resize(cols, rows) {
+    if (this.sent?.cols === cols && this.sent?.rows === rows) return
+    this.sent = {cols, rows}
+    this.pushEvent("shell-resize", {id: this.id, cols, rows})
   },
 
   // Keystrokes are batched into one event per few milliseconds: a paste or a
