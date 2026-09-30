@@ -377,7 +377,9 @@ defmodule RavixWeb.Live.NewProjectTest do
 
     expect(Inference, :connect, fn _, _ -> {:ok, user} end)
     {:ok, view, _} = live(log_in_user(conn, user), "/home")
-    render_async(view)
+    # The mount's own async reads get the budget the other workspace suites
+    # give them: under a covered, parallel run 100ms is not enough.
+    render_async(view, 5_000)
     render_click(view, "dialog", %{name: "new-project"})
     assert_receive {:availability_started, reader}
     monitor = Process.monitor(reader)
@@ -385,7 +387,7 @@ defmodule RavixWeb.Live.NewProjectTest do
     view |> element("#kind-api_key") |> render_click()
     view |> form("#credential-form", credential: [value: "sk-test"]) |> render_submit()
     assert_receive {:DOWN, ^monitor, :process, ^reader, _}, 1000
-    render_async(view)
+    render_async(view, 5_000)
     assert has_element?(view, "#project-agent-codex[aria-pressed=true]", "Connected")
     refute has_element?(view, "#new-project-form button[disabled]")
   end
