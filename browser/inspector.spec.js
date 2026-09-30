@@ -11,12 +11,13 @@ const mock = `http://localhost:${process.env.MOCK_PORT || 8893}`;
 
 test.use({ viewport: { width: 1440, height: 900 }, deviceScaleFactor: 2 });
 
-// The sandbox the mock made for this track: its vault is tagged with the track.
-async function sandboxOf(request, trackId) {
-  const vaults = (await (await request.get(`${mock}/api/vaults`)).json()).data;
-  const vault = vaults.find(v => v.metadata?.ravix?.track === trackId);
+// Slow every mock sandbox's directory and diff reads. The track's shared
+// machine is the project's, and the suite runs one test at a time.
+async function slowReads(request, ms) {
   const boxes = (await (await request.get(`${mock}/api/sandboxes`)).json()).data;
-  return boxes.find(b => b.vault_id === vault.id).id;
+  for (const box of boxes) {
+    expect((await request.post(`${mock}/__browser/read-delay`, { data: { id: box.id, ms } })).ok()).toBe(true);
+  }
 }
 
 // A track on the mock's repository whose opening turn has made the worktree,
@@ -38,7 +39,6 @@ async function openTrack(page, login, name) {
   // The opening turn made the worktree after Files first read the directory.
   await page.getByRole('button', { name: 'Refresh', exact: true }).click();
   await expect(page.locator('.file-explorer').getByRole('button', { name: 'src', exact: true })).toBeVisible();
-  return new URL(page.url()).pathname.split('/t/')[1];
 }
 
 // Click an inspector tab and time, inside the page, until `selector` is in
@@ -99,15 +99,14 @@ test('Files hides .git, draws a kind per file, and keeps the ignored toggle in t
 
 test('Files and Changes switch from what was loaded while a slow machine refreshes them', async ({ page, request }) => {
   test.setTimeout(120_000);
-  const trackId = await openTrack(page, 'inspectorswitch', 'Inspector switch');
+  await openTrack(page, 'inspectorswitch', 'Inspector switch');
   // Changes' first visit reads the diff; after that, both tabs are loaded.
   await page.getByRole('button', { name: /^Changes/ }).click();
   await expect(page.locator('.change-file')).toHaveCount(2);
 
   // Every read now takes a second and a half. A switch that waited on one
   // could not come in under 100 ms.
-  const sandbox = await sandboxOf(request, trackId);
-  expect((await request.post(`${mock}/__browser/read-delay`, { data: { id: sandbox, ms: 1500 } })).ok()).toBe(true);
+  await slowReads(request, 1500);
   try {
     for (const [tab, selector] of [['Files', '.file-explorer'], ['Changes', '.changes-panel'], ['Files', '.file-explorer'], ['Changes', '.changes-panel']]) {
       const ms = await switchTab(page, tab, selector);
@@ -119,7 +118,7 @@ test('Files and Changes switch from what was loaded while a slow machine refresh
     await expect(page.locator('.panel-refresh.busy')).toHaveCount(0, { timeout: 10_000 });
     await expect(page.locator('.change-file')).toHaveCount(2);
   } finally {
-    await request.post(`${mock}/__browser/read-delay`, { data: { id: sandbox, ms: 0 } });
+    await slowReads(request, 0);
   }
 });
 
