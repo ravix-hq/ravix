@@ -1068,8 +1068,10 @@ test('composer Send stays compact and keeps its arrow after repeated submissions
     const box = await send.boundingBox();
     expect(box.width).toBeLessThanOrEqual(80);
     expect(box.height).toBeLessThanOrEqual(44);
-    expect(box.width).toBeGreaterThanOrEqual(32);
-    expect(box.height).toBeGreaterThanOrEqual(32);
+    // RAV-94 made every control in the row 28px, still above WCAG 2.5.8's
+    // 24px target.
+    expect(box.width).toBeGreaterThanOrEqual(28);
+    expect(box.height).toBeGreaterThanOrEqual(28);
     await expect(send).toHaveText('');
     await expect(send).toHaveAttribute('title', 'Send');
     const svg = send.locator('svg');
@@ -1123,8 +1125,8 @@ test('composer Send stays compact and keeps its arrow after repeated submissions
     expect(m.visible).toBe(true);
     expect(m.width).toBeLessThanOrEqual(80);
     expect(m.height).toBeLessThanOrEqual(44);
-    expect(m.width).toBeGreaterThanOrEqual(32);
-    expect(m.height).toBeGreaterThanOrEqual(32);
+    expect(m.width).toBeGreaterThanOrEqual(28);
+    expect(m.height).toBeGreaterThanOrEqual(28);
     expect(m.text).toBe('');
     expect(m.title).toBe('Send');
     expect(m.svgVisible).toBe(true);
