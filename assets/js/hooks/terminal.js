@@ -88,7 +88,9 @@ export const Terminal = {
       if (!e.ctrlKey || e.metaKey || e.altKey || (e.key !== "`" && e.code !== "Backquote")) return
       const item = document.getElementById("dock-shell-new")
       if (!item || item.disabled) return
+      // Ours alone: the focused xterm must not also send it to the shell.
       e.preventDefault()
+      e.stopPropagation()
       item.click()
     }
     // Capture, so a focused xterm, which stops the keys it handles, does not

@@ -88,7 +88,14 @@ test("Ctrl+` clicks the dock's New terminal item unless it is missing or disable
     window.dispatchEvent(event)
     return event
   }
-  expect(press({ctrlKey: true}).defaultPrevented).toBe(true)
+  let reached = 0
+  const shell = document.createElement("textarea")
+  document.body.append(shell)
+  shell.addEventListener("keydown", () => reached++)
+  const inShell = new KeyboardEvent("keydown", {key: "`", code: "Backquote", ctrlKey: true, bubbles: true, cancelable: true})
+  shell.dispatchEvent(inShell)
+  expect(inShell.defaultPrevented).toBe(true)
+  expect(reached).toBe(0)
   expect(clicks).toBe(1)
   press({})
   press({ctrlKey: true, metaKey: true})
