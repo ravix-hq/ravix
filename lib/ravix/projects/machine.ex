@@ -61,25 +61,9 @@ defmodule Ravix.Projects.Machine do
   end
 
   defp environment(client, project, state) do
-    repositories =
-      if project.repo_full_name do
-        [
-          %{
-            url: "https://github.com/#{project.repo_full_name}.git",
-            mount_path: Ids.mount_path_for(project.repo_full_name),
-            # Named on the repository whether or not it is private. A public
-            # repo with a token attached still clones; a private one without
-            # it fails at build time with an error a person cannot act on.
-            secret_key: Projects.clone_secret_key()
-          }
-        ]
-      else
-        []
-      end
-
     body = %{
       name: fountain_name(project),
-      repositories: repositories,
+      repositories: repositories(project),
       packages: %{},
       setup_script: ""
     }
@@ -89,6 +73,22 @@ defmodule Ravix.Projects.Machine do
       {:error, reason} -> {:error, name_taken(reason)}
     end
   end
+
+  # What the environment clones: the project's repository, or nothing.
+  defp repositories(%Project{repo_full_name: repo}) when is_binary(repo) and repo != "" do
+    [
+      %{
+        url: "https://github.com/#{repo}.git",
+        mount_path: Ids.mount_path_for(repo),
+        # Named on the repository whether or not it is private. A public
+        # repo with a token attached still clones; a private one without
+        # it fails at build time with an error a person cannot act on.
+        secret_key: Projects.clone_secret_key()
+      }
+    ]
+  end
+
+  defp repositories(%Project{}), do: []
 
   # Created up front even though nothing needs it yet, precisely because
   # attaching one later would change the identity and cost the disk.
@@ -366,6 +366,142 @@ defmodule Ravix.Projects.Machine do
         {:error, reason} ->
           failure = %Rebuild.Failure{what: "track #{conversation.id}", why: why(reason)}
           {removed, failed ++ [failure]}
+      end
+    end)
+  end
+
+  @doc """
+  The project on another repository, and a machine built from it (RAV-76).
+
+  The caller owns the project and has checked the App reads `target.repo`.
+  In order:
+
+    1. A project whose rebuild would be refused is refused first: dedicated
+       tracks are on machines of their own, cloned from the old repository,
+       which a project rebuild does not replace.
+    2. The row, so a repository the workspace already has a project for is
+       refused before Fountain is touched.
+    3. The environment's clone, changed in place: the setup script,
+       packages, variables and secrets stay, and so does the vault. When
+       Fountain refuses, the row is put back.
+    4. The rebuild, which closes every track. On a shared machine that is
+       `rebuild/2`, whose new agent's system prompt names the new clone; on
+       the maintenance path the shared machine is retired and the agents'
+       system prompts are rewritten.
+
+  A failure at step 4 is `{:error, {:not_rebuilt, reason}}`: the repository
+  has changed, and rebuilding from the Danger zone finishes the job.
+  Publishes `settings` once the repository has changed.
+  """
+  @spec change_repository(
+          Project.t(),
+          %{
+            repo: Ravix.GitHub.Shapes.RepoRef.t(),
+            installation_id: integer(),
+            workspace_installation_id: String.t() | nil
+          },
+          Fountain.Client.t()
+        ) :: {:ok, Rebuild.t()} | {:error, term()}
+  def change_repository(%Project{} = project, target, client) do
+    with :ok <- change_ready(project),
+         {:ok, changed} <- repoint_row(project, target),
+         :ok <- repoint_environment(project, changed, client) do
+      Hub.publish(project.id, :settings)
+
+      case rebuild_on(changed, client) do
+        {:ok, outcome} -> {:ok, outcome}
+        {:error, reason} -> {:error, {:not_rebuilt, reason}}
+      end
+    end
+  end
+
+  defp change_ready(project) do
+    if Project.maintenance?(project) do
+      # ownership: `Projects.change_repository/3` admitted the owner through
+      # `Access.project_of/2`; this asks only whether any open track has a
+      # machine of its own.
+      if Enum.any?(Ravix.Tracks.Store.tracks_of(project.id), &(&1.sandbox_layout == :dedicated)),
+        do:
+          {:error,
+           {:conflict, "dedicated_tracks_open",
+            "Close this project's tracks with their own machines first: they were cloned from the current repository."}},
+        else: :ok
+    else
+      shared_lifecycle(project)
+    end
+  end
+
+  defp repoint_row(project, %{repo: repo} = target) do
+    fields =
+      %{
+        repo_full_name: repo.full_name,
+        repo_private: repo.private == true,
+        default_branch: repo.default_branch,
+        installation_id: target.installation_id,
+        github_repo_id: repo.id
+      }
+      |> then(fn fields ->
+        if target.workspace_installation_id,
+          do: Map.put(fields, :workspace_installation_id, target.workspace_installation_id),
+          else: fields
+      end)
+
+    case Projects.Store.change_repository(project.id, fields) do
+      {:ok, changed} ->
+        {:ok, changed}
+
+      {:error, :taken} ->
+        {:error,
+         {:conflict, "repository_taken",
+          "This workspace already has a project for #{repo.full_name}."}}
+
+      {:error, :not_found} ->
+        {:error, :not_found}
+    end
+  end
+
+  defp repoint_environment(project, changed, client) do
+    case Fountain.update_environment(client, project.environment_id, %{
+           repositories: repositories(changed)
+         }) do
+      {:ok, _env} ->
+        Ravix.MachineCache.forget_environment(project.environment_id)
+        :ok
+
+      {:error, reason} ->
+        _ =
+          Projects.Store.change_repository(
+            project.id,
+            Map.take(
+              project,
+              ~w(repo_full_name repo_private default_branch installation_id github_repo_id workspace_installation_id)a
+            )
+          )
+
+        {:error, reason}
+    end
+  end
+
+  defp rebuild_on(changed, client) do
+    if Project.maintenance?(changed) do
+      with {:ok, outcome} <- Projects.Deletion.retire_shared(changed, client),
+           :ok <- rewrite_prompts(changed, client),
+           do: {:ok, outcome}
+    else
+      rebuild(changed, client)
+    end
+  end
+
+  # The agents stay on the maintenance path, so their system prompts, which
+  # name the clone, are told about the new one.
+  defp rewrite_prompts(project, client) do
+    system = Projects.compose_system(project)
+    runtime_agents = for %{agent_id: id} <- Projects.Store.runtime_agents(project.id), id, do: id
+
+    Enum.reduce_while([project.agent_id | runtime_agents], :ok, fn agent_id, :ok ->
+      case Fountain.update_agent(client, agent_id, %{system: system}) do
+        {:ok, _agent} -> {:cont, :ok}
+        {:error, reason} -> {:halt, {:error, reason}}
       end
     end)
   end

@@ -48,7 +48,9 @@ defmodule RavixWeb.QuickJumpLiveTest do
 
     plain = insert_track(project: ctx.project, created_by: ctx.user.id, title: "plain-work")
     {:ok, view, _} = live(log_in_user(ctx.conn, ctx.user), "/inbox")
-    render_async(view)
+    # The workspace's first reads, which a full parallel run can hold past
+    # `render_async/1`'s 100ms default.
+    render_async(view, 1_000)
     render_click(view, "dialog", %{name: "search"})
 
     # The query field is the hook's to focus, with the keys typed on the way.

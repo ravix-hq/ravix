@@ -95,6 +95,9 @@ defmodule RavixWeb.TrackLive do
         threads: [],
         sibling_followers: %{},
         thread_states: %{},
+        # What the tabs, Stop, the machine and Checks say of the turns
+        # (RAV-91); see `assign_turn/1`.
+        turn: turn([], %{}, nil, nil),
         # The "+" tab: a thread nobody has sent anything to yet. It lives in
         # this page and nowhere else --- a reload drops it, and nobody else
         # on the track ever sees it. See `show_draft/1` and `start/2`.
@@ -129,6 +132,10 @@ defmodule RavixWeb.TrackLive do
         # is still waiting on rather than treating "loaded" as one moment.
         transcript_loading: true,
         earlier_loading: false,
+        # How far the transcript *reads* have got, which `page.last_event_id`
+        # is not: live events move that one on, including past an event this
+        # page never received. See `catch_up_transcript/1`.
+        read_through: nil,
         queue: [],
         present: [],
         narrow_view: "conversation",
@@ -1063,6 +1070,7 @@ defmodule RavixWeb.TrackLive do
       models: detail.models,
       loading: false
     )
+    |> assign_turn()
     |> billing_notice(detail.track)
     # This render is the one that puts `#transcript-turns` on the page, and a
     # stream's pending inserts are consumed by whichever render comes next
@@ -1097,6 +1105,7 @@ defmodule RavixWeb.TrackLive do
         threads: detail.threads,
         models: detail.models
       )
+      |> assign_turn()
       |> follow_siblings()
       |> refresh_bound_machine(socket.assigns.track)
 
@@ -1150,8 +1159,23 @@ defmodule RavixWeb.TrackLive do
   # read, a follower that went down between the `:DOWN` clause's own attempt
   # and now, and a track that had no conversation when it opened and has one
   # by the time the backstop tick comes round.
+  #
+  # Subscribing from what it just read is only gapless when the follower is
+  # started by this call. One that is already running keeps its own cursor
+  # --- the prompt queue follows a new thread to deliver its first prompt, so
+  # that one always is --- and whatever it sent between the read and the
+  # subscription went to nobody here. When that is a turn's opening event,
+  # the only one carrying its prompt, every later event still arrives and the
+  # turn is drawn without what was asked (RAV-102). So a page that has just
+  # subscribed reads once more from where this read stopped, as the `:DOWN`
+  # clause does; its answer finds the page following and stops there. Any
+  # later read under the same name replaces that one, so it is not the only
+  # repair: every catch-up starts from `read_through` (see
+  # `catch_up_transcript/1`).
   defp async_result(:transcript, {:ok, {:ok, page}}, socket) do
-    socket = if socket.assigns.follower, do: socket, else: follow(socket, page)
+    subscribed? = is_nil(socket.assigns.follower)
+    socket = if subscribed?, do: follow(socket, page), else: socket
+    catch_up? = subscribed? and not is_nil(socket.assigns.follower)
 
     # Sorted, because these come out of the turns newest-first within each
     # turn and the page they are about to be laid into grows cheaply only
@@ -1162,10 +1186,11 @@ defmodule RavixWeb.TrackLive do
       |> Enum.filter(&(&1.id > (page.last_event_id || 0)))
       |> Enum.sort_by(& &1.id)
 
+    read_through = page.last_event_id
     page = page |> Transcript.add_events(newer) |> retain_earlier(socket.assigns.page)
 
     socket
-    |> assign(transcript_loading: false)
+    |> assign(transcript_loading: false, read_through: read_through)
     |> advertise(
       page.turns
       |> Enum.flat_map(& &1.events)
@@ -1173,6 +1198,7 @@ defmodule RavixWeb.TrackLive do
       |> Commands.latest()
     )
     |> repair(page)
+    |> then(&if(catch_up?, do: catch_up_transcript(&1), else: &1))
   end
 
   defp async_result({:file_index, track_id}, response, socket) do
@@ -1301,7 +1327,7 @@ defmodule RavixWeb.TrackLive do
     do:
       result(settle(socket, :interrupt), response, fn s, _ ->
         s
-        |> update(:thread_states, &Map.delete(&1, s.assigns.thread_id))
+        |> drop_thread_state(s.assigns.thread_id)
         |> refresh_detail()
       end)
 
@@ -1469,7 +1495,7 @@ defmodule RavixWeb.TrackLive do
     case List.last(page.turns) do
       %{settled?: true, events: events} ->
         if AgentFailure.suspension(events),
-          do: update(socket, :thread_states, &Map.put(&1, socket.assigns.thread_id, :failed)),
+          do: put_thread_state(socket, socket.assigns.thread_id, :failed),
           else: socket
 
       _ ->
@@ -1746,6 +1772,7 @@ defmodule RavixWeb.TrackLive do
     |> drop_attachments()
     |> update(:thread_generation, &(&1 + 1))
     |> assign(thread_id: id, agent_refused: false)
+    |> assign_turn()
     |> update(:thread_draft, &(&1 && %{&1 | selected?: false}))
     |> load()
   end
@@ -1805,6 +1832,7 @@ defmodule RavixWeb.TrackLive do
       # answer is dropped when it arrives here. See `async_result/3`.
       pending: MapSet.delete(socket.assigns.pending, :git)
     )
+    |> assign_turn()
   end
 
   # An image chosen for one track's composer is not an image for the next
@@ -1845,6 +1873,7 @@ defmodule RavixWeb.TrackLive do
       transcript_loading: true,
       earlier_loading: false,
       page: Transcript.empty(""),
+      read_through: nil,
       rendered: %{},
       comments: [],
       comment_editing: nil,
@@ -2129,7 +2158,7 @@ defmodule RavixWeb.TrackLive do
           _ -> :idle
         end
 
-      update(socket, :thread_states, &Map.put(&1, id, status))
+      put_thread_state(socket, id, status)
     else
       socket
     end
@@ -2138,7 +2167,7 @@ defmodule RavixWeb.TrackLive do
   defp thread_activity(socket, id, %TranscriptEvent{} = event) do
     if not is_nil(TranscriptEvent.suspension(event)) and
          Map.get(socket.assigns.thread_states, id) == :running,
-       do: update(socket, :thread_states, &Map.put(&1, id, :failed)),
+       do: put_thread_state(socket, id, :failed),
        else: socket
   end
 
@@ -2157,11 +2186,20 @@ defmodule RavixWeb.TrackLive do
     end
   end
 
+  # Read what is newer than the last read, not than the last event. The
+  # page's own cursor moves with the stream, and the stream can skip an
+  # event: the one sent between a read and the subscription after it
+  # (`async_result(:transcript, …)`). The next event still arrives and moves
+  # the cursor past it, so a catch-up from there never asks for it again ---
+  # and the one most likely to be skipped is a turn's opening event, the only
+  # one carrying its prompt (RAV-102). The events a catch-up reads again are
+  # ones the page already holds, and `Transcript.add_events/2` keeps one of
+  # each.
   defp catch_up_transcript(socket) do
     user = socket.assigns.current_user
     id = socket.assigns.track_id
     thread_id = socket.assigns.thread_id
-    page = socket.assigns.page
+    page = %{socket.assigns.page | last_event_id: socket.assigns.read_through}
 
     traced_async(socket, :transcript, fn ->
       Tracks.events(user, id, thread_id: thread_id, page: page)
@@ -2290,7 +2328,7 @@ defmodule RavixWeb.TrackLive do
 
   attr :threads, :list, required: true
   attr :thread_id, :string, required: true
-  attr :states, :map, default: %{}
+  attr :states, :map, default: %{}, doc: "each thread's tab word, from `@turn` (RAV-91)"
   attr :adding, :boolean, default: false
   attr :enabled, :boolean, required: true
   attr :draft, :map, default: nil, doc: "this page's unsent thread, if it has one"
@@ -2316,7 +2354,7 @@ defmodule RavixWeb.TrackLive do
         draft_label: assigns.draft && draft_label(assigns.draft),
         working:
           Enum.filter(assigns.threads, fn thread ->
-            thread.id != shown and thread_status(thread, assigns.states) == "Running"
+            thread.id != shown and tab_status(thread, assigns.states) == "Running"
           end)
       )
 
@@ -2351,13 +2389,13 @@ defmodule RavixWeb.TrackLive do
           phx-value-thread_id={thread.id}
           data-thread-id={thread.id}
           title={thread.title <> " · " <> agent_model(Map.get(thread, :runtime), Map.get(thread, :model))}
-          aria-label={thread.title <> " · " <> agent_model(Map.get(thread, :runtime), Map.get(thread, :model)) <> " · " <> thread_status(thread, @states) <> if(thread.unread && thread.id != @shown, do: " (unread)", else: "")}
+          aria-label={thread.title <> " · " <> agent_model(Map.get(thread, :runtime), Map.get(thread, :model)) <> " · " <> tab_status(thread, @states) <> if(thread.unread && thread.id != @shown, do: " (unread)", else: "")}
         >
-          <.status_dot status={String.downcase(thread_status(thread, @states))} />
+          <.status_dot status={String.downcase(tab_status(thread, @states))} />
           <span class="thread-tab-title">{thread.title}</span><span class="thread-tab-agent"> · {agent_model(
             Map.get(thread, :runtime),
             Map.get(thread, :model)
-          )}</span><span class="thread-tab-state"> · {thread_status(thread, @states)}</span><span
+          )}</span><span class="thread-tab-state"> · {tab_status(thread, @states)}</span><span
             :if={thread.unread && thread.id != @shown}
             class="thread-unread"
           ><span class="sr-only">(unread)</span></span>
@@ -2421,36 +2459,62 @@ defmodule RavixWeb.TrackLive do
     label =
       thread.title <> " · " <> agent_model(Map.get(thread, :runtime), Map.get(thread, :model))
 
-    status = thread_status(thread, states)
+    status = tab_status(thread, states)
     label = if status == "Idle", do: label, else: label <> " · " <> status
     label <> if(thread.unread && thread.id != current_id, do: " (unread)", else: "")
   end
 
-  # RAV-87: whether the shown thread's turn is running, read from exactly
-  # what its tab reads (`thread_status/2` over `@thread_states`), so the
-  # composer's Stop and the tab's Running/Idle change in the same render. A
-  # thread missing from the list has no tab to disagree with, and falls back
-  # to the track's own status.
-  defp turn_running?(threads, states, thread_id, track) do
-    case Enum.find(threads, &(&1.id == thread_id)) do
-      nil -> track.status == :running
-      thread -> thread_status(thread, states) == "Running"
-    end
+  # RAV-91: `@turn`, the one reading of this track's turns that the thread
+  # tabs, the composer's Stop, the machine chip and dock, and the Checks pane
+  # all draw from, so none of them can say Working while another says Idle.
+  # Recomputed wherever one of its inputs changes: the threads and the
+  # track (a detail read), the shown thread, and the per-thread states the
+  # stream brings (`put_thread_state/3`, `drop_thread_state/2`).
+  #
+  # `states` is each thread's tab word. `running?` is the shown thread's
+  # turn running, which is what Stop means; a thread missing from the list
+  # (none read yet) has no tab to disagree with, and falls back to the
+  # track's own status. `working?` is a turn running or queued on any of
+  # them, which is what the machine is doing, and is read from the same
+  # words rather than again from the track's status: a detail read's
+  # `:running` left over from before the stream said the turn ended used to
+  # hold the chip on Working under an Idle tab.
+  defp assign_turn(socket) do
+    %{threads: threads, thread_states: states, thread_id: id, track: track} = socket.assigns
+    assign(socket, turn: turn(threads, states, id, track))
   end
+
+  defp turn(threads, states, thread_id, track) do
+    labels = Map.new(threads, &{&1.id, thread_status(&1, states)})
+    shown = Map.get_lazy(labels, thread_id, fn -> status_label(track && track.status) end)
+
+    %{
+      states: labels,
+      running?: shown == "Running",
+      working?: Enum.any?([shown | Map.values(labels)], &(&1 in ["Running", "Queued"]))
+    }
+  end
+
+  defp put_thread_state(socket, id, state),
+    do: socket |> update(:thread_states, &Map.put(&1, id, state)) |> assign_turn()
+
+  defp drop_thread_state(socket, id),
+    do: socket |> update(:thread_states, &Map.delete(&1, id)) |> assign_turn()
 
   # Anything for send to send: text, as the `Composer` hook reports it, or
   # images, which are the server's to know and count only when asking.
   defp composer_filled?(empty?, mode, entries, attached),
     do: not empty? or (mode == :ask and (entries != [] or attached != []))
 
-  defp thread_status(thread, states) do
-    case Map.get(states, thread.id, Map.get(thread, :status)) do
-      :running -> "Running"
-      status when status in [:pending, :queued] -> "Queued"
-      :failed -> "Failed"
-      _ -> "Idle"
-    end
-  end
+  defp tab_status(thread, labels), do: Map.get(labels, thread.id, "Idle")
+
+  defp thread_status(thread, states),
+    do: status_label(Map.get(states, thread.id, Map.get(thread, :status)))
+
+  defp status_label(:running), do: "Running"
+  defp status_label(status) when status in [:pending, :queued], do: "Queued"
+  defp status_label(:failed), do: "Failed"
+  defp status_label(_status), do: "Idle"
 
   attr :count, :any, required: true, doc: "`Panel`'s `change_count`: `{files, truncated?}` or nil"
 
@@ -2697,6 +2761,10 @@ defmodule RavixWeb.TrackLive do
   attr :writing, :atom, default: nil, doc: "`:commit` or `:push` while one is out"
   attr :failure, :string, default: nil
 
+  attr :working, :boolean,
+    default: false,
+    doc: "`@turn.working?`: a turn is running or queued, so the counts are moving"
+
   # What the worktree holds that GitHub does not, and the one action for
   # each: commit what is uncommitted, push what is unpushed, open a pull
   # request for what is pushed. The counts are the machine's own
@@ -2719,7 +2787,19 @@ defmodule RavixWeb.TrackLive do
       <p :if={@git && @git.error} id="git-status-error" class="git-note" role="alert">
         {@git.error}
       </p>
-      <.asleep :if={@git && @git.asleep?} id="git-asleep" can_wake={@can_wake} waking={@waking} />
+      <%!-- RAV-91: the same turn the tab and the chip call Running and
+        Working. These counts are re-read when it settles (`after_turn/2`);
+        until then they are the worktree mid-turn, and a machine the turn is
+        on is not asleep, whatever a read before it began said. --%>
+      <p :if={@working} id="git-working" class="git-note" role="status">
+        The agent is taking a turn. These counts are read again when it finishes.
+      </p>
+      <.asleep
+        :if={@git && @git.asleep? && !@working}
+        id="git-asleep"
+        can_wake={@can_wake}
+        waking={@waking}
+      />
       <ul class="git-rows">
         <li :if={@status} id="git-uncommitted" class="git-row">
           <span class={["chip", if(@status.uncommitted > 0, do: "warn", else: "ok")]}>
@@ -2871,18 +2951,10 @@ defmodule RavixWeb.TrackLive do
 
   defp setup_label(track, now), do: MachineState.setup_label(track, now)
 
-  # One state for the track's machine, with the per-thread turn states this
-  # page hears on the stream, which are fresher than the last detail read.
-  defp machine(track, threads, states, now) do
-    running =
-      track.status == :running or
-        Enum.any?(
-          threads,
-          &(Map.get(states, &1.id, Map.get(&1, :status)) in [:running, :pending])
-        )
-
-    MachineState.of(track, running: running, now: now)
-  end
+  # One state for the track's machine, working while `@turn` says a turn is
+  # (RAV-91): the per-thread states this page hears on the stream are
+  # fresher than the last detail read, and the tabs read the same ones.
+  defp machine(track, turn, now), do: MachineState.of(track, running: turn.working?, now: now)
 
   # The header chip's state, corrected and qualified by what the dock's probe
   # knows that the track row does not: that the machine is in fact running
@@ -3267,7 +3339,7 @@ defmodule RavixWeb.TrackLive do
   defp hub(%Event{name: :turn, thread_id: thread_id}, socket),
     do:
       socket
-      |> update(:thread_states, &Map.delete(&1, thread_id))
+      |> drop_thread_state(thread_id)
       |> refresh_detail()
       |> refresh_queue()
       |> catch_up_transcript()
@@ -4131,10 +4203,15 @@ defmodule RavixWeb.TrackLive do
 
   # The box says what it can do until somebody has used it; after the first
   # turn the conversation is under way and "a follow-up" is the honest word.
-  defp composer_placeholder(:comment, _page),
-    do: "Comment for people on this thread. @ to mention…"
+  # While a turn runs, what is sent waits for it (RAV-94), so the box says
+  # that. One shape throughout: what to write, then what `@` and `/` do.
+  defp composer_placeholder(:comment, _page, _running?),
+    do: "Comment for people on this thread, @mention someone"
 
-  defp composer_placeholder(:ask, page) do
+  defp composer_placeholder(:ask, _page, true),
+    do: "Queue a follow-up, @mention files, run /commands"
+
+  defp composer_placeholder(:ask, page, false) do
     if Enum.any?(page.turns, & &1.visible?),
       do: "Add a follow-up, @mention files, run /commands",
       else: "Ask to make changes, @mention files, run /commands"

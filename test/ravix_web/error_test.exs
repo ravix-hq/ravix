@@ -177,6 +177,7 @@ defmodule RavixWeb.ErrorTest do
         {:forbidden, "Only the owner can do that."},
         {:conflict, "closed_track", "That track is closed."},
         {:unprocessable, "bad_config", "That configuration is not valid."},
+        {:not_found, "repo_not_readable", "The Ravix GitHub App cannot read that repository."},
         {:unavailable, "The machine is not up."},
         {:unavailable, "no_exec", "No Sprites token."},
         {:preview_agent_auth, "no"},
@@ -191,6 +192,11 @@ defmodule RavixWeb.ErrorTest do
 
         refute error.code == "internal", "#{inspect(reason)} falls through to the generic 500"
       end
+    end
+
+    test "a not-found refusal with its own code keeps its code and sentence" do
+      assert %Error{status: 404, code: "repo_not_in_workspace", message: "Not reachable."} =
+               Error.from({:not_found, "repo_not_in_workspace", "Not reachable."})
     end
 
     test "a task that exited has a sentence, and it says nothing about why" do
