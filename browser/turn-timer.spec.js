@@ -33,21 +33,22 @@ test('a running turn shows its elapsed time ticking until the final duration rep
 
   const turn = page.locator('.workspace-turn').filter({ hasText: 'Running the scheduler tests' });
   const elapsed = turn.locator('.turn-running .turn-elapsed');
-  await expect(elapsed).toHaveText(/^\d+s$/, { timeout: 30_000 });
-  const seconds = async () => Number((await elapsed.textContent()).replace('s', ''));
+  // Tenths of a second while it runs (RAV-93).
+  await expect(elapsed).toHaveText(/^\d+\.\ds$/, { timeout: 30_000 });
+  const seconds = async () => parseFloat(await elapsed.textContent());
   const first = await seconds();
   await expect.poll(seconds, { timeout: 5_000 }).toBeGreaterThanOrEqual(first + 2);
 
   // A reload resumes from the turn's real start, not from zero.
   const before = await seconds();
   await page.reload();
-  await expect(elapsed).toHaveText(/^\d+s$/, { timeout: 30_000 });
+  await expect(elapsed).toHaveText(/^\d+\.\ds$/, { timeout: 30_000 });
   expect(await seconds()).toBeGreaterThanOrEqual(before);
 
   // Settling swaps the ticking clock for the server's final duration.
   await expect(turn.locator('.turn-footer time')).toBeVisible({ timeout: 30_000 });
   await expect(elapsed).toHaveCount(0);
-  const final = Number((await turn.locator('.turn-footer > span').first().textContent()).replace('s', ''));
+  const final = Number((await turn.locator('.turn-footer .turn-duration').textContent()).replace('s', ''));
   expect(final).toBeGreaterThanOrEqual(12);
   expect(final).toBeLessThan(60);
 });

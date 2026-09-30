@@ -7154,11 +7154,40 @@ defmodule RavixWeb.TrackLiveTest do
 
     assert has_element?(
              ctx.view,
-             ~s|#turns-turn .turn-footer time[datetime="2026-09-26T13:02:05Z"]|,
-             RavixWeb.LocalTime.short(~U[2026-09-26 13:02:05Z], nil)
+             ~s|#turns-turn .turn-footer time[data-weekday][datetime="2026-09-26T13:02:05Z"]|,
+             RavixWeb.LocalTime.short(~U[2026-09-26 13:02:05Z], nil, DateTime.utc_now(),
+               weekday: true
+             )
            )
 
     assert has_element?(ctx.view, ~s|#turns-turn .turn-copy[data-copy="**Done**"]|)
+    # The ⋯ menu holds the two copies and nothing else (RAV-93): no Retry.
+    menu = ~s|#turns-turn-more-menu[popover][role="menu"]|
+
+    assert has_element?(
+             ctx.view,
+             ~s|#turns-turn-more-trigger[popovertarget="turns-turn-more-menu"]|
+           )
+
+    items =
+      ctx.view
+      |> element(menu)
+      |> render()
+      |> LazyHTML.from_fragment()
+      |> LazyHTML.query(~s|[role="menuitem"]|)
+
+    assert Enum.map(items, &String.trim(LazyHTML.text(&1))) == ["Copy link to turn", "Copy text"]
+    assert has_element?(ctx.view, ~s|#{menu} [data-copy-text="**Done**"]|)
+
+    [link] =
+      ctx.view
+      |> element(~s|#{menu} [data-copy-link]|)
+      |> render()
+      |> LazyHTML.from_fragment()
+      |> LazyHTML.attribute("data-copy-link")
+
+    assert link =~ ~r|^/p/#{ctx.project.id}/t/#{ctx.track.id}\?thread=[^#]+#turns-turn$|
+    refute has_element?(ctx.view, "#turns-turn.running")
     # Files are named from the track's directory, summed across edits, and
     # past the first two are counted rather than listed.
     assert has_element?(ctx.view, ~s|#turns-turn .turn-file[title="README.md"]|, "+1 −0")
@@ -7275,6 +7304,9 @@ defmodule RavixWeb.TrackLiveTest do
 
     assert Enum.count(timer) == 1
     assert LazyHTML.text(timer) =~ ~r/^1m 3\ds$/
+    # The live turn's last line leads with a spinner, and the turn is marked
+    # running so its interim messages are muted (RAV-93).
+    assert has_element?(ctx.view, "#turns-timed.running .turn-running .turn-spinner")
 
     assert {:ok, _now, 0} =
              timer |> LazyHTML.attribute("data-now") |> hd() |> DateTime.from_iso8601()
@@ -7300,7 +7332,16 @@ defmodule RavixWeb.TrackLiveTest do
 
     refute has_element?(ctx.view, "#turns-timed .turn-elapsed")
     refute has_element?(ctx.view, "#turns-timed .turn-running")
+    refute has_element?(ctx.view, "#turns-timed.running")
     assert has_element?(ctx.view, "#turns-timed .turn-footer", "16m 5s")
+  end
+
+  test "a running turn's time is in tenths of a second for its first minute" do
+    assert RavixWeb.TrackLive.running_duration(-50) == "0.0s"
+    assert RavixWeb.TrackLive.running_duration(3_749) == "3.7s"
+    assert RavixWeb.TrackLive.running_duration(59_999) == "59.9s"
+    assert RavixWeb.TrackLive.running_duration(60_000) == "1m 0s"
+    assert RavixWeb.TrackLive.running_duration(3_725_000) == "1h 2m"
   end
 
   test "a turn with no tool calls or thoughts has nothing to fold", ctx do

@@ -32,7 +32,24 @@
 //
 // It also owns the copy button on every fenced code block the markdown
 // renderer emits (`button.code-copy` inside `.code-block`): the block's text,
-// verbatim, to the clipboard, with the button saying what happened.
+// verbatim, to the clipboard, with the button saying what happened. The same
+// goes for a turn footer's copy icon (`data-copy`) and its ⋯ menu's two
+// items, "Copy link to turn" (`data-copy-link`, a path made absolute here)
+// and "Copy text" (`data-copy-text`); the menu closes as they go, so its
+// trigger says what happened instead (RAV-93).
+//
+// And the rest of RAV-93's reading surface:
+//
+//   `scrolled` is on the container while it is scrolled off its top, which
+//   is what fades the text out under the tab strip.
+//
+//   A printable key pressed while the transcript has focus, as it does after
+//   a click into it, is typed into the composer rather than going nowhere.
+//   Space still scrolls, and a field in the transcript keeps its own keys.
+//
+//   A URL whose fragment names a turn (`#turns-<id>`, what "Copy link to
+//   turn" copies) scrolls to that turn once it is drawn, and leaves the panel
+//   unpinned there.
 
 /** Within this many pixels of the bottom still counts as reading the bottom. */
 const SLACK = 80
@@ -64,6 +81,7 @@ export const TranscriptTail = {
       const top = this.el.scrollTop
       this.pinned = this.distance() < SLACK
       this.el.classList.toggle("unpinned", !this.pinned)
+      this.el.classList.toggle("scrolled", top > 0)
       if (this.pinned) this.asked = false
       if (top < REACH) this.older()
     })
@@ -82,7 +100,14 @@ export const TranscriptTail = {
       if (button && this.el.contains(button)) this.copy(button)
       const answer = e.target.closest("button[data-copy]")
       if (answer && this.el.contains(answer)) this.copyAnswer(answer)
+      const link = e.target.closest("button[data-copy-link]")
+      if (link && this.el.contains(link)) {
+        this.copyFromMenu(link, new URL(link.dataset.copyLink, window.location.href).href, "Link copied")
+      }
+      const text = e.target.closest("button[data-copy-text]")
+      if (text && this.el.contains(text)) this.copyFromMenu(text, text.dataset.copyText, "Text copied")
     })
+    this.el.addEventListener("keydown", e => this.forward(e))
 
     // Most of what makes this panel taller does not arrive with a patch: an
     // avatar decoding, a diff laying out, a font. Observing the content and
@@ -91,6 +116,7 @@ export const TranscriptTail = {
     this.observer.observe(this.el)
     this.observeContent()
     this.stick()
+    this.reveal()
   },
 
   beforeUpdate() {
@@ -125,6 +151,7 @@ export const TranscriptTail = {
     }
     this.anchor = null
     this.observeContent()
+    this.reveal()
   },
 
   // Every element child, not just the first: the scroller's own box does not
@@ -154,6 +181,62 @@ export const TranscriptTail = {
     if (!event || this.asked) return
     this.asked = true
     this.pushEvent(event, {})
+  },
+
+  // Scroll to the turn the URL's fragment names, once. The transcript loads
+  // after mount, so this is tried on each patch until the turns are there;
+  // a turn not among them (older history, another thread's) is given up on.
+  reveal() {
+    if (this.revealed) return
+    const id = decodeURIComponent(window.location.hash.slice(1))
+    const turns = this.el.querySelector("#transcript-turns")
+    if (!id.startsWith("turns-")) {
+      this.revealed = true
+      return
+    }
+    if (!turns || turns.children.length === 0) return
+    this.revealed = true
+    const turn = this.el.ownerDocument.getElementById(id)
+    if (!turn || turn.parentElement !== turns) return
+    this.pinned = false
+    this.el.classList.add("unpinned")
+    turn.scrollIntoView({block: "start"})
+  },
+
+  // A printable key pressed on the transcript itself goes into the
+  // composer, with the caret after it. Not Space, which scrolls; not a
+  // chord; not a key meant for a field or menu inside the transcript.
+  forward(e) {
+    if (e.defaultPrevented || e.ctrlKey || e.metaKey || e.altKey || e.isComposing) return
+    if (e.key.length !== 1 || e.key === " ") return
+    if (e.target.closest?.("input, textarea, select, [contenteditable], [popover]")) return
+    const composer = this.el.ownerDocument.querySelector('#composer-form textarea[name="text"]')
+    if (!composer || composer.disabled || composer.readOnly) return
+    e.preventDefault()
+    composer.focus()
+    composer.setRangeText(e.key, composer.selectionStart, composer.selectionEnd, "end")
+    composer.dispatchEvent(new Event("input", {bubbles: true}))
+  },
+
+  // A menu item closes its menu, so what happened is said on the menu's
+  // trigger, the element focus returns to.
+  async copyFromMenu(item, text, done) {
+    if (item.disabled) return
+    const trigger = item.closest(".chip-menu")?.querySelector("[popovertarget]")
+    const label = trigger?.getAttribute("aria-label")
+    try {
+      await navigator.clipboard.writeText(text ?? "")
+      trigger?.setAttribute("aria-label", done)
+      trigger?.classList.add("copied")
+    } catch {
+      trigger?.setAttribute("aria-label", "Copy failed. Try again")
+    } finally {
+      window.setTimeout(() => {
+        if (!trigger?.isConnected) return
+        trigger.setAttribute("aria-label", label)
+        trigger.classList.remove("copied")
+      }, 2000)
+    }
   },
 
   // A turn's answer, as the markdown it was written in. The button is an

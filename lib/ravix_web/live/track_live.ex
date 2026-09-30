@@ -3644,14 +3644,22 @@ defmodule RavixWeb.TrackLive do
 
   attr :id, :string, required: true
   attr :turn, :map, required: true
+  attr :link, :string, required: true
   attr :workdir, :string, default: nil
   attr :options, :list, default: nil
   attr :zone, :string, default: nil
 
-  # What a finished turn cost and left behind: how long it ran, when it
-  # ended, the answer to copy, the files its edits touched, and the effort
-  # and Fast it ran with (RAV-52). The time is the viewer's own
-  # (`RavixWeb.CoreComponents.local_time/1`).
+  # What a finished turn cost and left behind: the answer to copy and a ⋯
+  # menu, how long it ran, when it ended, the files its edits touched, and
+  # the effort and Fast it ran with (RAV-52). The time is the viewer's own
+  # (`RavixWeb.CoreComponents.local_time/1`), with a weekday when it was not
+  # today. The actions come first so the copy icon sits where the running
+  # turn's spinner sat, whatever the times beside it say (RAV-93).
+  #
+  # The menu is "Copy link to turn" and "Copy text", and nothing else: the
+  # owner's decision for RAV-93. Retry stays where it is, above the footer.
+  # Both items copy in the browser (`assets/js/hooks/transcript_tail.js`);
+  # neither sends anything to the server.
   defp turn_footer(assigns) do
     %{turn: turn, workdir: workdir} = assigns
     config = SessionConfig.describe(turn.config_selection, assigns.options)
@@ -3672,11 +3680,68 @@ defmodule RavixWeb.TrackLive do
 
     ~H"""
     <footer class="turn-footer">
+      <span class="turn-actions">
+        <button
+          :if={@answer != ""}
+          type="button"
+          class="ghost turn-copy"
+          aria-label="Copy answer"
+          title="Copy answer"
+          data-copy={@answer}
+        >
+          <.icon name="copy" size={13} />
+        </button>
+        <div id={@id <> "-more"} class="chip-menu" phx-hook="ChipMenu">
+          <button
+            type="button"
+            id={@id <> "-more-trigger"}
+            class="ghost turn-more"
+            popovertarget={@id <> "-more-menu"}
+            aria-haspopup="menu"
+            aria-expanded="false"
+            aria-controls={@id <> "-more-menu"}
+            aria-label="More for this turn"
+            title="More"
+            phx-mounted={JS.ignore_attributes(["aria-expanded"])}
+            style={"anchor-name: --#{@id}-more"}
+          >
+            <.icon name="more" size={13} />
+          </button>
+          <div
+            id={@id <> "-more-menu"}
+            class="chip-popover-below turn-menu"
+            popover
+            role="menu"
+            aria-label="More for this turn"
+            style={"position-anchor: --#{@id}-more"}
+          >
+            <button
+              type="button"
+              class="account-item"
+              role="menuitem"
+              data-chip-close
+              data-copy-link={@link}
+            >
+              <span class="menu-check" aria-hidden="true"><.icon name="link" size={14} /></span>Copy link to turn
+            </button>
+            <button
+              type="button"
+              class="account-item"
+              role="menuitem"
+              data-chip-close
+              data-copy-text={@answer}
+              disabled={@answer == ""}
+            >
+              <span class="menu-check" aria-hidden="true"><.icon name="copy" size={14} /></span>Copy text
+            </button>
+          </div>
+        </div>
+      </span>
       <span :if={@applied != []} class="turn-config" title="Settings this turn ran with">
         {Enum.join(@applied, " · ")}
       </span>
       <span :if={@applied != []} aria-hidden="true">·</span>
-      <span :if={@duration}>{@duration}</span>
+      <span :if={@duration} class="turn-duration">{@duration}</span>
       <span :if={@duration && @ended} aria-hidden="true">·</span>
       <.local_time
         :if={@ended}
@@ -3684,17 +3749,8 @@ defmodule RavixWeb.TrackLive do
         at={@ended}
         zone={@zone}
         title_prefix="Ended "
+        weekday
       />
-      <button
-        :if={@answer != ""}
-        type="button"
-        class="ghost turn-copy"
-        aria-label="Copy answer"
-        title="Copy answer"
-        data-copy={@answer}
-      >
-        <.icon name="copy" size={13} />
-      </button>
       <span :for={file <- @shown} class="turn-file" title={file.path}>
         {Path.basename(file.path)}
         <span class="diff-add">+{file.added}</span> <span class="diff-del">−{file.removed}</span>
@@ -3719,10 +3775,12 @@ defmodule RavixWeb.TrackLive do
   attr :turn, :map, required: true
   attr :zone, :string, default: nil
 
-  # How long a running turn has been going. The server writes the elapsed
-  # time as of this render; `assets/js/hooks/turn_timer.js` keeps it ticking
-  # from `data-started` without a round-trip, correcting the browser's clock
-  # by `data-now`. Settling swaps this for `turn_footer/1`'s final duration.
+  # How long a running turn has been going, as the live turn's last line: a
+  # spinner, where the finished footer's copy icon will be, and the time in
+  # tenths of a second (RAV-93). The server writes the elapsed time as of
+  # this render; `assets/js/hooks/turn_timer.js` keeps it ticking from
+  # `data-started` without a round-trip, correcting the browser's clock by
+  # `data-now`. Settling swaps this for `turn_footer/1`'s final duration.
   defp turn_timer(assigns) do
     {started, _ended} = turn_span(assigns.turn.events)
     now = DateTime.utc_now()
@@ -3730,6 +3788,7 @@ defmodule RavixWeb.TrackLive do
 
     ~H"""
     <footer :if={@started} class="turn-footer turn-running">
+      <span class="turn-spinner" aria-hidden="true"><.icon name="spinner" size={13} /></span>
       <span
         id={"turn-timer-#{@turn.id}"}
         class="turn-elapsed"
@@ -3737,10 +3796,26 @@ defmodule RavixWeb.TrackLive do
         data-started={DateTime.to_iso8601(@started)}
         data-now={DateTime.to_iso8601(@now)}
         title={"Running since #{RavixWeb.LocalTime.full(@started, @zone)}"}
-      >{duration(DateTime.diff(@now, @started))}</span>
+      >{running_duration(DateTime.diff(@now, @started, :millisecond))}</span>
     </footer>
     """
   end
+
+  # A running turn's time: tenths of a second for the first minute, then as
+  # `duration/1` writes a settled one. `formatDuration` in the hook matches.
+  @doc false
+  def running_duration(ms) when ms < 60_000 do
+    tenths = div(max(ms, 0), 100)
+    "#{div(tenths, 10)}.#{rem(tenths, 10)}s"
+  end
+
+  def running_duration(ms), do: duration(div(ms, 1000))
+
+  # The page that opens this turn: its track and thread, and the turn's own
+  # element as the fragment, which `TranscriptTail` scrolls to once it is
+  # drawn. Access is checked on the way in, as for any other URL.
+  defp turn_link(track, thread_id, dom_id),
+    do: "/p/#{track.project_id}/t/#{track.id}?thread=#{thread_id}##{dom_id}"
 
   # Events are newest first. The turn opened at its `started` stage (or its
   # oldest event, for a turn Fountain started itself) and ended at the stage

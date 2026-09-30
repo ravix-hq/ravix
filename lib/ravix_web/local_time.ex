@@ -25,15 +25,21 @@ defmodule RavixWeb.LocalTime do
 
   def in_zone(%DateTime{} = at, _zone), do: DateTime.shift_zone!(at, @utc)
 
-  @doc "The short form, relative to `now` for what counts as today."
-  @spec short(DateTime.t(), String.t() | nil, DateTime.t()) :: String.t()
-  def short(%DateTime{} = at, zone, %DateTime{} = now \\ DateTime.utc_now()) do
+  @doc """
+  The short form, relative to `now` for what counts as today. With
+  `weekday: true` (a turn's footer, RAV-93) the six days before today are
+  named by weekday instead: "Sat 9:49 PM".
+  """
+  @spec short(DateTime.t(), String.t() | nil, DateTime.t(), keyword()) :: String.t()
+  def short(%DateTime{} = at, zone, %DateTime{} = now \\ DateTime.utc_now(), opts \\ []) do
     local = in_zone(at, zone)
     today = in_zone(now, zone)
     time = Calendar.strftime(local, "%-I:%M %p")
+    ago = Date.diff(DateTime.to_date(today), DateTime.to_date(local))
 
     cond do
-      DateTime.to_date(local) == DateTime.to_date(today) -> time
+      ago == 0 -> time
+      opts[:weekday] && ago in 1..6 -> Calendar.strftime(local, "%a ") <> time
       local.year == today.year -> Calendar.strftime(local, "%b %-d, ") <> time
       true -> Calendar.strftime(local, "%b %-d, %Y, ") <> time
     end

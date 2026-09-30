@@ -665,6 +665,39 @@ async function act(prompt: string, emit: Emit, say: Say, conv: Conv, disk: Disk,
     return;
   }
 
+  // A running turn that has said two things before its answer (RAV-93): the
+  // earlier message is muted while the turn runs. The plan between them keeps
+  // them apart as two messages.
+  if (prompt.endsWith("Demonstrate a turn thinking aloud")) {
+    await say("I will read the scheduler before changing anything.");
+    emit({ kind: "output", stream: "acp", data: plan([["Read the scheduler", "completed"], ["Fix the day arithmetic", "in_progress"]]) });
+    await say("The window helper is where the days are counted, so I am starting there.");
+    await pause(12_000);
+    await say("\n\nDone: `dayOf` counts calendar days now.");
+    return;
+  }
+
+  // An answer with every kind of prose the transcript styles (RAV-93):
+  // paragraphs, inline code, links (one bare URL followed by a quote), a
+  // heading and both kinds of list.
+  if (prompt.endsWith("Demonstrate a formatted answer")) {
+    await say([
+      "The scheduler drifts because `dayOf` divides epoch milliseconds by `86400000`, which assumes every day is 24 hours long.",
+      "",
+      "## What changes",
+      "",
+      "- `dayOf` counts calendar days in the viewer's zone.",
+      "- The window helper reuses it instead of its own arithmetic.",
+      "- The DST tests cover both transitions.",
+      "",
+      "1. Replace the division.",
+      "2. Run the window and schedule tests.",
+      "",
+      "See the [Temporal proposal](https://tc39.es/proposal-temporal/docs/) for the long-term fix. The preview is at \"http://localhost:4000/\" once it starts.",
+    ].join("\n"));
+    return;
+  }
+
   // Calls as claude-agent-acp 0.81.2 streams them (RAV-92): the tool_call goes
   // out when the tool_use starts, before any input, titled "Preparing file…"
   // or "Terminal"; refining tool_call_updates with no status then carry the
