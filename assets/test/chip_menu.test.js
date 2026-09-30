@@ -210,3 +210,65 @@ test("a destroyed chip no longer holds Escape back from the dialog", () => {
   expect(dismissed).toEqual(["repo-query"])
   cleanup()
 })
+
+// RAV-95: more than six models get a search field over the rows.
+test("a model search opens focused, hides the rows it does not match, says when none does, and Enter picks the first left", () => {
+  document.body.innerHTML = `<form id="f"></form><div id="pick" class="chip-menu">
+    <button type="button" id="pick-trigger" popovertarget="pick-menu" aria-haspopup="dialog" aria-expanded="false">Opus</button>
+    <div id="pick-menu" popover role="dialog">
+      <fieldset><label><input type="radio" id="agent" name="a" form="f" checked>Claude Code</label></fieldset>
+      <fieldset>
+        <input id="pick-search" type="search" data-chip-filter data-chip-focus>
+        ${["Opus 5.5", "Opus 5", "Sonnet 5", "Haiku 4.5", "GPT-6", "GPT-6 Astra", "Gemini"].map((name, i) =>
+          `<label id="row-${i}" data-filter-text="${name}"><input type="radio" id="m-${i}" name="m" value="${i}" form="f" ${i === 0 ? "checked" : ""} data-chip-close>${name}</label>`).join("")}
+        <p id="empty" data-chip-filter-empty hidden>No models match</p>
+      </fieldset>
+    </div>
+  </div>`
+  const {hook} = mountHook(ChipMenu, "#pick")
+  const $ = id => document.getElementById(id)
+  const visible = () => Array.from(document.querySelectorAll("[data-filter-text]")).filter(r => !r.hidden).map(r => r.id)
+  const search = text => {
+    $("pick-search").value = text
+    $("pick-search").dispatchEvent(new Event("input", {bubbles: true}))
+  }
+
+  $("pick-trigger").click()
+  expect(document.activeElement).toBe($("pick-search"))
+  expect(visible()).toHaveLength(7)
+
+  search("  gpt ")
+  expect(visible()).toEqual(["row-4", "row-5"])
+  expect($("empty").hidden).toBe(true)
+
+  // A patch redraws the rows as the template has them; the search holds.
+  for (const row of document.querySelectorAll("[data-filter-text]")) row.hidden = false
+  hook.updated()
+  expect(visible()).toEqual(["row-4", "row-5"])
+
+  search("mistral")
+  expect(visible()).toEqual([])
+  expect($("empty").hidden).toBe(false)
+  // Enter with nothing left picks nothing and submits nothing.
+  expect(key($("pick-search"), "Enter").defaultPrevented).toBe(true)
+  expect($("m-0").checked).toBe(true)
+
+  search("sonnet")
+  expect(key($("pick-search"), "Enter").defaultPrevented).toBe(true)
+  expect($("m-2").checked).toBe(true)
+  expect(open.has($("pick-menu"))).toBe(false)
+  expect(document.activeElement).toBe($("pick-trigger"))
+
+  search("")
+  expect(visible()).toHaveLength(7)
+  // Other input in the popover is not a search.
+  $("m-3").dispatchEvent(new Event("input", {bubbles: true}))
+  expect(visible()).toHaveLength(7)
+})
+
+test("a chip menu without a search is left alone by a patch", () => {
+  const {model, $, cleanup} = render()
+  model.updated()
+  expect($("model-menu").querySelectorAll("[hidden]")).toHaveLength(0)
+  cleanup()
+})

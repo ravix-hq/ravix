@@ -60,7 +60,12 @@ defmodule RavixWeb.Live.PersonalSettings do
           Settings.you_group() | if(@workspace, do: [Settings.workspace_group(@workspace)], else: [])
         ]}
       >
-        <.profile :if={@section == "profile"} user={@current_user} myself={@myself} />
+        <.profile
+          :if={@section == "profile"}
+          user={@current_user}
+          workspace={@workspace}
+          myself={@myself}
+        />
         <.agents
           :if={@section == "agents"}
           current_user={@current_user}
@@ -85,6 +90,7 @@ defmodule RavixWeb.Live.PersonalSettings do
   end
 
   attr :user, :map, required: true
+  attr :workspace, :map, default: nil, doc: "the current workspace, whose Repositories it links"
   attr :myself, :any, required: true
 
   defp profile(assigns) do
@@ -123,6 +129,14 @@ defmodule RavixWeb.Live.PersonalSettings do
         <a id="profile-repository-access" href="/api/auth/install">
           Change which GitHub repositories Ravix may work in ↗
         </a>
+      </p>
+      <p :if={@workspace}>
+        <.link
+          id="profile-workspace-repositories"
+          patch={Settings.section_path(:workspace, @workspace.id, "repositories")}
+        >
+          See the repositories {@workspace.name} uses →
+        </.link>
       </p>
     </section>
     <section class="personal-section" aria-labelledby="profile-session-title">

@@ -577,7 +577,7 @@ test('project, track, streaming, image upload, reconnect, and revocation', async
   await page.getByRole('button', { name: 'Create track', exact: true }).click();
   const composer = page.getByRole('textbox', { name: 'Message', exact: true });
   await expect(composer).toBeEnabled({ timeout: 30_000 });
-  const selectedTrackTitle = await page.locator('.project-tree-tracks [aria-current="page"]').getAttribute('title');
+  const selectedTrackTitle = await page.locator('.project-tree-tracks [aria-current="page"] .track-title').textContent();
   await expect(page).toHaveTitle(`${selectedTrackTitle} · Browser quality · Ravix`);
   // The composer enables once the conversation exists, before the opening
   // turn has made the worktree. A diff read then is honestly empty and the
@@ -836,7 +836,7 @@ test('project, track, streaming, image upload, reconnect, and revocation', async
   await newTrack.getByRole('button', { name: 'Options', exact: true }).click();
   await page.getByLabel('Branch name').fill('second-lane');
   await page.getByRole('button', { name: 'Create track', exact: true }).click();
-  await expect(page.locator('.track-crumbs')).toContainText('second-lane');
+  await expect(page.locator('.track-crumbs')).toContainText('Second lane');
   await expect(composer).toBeEnabled({ timeout: 30_000 });
   await expect(page.locator('#transcript-scroll')).not.toHaveAttribute('data-track', firstLane);
   // The track arrived at is its own; the one left behind had three turns in it.
@@ -1047,7 +1047,7 @@ test('composer Send stays compact and keeps its arrow after repeated submissions
   await newTrack.getByRole('button', { name: 'Options', exact: true }).click();
   await newTrack.getByLabel('Branch name', { exact: true }).fill('compact-send');
   await newTrack.getByRole('button', { name: 'Create track', exact: true }).click();
-  await expect(page.locator('.track-crumbs')).toContainText('compact-send');
+  await expect(page.locator('.track-crumbs')).toContainText('Compact send');
   const composer = page.getByRole('textbox', { name: 'Message', exact: true });
   const send = page.getByRole('button', { name: 'Send', exact: true });
   await expect(composer).toBeEnabled({ timeout: 30_000 });

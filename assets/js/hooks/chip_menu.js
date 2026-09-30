@@ -7,6 +7,11 @@
 // marked `data-chip-close` closes the popover: a button on any activation, a
 // radio on a pointer click or Enter, since arrow keys move a radio group's
 // choice without being done with it.
+//
+// A long model list has a search field (`data-chip-filter`, RAV-95): typing
+// hides the rows whose `data-filter-text` does not contain it, shows
+// `[data-chip-filter-empty]` when none does, and Enter picks the first row
+// left. It is all in the page; the server renders every row.
 export const ChipMenu = {
   mounted() {
     this.trigger = this.el.querySelector(':scope > [popovertarget]')
@@ -34,7 +39,15 @@ export const ChipMenu = {
         this.menu.showPopover()
       }
     }
+    this.onFilter = event => {
+      if (event.target.matches?.('[data-chip-filter]')) this.filter()
+    }
     this.onMenuKey = event => {
+      if (event.key === 'Enter' && event.target.matches('[data-chip-filter]')) {
+        event.preventDefault()
+        this.rows().find(row => !row.hidden)?.click()
+        return
+      }
       // Enter on a radio would submit the form it belongs to; here it means
       // "this one".
       if (event.key === 'Enter' && event.target.matches('input[type=radio]')) {
@@ -55,12 +68,35 @@ export const ChipMenu = {
     this.menu.addEventListener('toggle', this.onToggle)
     this.menu.addEventListener('keydown', this.onMenuKey)
     this.menu.addEventListener('click', this.onClick)
+    this.menu.addEventListener('input', this.onFilter)
     this.trigger.addEventListener('keydown', this.onTriggerKey)
     // Capture on the window runs before the dialog's own Escape listener.
     window.addEventListener('keydown', this.onEscape, true)
   },
+  // A patch puts back what the template says, `hidden` included.
+  updated() {
+    this.filter()
+  },
+  rows() {
+    return Array.from(this.menu.querySelectorAll('[data-filter-text]'))
+  },
+  filter() {
+    const input = this.menu.querySelector('[data-chip-filter]')
+    if (!input) return
+    const query = input.value.trim().toLowerCase()
+    let shown = 0
+    for (const row of this.rows()) {
+      row.hidden = !!query && !row.dataset.filterText.toLowerCase().includes(query)
+      if (!row.hidden) shown++
+    }
+    const empty = this.menu.querySelector('[data-chip-filter-empty]')
+    if (empty) empty.hidden = shown > 0
+  },
+  // What asks for focus (`data-chip-focus`, as a model search does) has it
+  // wherever it sits, else the current choice, else the first control.
   first() {
-    return this.menu.querySelector('[data-chip-focus]:not(:disabled), input:checked:not(:disabled), input:not(:disabled):not([type=hidden]), select:not(:disabled), button:not(:disabled)')
+    return this.menu.querySelector('[data-chip-focus]:not(:disabled)') ||
+      this.menu.querySelector('input:checked:not(:disabled), input:not(:disabled):not([type=hidden]), select:not(:disabled), button:not(:disabled)')
   },
   close() {
     if (!this.open) return

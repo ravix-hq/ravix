@@ -43,7 +43,8 @@ defmodule RavixWeb.Error do
       from this deployment. `Ravix.Providers` is where the shape comes from.
     * `%Ravix.Fountain.Error{}` goes through `Ravix.Fountain.Error.as_http/2`;
       `%Ravix.GitHub.Error{}` through `Ravix.GitHub.Error.describe/2`;
-      `%Ravix.Sprites.Error{}` keeps its status.
+      `%Ravix.Sprites.Error{}` keeps its status, in words that do not name
+      the provider.
     * `%Ecto.Changeset{}` is 422 `invalid` with the first field error.
     * `:preview_server_down` is 503 `preview_unavailable`.
     * `{:async_exit, reason}` is 500 `async_exit`: a page's task exited
@@ -155,11 +156,8 @@ defmodule RavixWeb.Error do
   end
 
   def from(%SpritesError{status: status, message: message}, _opts) do
-    %__MODULE__{
-      status: if(is_integer(status) and status > 0, do: status, else: 502),
-      code: "sprites_error",
-      message: message
-    }
+    status = if(is_integer(status) and status > 0, do: status, else: 502)
+    %__MODULE__{status: status, code: "sprites_error", message: machine_message(message)}
   end
 
   def from(%Ecto.Changeset{} = changeset, _opts) do
@@ -200,7 +198,30 @@ defmodule RavixWeb.Error do
     do: "This Ravix deployment has no GitHub App configured, so it cannot see repositories."
 
   defp unconfigured(:sprites),
-    do: "This Ravix deployment has no Sprites token, so it cannot reach the machine directly."
+    do:
+      "This Ravix deployment has no machine connection configured, so it cannot reach the machine directly."
+
+  # Which provider runs the machines is this server's business, not the
+  # reader's: `Ravix.Sprites` writes its errors for the log and the trace, and
+  # names itself in them. Its sentences that do are said here in the words
+  # the rest of the app uses for the machine; the rest pass through as
+  # written.
+  defp machine_message(message) when is_binary(message) do
+    if message =~ ~r/sprite/i, do: machine_words(message), else: message
+  end
+
+  defp machine_message(message), do: message
+
+  defp machine_words(message) do
+    cond do
+      message =~ ~r/not support/i -> "The machine does not support this."
+      message =~ ~r/in time/i -> "The machine didn't answer."
+      message =~ ~r/could not reach/i -> "Could not reach the machine."
+      message =~ ~r/not reachable|asleep/i -> "The machine is not reachable. It may be asleep."
+      message =~ ~r/refused|token/i -> "The machine connection was refused."
+      true -> "Could not reach the machine."
+    end
+  end
 
   # The shape, never the payload. What a missing clause needs is the tag and
   # the arity; the values beside it are whatever the refusal was carrying,

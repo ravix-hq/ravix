@@ -22,8 +22,14 @@ test('terminal tabs: open, type, resize, several, reconnect, reload and close', 
   await newTerminal.click();
   const one = page.locator('.shell-pane:not([hidden]) .xterm');
   await expect(one).toBeVisible();
-  await expect(one.locator('.xterm-rows')).toContainText('sprite@ravix', { timeout: 15_000 });
+  // RAV-88: one prompt, naming the directory and not the machine's user or
+  // host, drawn at the size the pane was fitted to before the shell started.
+  await expect(one.locator('.xterm-rows')).toContainText(/\S+ \$ /, { timeout: 15_000 });
   await expect(page.locator('.shell-pane:not([hidden]) .shell-status')).toHaveCount(0);
+  const drawn = await one.locator('.xterm-rows').innerText();
+  expect(drawn).not.toContain('sprite@');
+  expect(drawn).not.toContain('fountain-');
+  expect(drawn.split('\n').filter(line => line.includes('$')).length).toBe(1);
 
   // Typing goes to the shell, which answers in the terminal.
   await page.keyboard.type('ls');
@@ -41,6 +47,12 @@ test('terminal tabs: open, type, resize, several, reconnect, reload and close', 
   };
   const sizes = [];
   const wide = await size();
+  // The size the shell was started at is the pane's: as many rows as xterm
+  // draws, and nothing sent since has changed it.
+  const [rows] = wide.split(' ').map(Number);
+  expect(await one.locator('.xterm-rows > div').count()).toBe(rows);
+  await page.waitForTimeout(500);
+  expect(await size()).toBe(wide);
   await page.setViewportSize({ width: 1024, height: 900 });
   await expect.poll(size).not.toBe(wide);
   await page.setViewportSize({ width: 1440, height: 900 });
@@ -56,7 +68,7 @@ test('terminal tabs: open, type, resize, several, reconnect, reload and close', 
   await newTerminal.click();
   await expect(page.locator('[data-shell-tab]')).toHaveCount(2);
   const two = page.locator('.shell-pane:not([hidden]) .xterm');
-  await expect(two.locator('.xterm-rows')).toContainText('sprite@ravix', { timeout: 15_000 });
+  await expect(two.locator('.xterm-rows')).toContainText(/\S+ \$ /, { timeout: 15_000 });
   await expect(two.locator('.xterm-rows')).not.toContainText('iex(');
   await page.keyboard.type('git status');
   await page.keyboard.press('Enter');

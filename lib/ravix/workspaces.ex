@@ -487,6 +487,109 @@ defmodule Ravix.Workspaces do
     end
   end
 
+  # ── the Projects and Danger zone pages (RAV-73) ───────────────────────
+
+  @typedoc "One row of a workspace's Projects page."
+  @type project_row :: %{project: Project.t(), owner: User.t(), people: pos_integer()}
+
+  @doc """
+  Every live project in a workspace, with its owner and how many people
+  reach it: the workspace's live members, who each have Write, and anybody
+  else granted it directly, the owner included. Any live member; not found
+  for anybody else, and for everybody while the switch is off.
+  """
+  @spec projects(User.t(), String.t()) :: {:ok, [project_row()]} | {:error, :not_found}
+  def projects(%User{} = user, workspace_id) do
+    with true <- enabled?() || {:error, :not_found},
+         {:ok, %{workspace: workspace}} <- Access.workspace_access(user, workspace_id) do
+      rows = Store.projects(workspace.id)
+      members = MapSet.new(Store.members(workspace.id), & &1.user.id)
+      direct = rows |> Enum.map(&elem(&1, 0).id) |> Store.direct_member_ids()
+
+      {:ok,
+       for {project, owner} <- rows do
+         people =
+           [owner.id | Map.get(direct, project.id, [])]
+           |> MapSet.new()
+           |> MapSet.union(members)
+           |> MapSet.size()
+
+         %{project: project, owner: owner, people: people}
+       end}
+    end
+  end
+
+  @doc """
+  Leave a workspace. Any live member, except from their own personal
+  workspace, and never its last owner. Like `remove_member/3`, taking
+  access away is not behind `Ravix.Config.workspace_access?/0`, and open
+  pages are told once it has committed.
+  """
+  @spec leave(User.t(), String.t()) :: :ok | {:error, reason()}
+  def leave(%User{} = user, workspace_id) do
+    with {:ok, %{workspace: workspace}} <- Access.workspace_access(user, workspace_id),
+         :ok <- not_own_personal(workspace, user) do
+      case Store.leave(workspace.id, user.id) do
+        {:ok, _revoked} ->
+          members_changed(workspace.id)
+
+        {:error, :last_owner} ->
+          {:error,
+           {:conflict, "last_owner",
+            "You are this workspace's only owner. Make somebody else an owner first, or delete the workspace."}}
+
+        {:error, _gone} ->
+          {:error, :not_found}
+      end
+    end
+  end
+
+  defp not_own_personal(%Workspace{kind: :personal, personal_user_id: id}, %User{id: id}),
+    do: {:error, {:unprocessable, "personal", "You cannot leave your personal workspace."}}
+
+  defp not_own_personal(_workspace, _user), do: :ok
+
+  @doc """
+  Delete a team workspace: owners only (`:delete_workspace`), with its name
+  typed as `confirmation`, and only once no live project is left in it. The
+  workspace is archived, so every door answers not found for it from then
+  on; open pages hear a members notice and leave.
+  """
+  @spec delete(User.t(), String.t(), String.t() | nil) :: :ok | {:error, reason()}
+  def delete(%User{} = user, workspace_id, confirmation) do
+    with {:ok, %{workspace: workspace}} <-
+           Access.workspace_grant(user, workspace_id, :delete_workspace),
+         :ok <- deletable(workspace),
+         :ok <- confirmed(workspace, confirmation) do
+      case Store.archive_workspace(workspace.id, user.id) do
+        {:ok, _archived} ->
+          members_changed(workspace.id)
+
+        {:error, {:has_projects, count}} ->
+          {:error,
+           {:conflict, "has_projects",
+            "#{workspace.name} still has #{count} #{if count == 1, do: "project", else: "projects"}. Move or delete them first."}}
+
+        {:error, :not_owner} ->
+          Access.require_capability(:admin, :delete_workspace)
+
+        {:error, _gone} ->
+          {:error, :not_found}
+      end
+    end
+  end
+
+  defp deletable(%Workspace{kind: :team}), do: :ok
+
+  defp deletable(%Workspace{}),
+    do: {:error, {:unprocessable, "personal", "A personal workspace cannot be deleted."}}
+
+  defp confirmed(%Workspace{name: name}, typed) do
+    if is_binary(typed) and String.trim(typed) == name,
+      do: :ok,
+      else: {:error, {:unprocessable, "confirm", "Type the workspace's name to delete it."}}
+  end
+
   defp team(%Workspace{kind: :team}), do: :ok
 
   defp team(%Workspace{}),

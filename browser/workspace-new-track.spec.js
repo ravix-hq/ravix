@@ -29,10 +29,12 @@ test('New track lists the workspace repositories, adds one, and keeps scratch ap
   // A team workspace, connected to GitHub, with one repository admitted.
   await page.locator('#workspace-switcher-trigger').click();
   await createWorkspace(page, 'Picker Team');
+  await page.locator('#settings-nav-repositories').click();
+  await expect(page).toHaveURL(/\/settings\/repositories$/);
   await page.getByRole('link', { name: 'Connect GitHub', exact: true }).click();
   await expect(page.locator('#workspace-catalog')).toContainText('mockuser/atlas-api');
   await page.locator('#workspace-catalog li', { hasText: 'mockuser/atlas-api' })
-    .getByRole('button', { name: 'Add', exact: true }).click();
+    .getByRole('button', { name: 'Add project', exact: true }).click();
   await expect(page).toHaveURL(/\/p\/[^/]+$/);
   const projectPath = new URL(page.url()).pathname;
   await expect(page.locator('[data-phx-main]')).toHaveClass(/phx-connected/);

@@ -4,11 +4,11 @@ defmodule RavixWeb.WorkspaceLive do
 
   alias RavixWeb.Live.NewProject
 
-  alias Ravix.{Accounts, Hub, Ids, People, Projects, Schedules, Tracks, Workspaces}
+  alias Ravix.{Accounts, Hub, People, Projects, Schedules, Tracks, Workspaces}
   alias Ravix.Accounts.Access
   alias Ravix.Hub.Event
   alias Ravix.Projects.Sections
-  alias Ravix.Tracks.MachineState
+  alias Ravix.Tracks.{MachineState, Track}
   alias Ravix.Workspaces.{Picker, Repositories}
   alias RavixWeb.Live.Form
   alias RavixWeb.Live.Guard
@@ -1998,7 +1998,7 @@ defmodule RavixWeb.WorkspaceLive do
              (requested && requested.id == assigns.track_id && requested) do
         nil when assigns.live_action == :plans -> "Plans · " <> project.display_name
         nil -> project.display_name
-        track -> track.title <> " · " <> project.display_name
+        track -> Track.label(track) <> " · " <> project.display_name
       end
 
     assign(socket, page_title: title <> " · Ravix")
@@ -2041,7 +2041,7 @@ defmodule RavixWeb.WorkspaceLive do
   end
 
   defp notice_threads(%{status: :setup_failed} = track),
-    do: [%{id: track.id, title: track.title, status: :failed}]
+    do: [%{id: track.id, title: Track.label(track), status: :failed}]
 
   defp notice_threads(%{setup_state: state}) when state in ["pending", "running", "retry"],
     do: []
@@ -2054,7 +2054,11 @@ defmodule RavixWeb.WorkspaceLive do
     %{
       id: track.id,
       thread_id: thread.id,
-      title: if(thread.id == track.id, do: track.title, else: "#{track.title} · #{thread.title}"),
+      title:
+        if(thread.id == track.id,
+          do: Track.label(track),
+          else: "#{Track.label(track)} · #{thread.title}"
+        ),
       project: project && project.display_name,
       status: thread.status,
       mention: Map.get(thread, :mention) && thread.mention.author_login
@@ -2093,6 +2097,12 @@ defmodule RavixWeb.WorkspaceLive do
   defp open_dialog(socket, :help), do: assign(socket, dialog: :help)
   defp open_dialog(socket, :changes), do: assign(socket, dialog: :changes)
   defp open_dialog(socket, :new_workspace), do: assign(socket, dialog: :new_workspace)
+
+  # What the gear's dot means, for its button's name and tooltip.
+  defp unseen_note(0, _separator), do: ""
+
+  defp unseen_note(count, separator),
+    do: "#{separator}#{count} new in What's new"
 
   defp unseen(socket) do
     changes = Accounts.unseen_changes(socket.assigns.current_user)
@@ -2440,18 +2450,12 @@ defmodule RavixWeb.WorkspaceLive do
     end
   end
 
-  # A track's display name, wherever a track is listed by name: the sidebar
-  # and quick jump. One place, so real titles (RAV-83) change both.
-  defp tab_label(%{title: title}) do
-    namespace = Ids.branch_namespace()
-    if title != namespace, do: String.replace_prefix(title, namespace, ""), else: title
-  end
-
   # The link's accessible name: what the tab draws, less the abbreviation.
   defp tab_name(track) do
     [
-      track.title,
+      Track.label(track),
       "created by @#{track.created_by_login}",
+      Map.get(track, :visibility) == :private && "private",
       track.origin.kind == :plan && "from a project plan",
       MachineState.label(tab_machine(track).state),
       (marker = tab_status(track)) in [:unread, :commented] && tab_status_label(marker)
@@ -2474,11 +2478,13 @@ defmodule RavixWeb.WorkspaceLive do
   end
 
   # A row's dot sits in a slot of its own width whether or not there is one,
-  # so every row's avatar and title start at the same x.
+  # so every row's avatar and title start at the same x. A working track's
+  # spinner is in its age slot instead (`meta_slot/1`), so it has no dot.
   attr :track, :map, required: true
 
   defp status_slot(assigns) do
-    assigns = assign(assigns, :status, tab_status(assigns.track))
+    assigns =
+      assign(assigns, :status, with(:working <- tab_status(assigns.track), do: nil))
 
     ~H"""
     <span class="track-status" aria-hidden={if is_nil(@status), do: "true"}>
@@ -2524,6 +2530,38 @@ defmodule RavixWeb.WorkspaceLive do
       datetime={DateTime.to_iso8601(@at)}
       title={"Last active " <> RavixWeb.LocalTime.full(@at, nil)}
     >{elem(ago(@at), 0)}</time>
+    """
+  end
+
+  # A private track's lock: an icon beside the title rather than a word that
+  # takes the title's room. The row's accessible name says "private".
+  defp private_mark(assigns) do
+    ~H"""
+    <span class="track-private" title="Private: only its creator and the people they invite">
+      <.icon name="lock" size={12} /><span class="sr-only">Private</span>
+    </span>
+    """
+  end
+
+  # A row's end (RAV-96): its age, or a spinner while the agent is taking a
+  # turn. The slot has one width either way, so titles end at the same x.
+  attr :track, :map, required: true
+
+  defp meta_slot(assigns) do
+    assigns = assign(assigns, :working, tab_status(assigns.track) == :working)
+
+    ~H"""
+    <span class="track-meta">
+      <span
+        :if={@working}
+        id={"track-working-#{@track.id}"}
+        class="loading-spinner track-spinner"
+        role="img"
+        aria-label="Working"
+        title={tab_status_title(@track)}
+      ></span>
+      <.age :if={!@working} id={"track-age-#{@track.id}"} at={@track.activity_at} />
+    </span>
     """
   end
 
@@ -2637,10 +2675,10 @@ defmodule RavixWeb.WorkspaceLive do
         id={"search-track-link-#{track.id}"}
         patch={"/p/#{project.id}/t/#{track.id}"}
         class="workspace-track"
-        title={track.title}
+        title={Track.tooltip(track)}
         data-jump-result
       >
-        <span class="search-label">{tab_label(track)}</span><span :if={track.visibility == :private}><.icon name="lock" />
+        <span class="search-label">{Track.label(track)}</span><span :if={track.visibility == :private}><.icon name="lock" />
         Private</span>
         <span :if={attention?(track)} class="badge" aria-label="1 unread">1</span>
       </.link>

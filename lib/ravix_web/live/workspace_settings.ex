@@ -1,20 +1,25 @@
 defmodule RavixWeb.Live.WorkspaceSettings do
   @moduledoc """
   One workspace's settings, `/w/:workspace/settings/:section`, in the
-  settings frame (`RavixWeb.Live.Settings`, RAV-72): General and Members.
+  settings frame (`RavixWeb.Live.Settings`, RAV-72, RAV-73):
 
-  Members is what `/w/:workspace` was (ADR 0009, phases 4a and 4b), moved
-  in unchanged: who is in the workspace, who is invited, the invite box,
-  and its GitHub (`RavixWeb.Live.WorkspaceGitHub`) with RAV-69's "Add to
-  workspace". Owners and admins invite by GitHub login, with suggestions
-  from the people who have signed in here, withdraw waiting invitations and
-  remove members; owners also change roles. Every one of those is decided
-  again by the context; the page only hides the controls a role cannot use.
+    * **General** -- the name, which owners and admins rename
+      (`Ravix.Workspaces.rename/3`) on the frame's one-Save model, the kind,
+      which nothing changes, and "New workspace…".
+    * **Members** -- ADR 0009's one role list, Owner / Admin / Member, with
+      a line on what each may do; who is in the workspace; invite by GitHub
+      login with a role (owners offer all three, admins Member); and the
+      invitations still waiting. Owners change roles.
+    * **Repositories** -- its GitHub (`RavixWeb.Live.WorkspaceGitHub`):
+      the connected accounts, RAV-69's "Add to workspace", each repository
+      with the project that uses it, "Configure on GitHub" and Refresh.
+    * **Projects** -- every project in it, with its owner, repository,
+      agent and how many people reach it.
+    * **Danger zone** -- leave it (`Ravix.Workspaces.leave/2`), and, for
+      owners, delete it with its name typed (`Ravix.Workspaces.delete/3`).
 
-  General is the workspace's name, which owners and admins rename
-  (`Ravix.Workspaces.rename/3`), and its kind, which nothing changes. It is
-  the first page on the frame's one-Save model: an unsaved-changes bar and
-  a confirmation before leaving.
+  Every action is decided again by the context; the page only hides the
+  controls a role cannot use.
 
   Behind `RAVIX_WORKSPACE_ACCESS`. `RavixWeb.WorkspaceLive` admits the URL
   (`Ravix.Accounts.Access.workspace_access/2`) before rendering this; the
@@ -26,7 +31,7 @@ defmodule RavixWeb.Live.WorkspaceSettings do
 
   alias Ravix.Accounts.Access
   alias Ravix.{People, Workspaces}
-  alias Ravix.Workspaces.{Installation, Invite, Repositories}
+  alias Ravix.Workspaces.{Connect, Installation, Invite, Repositories}
   alias RavixWeb.Live.{Form, Settings, WorkspaceGitHub}
 
   # How old the catalog may be before opening the page refreshes it.
@@ -40,11 +45,15 @@ defmodule RavixWeb.Live.WorkspaceSettings do
          loaded: nil,
          suggestions: [],
          invite_login: "",
+         invite_role: "member",
          catalog: nil,
          refreshing: false,
          adding: nil,
          available: nil,
          attaching: nil,
+         projects: [],
+         configure_url: nil,
+         delete_confirm: "",
          saved: 0
        )}
 
@@ -53,7 +62,7 @@ defmodule RavixWeb.Live.WorkspaceSettings do
   @impl true
   def update(%{reload: true}, socket) do
     case Workspaces.people(socket.assigns.current_user, workspace_id(socket)) do
-      {:ok, people} -> {:ok, socket |> assign_people(people) |> load_github()}
+      {:ok, people} -> {:ok, socket |> assign_people(people) |> load_projects() |> load_github()}
       {:error, :not_found} -> {:ok, assign(socket, workspace: nil)}
     end
   end
@@ -74,14 +83,18 @@ defmodule RavixWeb.Live.WorkspaceSettings do
           loaded: people.workspace.id,
           suggestions: [],
           invite_login: "",
+          invite_role: "member",
           catalog: nil,
           refreshing: false,
           adding: nil,
           available: nil,
-          attaching: nil
+          attaching: nil,
+          delete_confirm: ""
         )
         |> assign_people(people)
         |> assign(general_form: general_form(people.workspace))
+        |> assign(configure_url: configure_url(socket.assigns.current_user, people.workspace.id))
+        |> load_projects()
         |> load_github()
         |> refresh_if_stale()
 
@@ -96,6 +109,24 @@ defmodule RavixWeb.Live.WorkspaceSettings do
     do: socket |> load_catalog() |> WorkspaceGitHub.load_available(id)
 
   defp load_github(socket), do: socket
+
+  defp load_projects(%{assigns: %{workspace: %{id: id}}} = socket) do
+    case Workspaces.projects(socket.assigns.current_user, id) do
+      {:ok, projects} -> assign(socket, projects: projects)
+      {:error, :not_found} -> assign(socket, projects: [])
+    end
+  end
+
+  defp load_projects(socket), do: socket
+
+  # Only for a role that may change the connections; nil otherwise, and
+  # without a GitHub App to point at.
+  defp configure_url(user, workspace_id) do
+    case Connect.configure_url(user, workspace_id) do
+      {:ok, url} -> url
+      {:error, _} -> nil
+    end
+  end
 
   @impl true
   def handle_event(event, params, socket) do
@@ -143,9 +174,17 @@ defmodule RavixWeb.Live.WorkspaceSettings do
   defp workspace_event("add-installation", %{"installation" => id}, socket),
     do: {:noreply, WorkspaceGitHub.add_installation(socket, workspace_id(socket), id)}
 
-  defp workspace_event("suggest", %{"login" => q}, socket) do
+  # The role is kept as it is chosen, so the redraw this answers with
+  # does not put the select back to Member.
+  defp workspace_event("suggest", %{"login" => q} = params, socket) do
     suggestions = if manager?(socket), do: People.search(socket.assigns.current_user, q), else: []
-    {:noreply, assign(socket, suggestions: suggestions, invite_login: q)}
+
+    {:noreply,
+     assign(socket,
+       suggestions: suggestions,
+       invite_login: q,
+       invite_role: invite_role(params["role"])
+     )}
   end
 
   defp workspace_event("invite", %{"login" => login} = params, socket) do
@@ -163,12 +202,15 @@ defmodule RavixWeb.Live.WorkspaceSettings do
 
         {:noreply,
          socket
-         |> assign(suggestions: [], invite_login: "")
+         |> assign(suggestions: [], invite_login: "", invite_role: "member")
          |> flash(:info, message)
          |> reload()}
 
       {:error, reason} ->
-        {:noreply, socket |> assign(invite_login: login) |> refused(reason)}
+        {:noreply,
+         socket
+         |> assign(invite_login: login, invite_role: invite_role(params["role"]))
+         |> refused(reason)}
     end
   end
 
@@ -188,6 +230,33 @@ defmodule RavixWeb.Live.WorkspaceSettings do
     socket.assigns.current_user
     |> Workspaces.set_role(workspace_id(socket), user_id, role)
     |> settled(socket, "Role changed.")
+  end
+
+  defp workspace_event("leave", _params, socket) do
+    name = socket.assigns.workspace.name
+
+    case Workspaces.leave(socket.assigns.current_user, workspace_id(socket)) do
+      :ok ->
+        {:noreply, socket |> put_flash(:info, "You left #{name}.") |> push_navigate(to: "/home")}
+
+      {:error, reason} ->
+        {:noreply, error(socket, reason)}
+    end
+  end
+
+  defp workspace_event("delete-confirm", %{"confirm" => typed}, socket),
+    do: {:noreply, assign(socket, delete_confirm: typed)}
+
+  defp workspace_event("delete", %{"confirm" => typed}, socket) do
+    name = socket.assigns.workspace.name
+
+    case Workspaces.delete(socket.assigns.current_user, workspace_id(socket), typed) do
+      :ok ->
+        {:noreply, socket |> put_flash(:info, "Deleted #{name}.") |> push_navigate(to: "/home")}
+
+      {:error, reason} ->
+        {:noreply, socket |> assign(delete_confirm: typed) |> error(reason)}
+    end
   end
 
   # Work started while somebody was a member must not render once they are
@@ -299,7 +368,7 @@ defmodule RavixWeb.Live.WorkspaceSettings do
 
   defp reload(socket) do
     case Workspaces.people(socket.assigns.current_user, workspace_id(socket)) do
-      {:ok, people} -> assign_people(socket, people)
+      {:ok, people} -> socket |> assign_people(people) |> load_projects()
       {:error, :not_found} -> gone(socket)
     end
   end
@@ -325,6 +394,9 @@ defmodule RavixWeb.Live.WorkspaceSettings do
 
   defp manager?(socket), do: Access.can?(socket.assigns.role, :manage_members)
 
+  defp invite_role(role) when role in ~w(owner admin member), do: role
+  defp invite_role(_role), do: "member"
+
   defp strip("@" <> login), do: String.trim(login)
   defp strip(login), do: String.trim(to_string(login))
 
@@ -335,7 +407,9 @@ defmodule RavixWeb.Live.WorkspaceSettings do
         manager?: Access.can?(assigns.role, :manage_members),
         owner?: Access.can?(assigns.role, :manage_roles),
         rename?: Access.can?(assigns.role, :rename_workspace),
-        team?: assigns.workspace.kind == :team
+        delete?: Access.can?(assigns.role, :delete_workspace),
+        team?: assigns.workspace.kind == :team,
+        own_personal?: assigns.workspace.personal_user_id == assigns.current_user.id
       )
 
     ~H"""
@@ -345,8 +419,12 @@ defmodule RavixWeb.Live.WorkspaceSettings do
         section={@section}
         crumbs={[@workspace.name]}
         nav={[
-          Settings.you_group(),
-          Settings.workspace_group(@workspace, %{"members" => length(@members)})
+          Settings.you_group()
+          | Settings.workspace_groups(@workspace, %{
+              "members" => length(@members),
+              "repositories" => @catalog && length(@catalog.repos),
+              "projects" => length(@projects)
+            })
         ]}
       >
         <div :if={@section == "general"} id="workspace-general" class="workspace-page">
@@ -393,50 +471,82 @@ defmodule RavixWeb.Live.WorkspaceSettings do
           <p :if={!@team?} class="hint">
             A personal workspace is yours alone. Create a team workspace to invite people.
           </p>
+          <section aria-labelledby="new-workspace-heading">
+            <h2 id="new-workspace-heading">Another workspace</h2>
+            <p class="hint">A team workspace has its own members, repositories and projects.</p>
+            <button
+              type="button"
+              id="general-new-workspace"
+              class="ghost"
+              phx-click="dialog"
+              phx-value-name="new-workspace"
+            >
+              <.icon name="plus" size={14} />New workspace…
+            </button>
+          </section>
         </div>
 
         <div :if={@section == "members"} id="workspace-page" class="workspace-page">
-          <p class="hint">
-            {if @team?, do: "Team workspace", else: "Personal workspace"} · your role: {role_label(
-              @role
-            )}
-          </p>
           <p :if={!@team?} class="hint">
             A personal workspace is yours alone. Create a team workspace to invite people.
           </p>
+
+          <section aria-labelledby="roles-heading">
+            <h2 id="roles-heading">Roles</h2>
+            <dl id="workspace-roles" class="workspace-roles">
+              <div :for={role <- [:owner, :admin, :member]} data-role={role}>
+                <dt>{role_label(role)}</dt>
+                <dd>{role_line(role)}</dd>
+              </div>
+            </dl>
+            <p class="hint">
+              Every member can work in every project here. A project can give somebody a different role;
+              the project's People list shows where each person's access comes from.
+            </p>
+          </section>
 
           <section :if={@team? and @manager?} aria-labelledby="invite-heading">
             <h2 id="invite-heading">Invite by GitHub username</h2>
             <form
               id="workspace-invite-form"
+              class="workspace-invite"
               phx-submit="invite"
               phx-change="suggest"
               phx-target={@myself}
             >
-              <label for="workspace-invite-login">GitHub username</label>
-              <input
-                id="workspace-invite-login"
-                name="login"
-                type="text"
-                value={@invite_login}
-                list="workspace-invite-suggestions"
-                autocomplete="off"
-                phx-debounce="200"
-                required
-              />
-              <datalist id="workspace-invite-suggestions">
-                <option :for={person <- @suggestions} value={person.login}>{person.name}</option>
-              </datalist>
-              <label for="workspace-invite-role">Role</label>
-              <select id="workspace-invite-role" name="role">
-                <option value="member">Member</option>
-                <option :if={@owner?} value="admin">Admin</option>
-                <option :if={@owner?} value="owner">Owner</option>
-              </select>
+              <div class="field">
+                <label for="workspace-invite-login">GitHub username</label>
+                <input
+                  id="workspace-invite-login"
+                  name="login"
+                  type="text"
+                  value={@invite_login}
+                  list="workspace-invite-suggestions"
+                  autocomplete="off"
+                  phx-debounce="200"
+                  required
+                />
+                <datalist id="workspace-invite-suggestions">
+                  <option :for={person <- @suggestions} value={person.login}>{person.name}</option>
+                </datalist>
+              </div>
+              <div class="field">
+                <label for="workspace-invite-role">Role</label>
+                <select id="workspace-invite-role" name="role">
+                  <option
+                    :for={role <- if(@owner?, do: [:member, :admin, :owner], else: [:member])}
+                    value={role}
+                    selected={to_string(role) == @invite_role}
+                  >
+                    {role_label(role)}
+                  </option>
+                </select>
+              </div>
               <button type="submit" class="primary">Invite</button>
             </form>
             <p class="hint">
               Somebody who has not signed in to Ravix yet joins when they first do.
+              <span :if={!@owner?}>Only an owner can invite an admin or owner.</span>
             </p>
           </section>
 
@@ -446,6 +556,7 @@ defmodule RavixWeb.Live.WorkspaceSettings do
               <li :for={member <- @members} id={"member-#{member.user.id}"}>
                 <img :if={member.user.avatar_url} src={member.user.avatar_url} alt="" class="avatar" />
                 <span class="truncate">@{member.user.login}</span>
+                <small :if={member.user.id == @current_user.id}>you</small>
                 <span class="spacer"></span>
                 <form
                   :if={@owner? and @team?}
@@ -482,7 +593,7 @@ defmodule RavixWeb.Live.WorkspaceSettings do
           </section>
 
           <section :if={@team?} aria-labelledby="invites-heading">
-            <h2 id="invites-heading">Invited</h2>
+            <h2 id="invites-heading">Pending invitations</h2>
             <p :if={@invites == []} class="hint">Nobody is waiting to join.</p>
             <ul id="workspace-invites" class="workspace-people">
               <li :for={invite <- @invites} id={"invite-#{invite.login_key}"}>
@@ -502,6 +613,9 @@ defmodule RavixWeb.Live.WorkspaceSettings do
               </li>
             </ul>
           </section>
+        </div>
+
+        <div :if={@section == "repositories"} id="workspace-repositories-page" class="workspace-page">
           <WorkspaceGitHub.section
             workspace={@workspace}
             role={@role}
@@ -510,8 +624,121 @@ defmodule RavixWeb.Live.WorkspaceSettings do
             adding={@adding}
             available={@available}
             attaching={@attaching}
+            configure_url={@configure_url}
             target={@myself}
           />
+        </div>
+
+        <div :if={@section == "projects"} id="workspace-projects-page" class="workspace-page">
+          <p :if={@projects == []} id="workspace-projects-empty" class="hint">
+            No projects yet. Add one from <.link patch={
+              Settings.section_path(:workspace, @workspace.id, "repositories")
+            }>
+              Repositories
+            </.link>.
+          </p>
+          <table :if={@projects != []} id="workspace-projects" class="workspace-projects">
+            <thead>
+              <tr>
+                <th scope="col">Project</th>
+                <th scope="col">Owner</th>
+                <th scope="col">Repository</th>
+                <th scope="col">Agent</th>
+                <th scope="col">People</th>
+                <th scope="col"><span class="sr-only">Settings</span></th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr
+                :for={%{project: project, owner: owner, people: people} <- @projects}
+                id={"workspace-project-#{project.id}"}
+              >
+                <th scope="row">
+                  <.link navigate={"/p/#{project.id}"}>{project.name}</.link>
+                </th>
+                <td>@{owner.login}</td>
+                <td>
+                  <span :if={project.repo_full_name}>{project.repo_full_name}</span>
+                  <span :if={!project.repo_full_name} class="hint">No repository</span>
+                </td>
+                <td>{Ravix.AgentName.label(project.runtime || "claude")}</td>
+                <td>{people}</td>
+                <td>
+                  <.link
+                    :if={project.user_id == @current_user.id}
+                    navigate={Settings.section_path(:project, project.id, "general")}
+                    class="ghost"
+                    aria-label={"Settings of #{project.name}"}
+                  >
+                    <.icon name="settings" size={14} />
+                  </.link>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div :if={@section == "danger"} id="workspace-danger" class="workspace-page">
+          <section class="danger-card" aria-labelledby="leave-heading">
+            <h2 id="leave-heading">Leave this workspace</h2>
+            <p :if={@own_personal?} class="hint">
+              This is your personal workspace. You cannot leave it.
+            </p>
+            <p :if={!@own_personal?} class="hint">
+              You lose access to its projects and tracks unless somebody shared them with you directly.
+              An owner or admin can invite you back.
+            </p>
+            <button
+              :if={!@own_personal?}
+              type="button"
+              id="leave-workspace"
+              class="danger"
+              phx-click="leave"
+              phx-target={@myself}
+              data-confirm={"Leave #{@workspace.name}?"}
+            >
+              Leave {@workspace.name}
+            </button>
+          </section>
+
+          <section :if={@delete? and @team?} class="danger-card" aria-labelledby="delete-heading">
+            <h2 id="delete-heading">Delete this workspace</h2>
+            <p class="hint">
+              Nobody can open it again, and its members, invitations and GitHub connections go with it.
+            </p>
+            <p :if={@projects != []} class="hint" id="delete-has-projects">
+              It still has {length(@projects)} {if length(@projects) == 1,
+                do: "project",
+                else: "projects"}. Move or delete them first.
+            </p>
+            <form
+              id="delete-workspace-form"
+              phx-change="delete-confirm"
+              phx-submit="delete"
+              phx-target={@myself}
+            >
+              <label for="delete-workspace-confirm">
+                Type <strong>{@workspace.name}</strong> to confirm
+              </label>
+              <input
+                id="delete-workspace-confirm"
+                name="confirm"
+                type="text"
+                value={@delete_confirm}
+                autocomplete="off"
+              />
+              <button
+                type="submit"
+                class="danger"
+                disabled={String.trim(@delete_confirm) != @workspace.name or @projects != []}
+              >
+                Delete {@workspace.name}
+              </button>
+            </form>
+          </section>
+          <p :if={!@delete? and @team?} class="hint" id="delete-owner-only">
+            Only an owner can delete this workspace.
+          </p>
         </div>
       </Settings.frame>
     </div>
@@ -525,4 +752,14 @@ defmodule RavixWeb.Live.WorkspaceSettings do
   defp role_label(:owner), do: "Owner"
   defp role_label(:admin), do: "Admin"
   defp role_label(:member), do: "Member"
+
+  defp role_line(:owner),
+    do:
+      "Everything an admin can, and changes roles, adds GitHub accounts and deletes the workspace."
+
+  defp role_line(:admin),
+    do:
+      "Invites and removes members, renames the workspace, connects repositories and adds projects."
+
+  defp role_line(:member), do: "Works in every project here and starts tracks."
 end

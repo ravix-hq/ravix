@@ -52,7 +52,8 @@ for (const width of [1280, 500]) {
     if (width < 760) await page.getByRole('button', { name: 'Menu', exact: true }).click();
     const row = page.locator('#yard .workspace-project.current .workspace-track[aria-current=page]');
     await expect(row).toHaveAttribute('aria-label', /, Working/);
-    await expect(row.locator('.dot.working')).toBeVisible();
+    // RAV-96: a working row spins in its age slot rather than drawing a dot.
+    await expect(row.locator('.track-meta .track-spinner')).toBeVisible();
     expect((await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa']).analyze()).violations).toEqual([]);
     // Choosing the row closes the drawer, as it does for any track.
     if (width < 760) await row.click();
