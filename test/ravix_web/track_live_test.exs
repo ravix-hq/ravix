@@ -518,6 +518,12 @@ defmodule RavixWeb.TrackLiveTest do
     settle(ctx.view)
     assert has_element?(ctx.view, "#track-agent-health-banner", "Sending is paused")
     assert has_element?(ctx.view, "[phx-value-id=funding]", "Retry")
+
+    assert has_element?(
+             ctx.view,
+             "li.queue-item .queue-error",
+             "A different reconnect explanation."
+           )
   end
 
   test "setup credential refusal raises the banner independently of message text", ctx do
@@ -1203,6 +1209,15 @@ defmodule RavixWeb.TrackLiveTest do
              ".workspace-queue .queue-feedback",
              "Codex is at capacity on this machine; your prompt is queued."
            )
+
+    # RAV-94: one row per waiting prompt, its state first and its action last.
+    assert has_element?(
+             ctx.view,
+             "ol.workspace-queue[aria-label='Queued prompts'] > li.queue-item > .chip",
+             "Waiting"
+           )
+
+    assert has_element?(ctx.view, "li.queue-item > button[phx-value-action=cancel]", "Cancel")
 
     assert has_element?(ctx.view, ".composer-model", "Codex · GPT-6 Astra")
     assert has_element?(ctx.view, ".composer-model", "GPT-6 Astra")
@@ -5336,6 +5351,13 @@ defmodule RavixWeb.TrackLiveTest do
       turn_stage(ctx.view, ctx.track.id, "started")
       assert [{"stop", "ravix", "interrupt"} | _] = composer_commands(ctx.view)
 
+      # RAV-94: and what is sent now waits for the turn, which the box says.
+      assert has_element?(
+               ctx.view,
+               "#composer-form textarea[placeholder='Queue a follow-up, @mention files, run /commands']" <>
+                 "[data-placeholder-ask='Queue a follow-up, @mention files, run /commands']"
+             )
+
       # Comment mode has its own list of people and no commands.
       render_click(ctx.view, "composer-mode", %{mode: "comment"})
       assert has_element?(ctx.view, "#composer-form textarea[aria-controls=mention-options]")
@@ -6048,7 +6070,7 @@ defmodule RavixWeb.TrackLiveTest do
 
       assert has_element?(
                ctx.view,
-               ".workspace-queue > div:last-child .queue-feedback",
+               ".workspace-queue > li:last-child .queue-feedback",
                "Waiting behind a prompt that needs attention"
              )
 

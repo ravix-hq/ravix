@@ -53,6 +53,14 @@
 // ⌘L (Ctrl+L off a Mac) focuses the box from anywhere on the page except
 // the terminal, where Ctrl+L already means "clear the screen".
 //
+// Ask agent / Comment (`[data-composer-mode]` buttons in the box) switch
+// here the moment they are pressed (RAV-94): the box's colour, the pressed
+// button, the placeholder (`data-placeholder-ask`, `data-placeholder-comment`)
+// and the accessible names. The button's `phx-click` still tells the server,
+// whose render is the truth: `data-mode` is only ever what it rendered, and
+// until it renders the mode chosen here, a patch that arrives first (and so
+// puts back the old look) has the chosen look put back over it.
+//
 // Sending clears the remembered draft; the text itself stays until the
 // server says the prompt was saved, by pushing `composer:clear` to this
 // hook. A save that fails leaves the words where they were, which is the
@@ -66,6 +74,8 @@ const TYPING_EVERY = 1500
 const SHOWN = 50
 /** What the `@` list says, beside a spinner, until the files arrive. */
 const SEARCHING = "Searching files…"
+/** How long a mode chosen here outlasts a server that never renders it. */
+const MODE_PATIENCE = 10_000
 
 /** The four Fountain takes, and so the four the picker offers. */
 const ACCEPTED = ["image/png", "image/jpeg", "image/gif", "image/webp"]
@@ -347,7 +357,12 @@ export const Composer = {
       e.preventDefault()
       this.choose(option)
     }
+    this.onModeClick = e => {
+      const button = e.target.closest?.("[data-composer-mode]")
+      if (button) this.chooseMode(button.dataset.composerMode)
+    }
     this.boundBox = box
+    box.addEventListener("click", this.onModeClick)
     box.addEventListener("mousedown", this.onMentionPick)
     box.addEventListener("dragover", this.onDragOver)
     box.addEventListener("dragleave", this.onDragLeave)
@@ -428,6 +443,7 @@ export const Composer = {
   },
 
   updated() {
+    this.reconcileMode()
     this.restore()
     this.grow()
     this.reportEmpty()
@@ -447,6 +463,7 @@ export const Composer = {
 
   destroyed() {
     document.removeEventListener("keydown", this.onShortcut)
+    this.boundBox?.removeEventListener("click", this.onModeClick)
     this.boundBox?.removeEventListener("mousedown", this.onMentionPick)
     this.boundBox?.removeEventListener("dragover", this.onDragOver)
     this.boundBox?.removeEventListener("dragleave", this.onDragLeave)
@@ -486,7 +503,7 @@ export const Composer = {
   attach(files) {
     const incoming = Array.from(files ?? [])
     if (!incoming.length) return false
-    if (this.el.dataset.mode === "comment") {
+    if (this.mode() === "comment") {
       this.note("Comments are text only. Switch to Ask agent to attach images.")
       return true
     }
@@ -508,9 +525,10 @@ export const Composer = {
 
   /** The listbox of people, while the box is in Comment mode. */
   mentions() {
-    if (this.el.dataset.mode !== "comment") return null
+    if (this.mode() !== "comment") return null
     const id = this.el.getAttribute("aria-controls")
-    return (id && document.getElementById(id)) || null
+    const el = id && document.getElementById(id)
+    return el?.hasAttribute("data-mention-options") ? el : null
   },
 
   /** Open, filter or close the list for whatever `@` is at the caret. */
@@ -575,9 +593,58 @@ export const Composer = {
     this.el.removeAttribute("aria-activedescendant")
   },
 
+  /** Ask or comment: the one chosen here, until the server has drawn it. */
+  mode() {
+    return this.pendingMode?.mode ?? this.el.dataset.mode
+  },
+
+  chooseMode(mode) {
+    if (!this.el.dataset.mode || !["ask", "comment"].includes(mode)) return
+    // Closed while the mode they belong to is still the one in force.
+    this.closeSuggestions()
+    this.closeMentions()
+    // Back to the drawn mode before the server has drawn the other one: it
+    // will, so this waits for the server to draw this one again after it.
+    const settled = mode === this.el.dataset.mode && !this.pendingMode
+    this.pendingMode = settled ? null : {mode, at: Date.now()}
+    this.showMode(mode)
+  },
+
+  // After a patch: the server has drawn the chosen mode, or drawn the old
+  // one over it (a patch it sent before the click arrived), or given up.
+  reconcileMode() {
+    const pending = this.pendingMode
+    if (!pending) return
+    if (pending.mode === this.el.dataset.mode || Date.now() - pending.at > MODE_PATIENCE) {
+      this.pendingMode = null
+    } else {
+      this.showMode(pending.mode)
+    }
+  },
+
+  showMode(mode) {
+    const comment = mode === "comment"
+    const box = this.box()
+    box.classList.toggle("commenting", comment)
+    for (const button of box.querySelectorAll("[data-composer-mode]")) {
+      button.setAttribute("aria-pressed", String(button.dataset.composerMode === mode))
+    }
+    const placeholder = comment ? this.el.dataset.placeholderComment : this.el.dataset.placeholderAsk
+    if (placeholder) this.el.placeholder = placeholder
+    this.el.setAttribute("aria-label", comment ? "Comment" : "Message")
+    // A Read member cannot ask, but can comment.
+    this.el.disabled = !comment && this.el.dataset.askDisabled === "true"
+    const send = box.querySelector(".composer-send")
+    if (send) {
+      const label = comment ? "Post comment" : "Send"
+      send.setAttribute("aria-label", label)
+      send.title = label
+    }
+  },
+
   /** Ask mode's list, if this box has one. */
   suggestions() {
-    if (this.el.dataset.mode === "comment") return null
+    if (this.mode() === "comment") return null
     const id = this.el.getAttribute("aria-controls")
     const el = id && document.getElementById(id)
     return el?.hasAttribute("data-composer-suggestions") ? el : null

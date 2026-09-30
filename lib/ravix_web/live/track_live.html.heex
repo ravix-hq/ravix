@@ -333,26 +333,37 @@
             </div>
           </div>
         </div>
-        <div :if={!@thread_draft[:selected?] && @queue != []} class="workspace-queue">
-          <div :for={item <- @queue}>
+        <%!-- RAV-94: each waiting prompt is one compact row above the
+          composer --- its state, its first lines, and why it waits --- with
+          its actions at the end, rather than a loose stack of each. --%>
+        <ol
+          :if={!@thread_draft[:selected?] && @queue != []}
+          class="workspace-queue"
+          aria-label="Queued prompts"
+        >
+          <li :for={item <- @queue} class="queue-item">
             <span class="chip">{queue_label(item.status)}</span>
-            <div :if={item.prompt} class="queue-prompt md">{queue_prompt_html(item.prompt)}</div>
-            <p
-              :if={
-                item.status == :queued and @track.setup_state != "ready" and
-                  is_nil(queue_feedback(item, @track.runtime || @project.runtime))
-              }
-              class="queue-starts"
-            >
-              Starts when setup is ready
-            </p>
-            <p
-              :if={queue_feedback(item, @track.runtime || @project.runtime)}
-              class="queue-feedback"
-            >
-              {queue_feedback(item, @track.runtime || @project.runtime)}
-            </p>
-            <span :if={item.error && item.status != :queued}>{item.error}</span>
+            <div class="queue-body">
+              <div :if={item.prompt} class="queue-prompt md">
+                {queue_prompt_html(item.prompt)}
+              </div>
+              <p
+                :if={
+                  item.status == :queued and @track.setup_state != "ready" and
+                    is_nil(queue_feedback(item, @track.runtime || @project.runtime))
+                }
+                class="queue-starts"
+              >
+                Starts when setup is ready
+              </p>
+              <p
+                :if={queue_feedback(item, @track.runtime || @project.runtime)}
+                class="queue-feedback"
+              >
+                {queue_feedback(item, @track.runtime || @project.runtime)}
+              </p>
+              <p :if={item.error && item.status != :queued} class="queue-error">{item.error}</p>
+            </div>
             <button
               :if={item.can_cancel}
               class="ghost"
@@ -371,8 +382,8 @@
             >
               Retry
             </button>
-          </div>
-        </div>
+          </li>
+        </ol>
         <%!-- The one thing a reader who is not looking should hear: a turn
           ended. Polite, so it waits for whatever is being read; visually
           hidden, because the transcript already shows it. --%>
@@ -496,6 +507,9 @@
             the agent, so the whole box says which one it is: its colour, its
             placeholder, its accessible name and the send button's. Images
             are for prompts; any already attached wait for Ask agent. --%>
+          <%!-- RAV-94: Ask agent / Comment switches in the browser the moment
+            it is pressed (the `Composer` hook), and the server's render
+            catches up; the textarea's `data-mode` is what the server said. --%>
           <form id="composer-form" phx-submit="send" phx-change="validate">
             <div
               class={["composer-box", @composer_mode == :comment && "commenting"]}
@@ -509,13 +523,6 @@
               >
                 <.icon name="person" size={12} />You have Read access. Ask an admin for Write to send prompts; you can still comment.
               </p>
-              <p
-                :if={@composer_mode == :comment}
-                id="composer-mode-hint"
-                class="composer-mode-hint"
-              >
-                <.icon name="person" size={12} />Comment — not sent to the agent
-              </p>
               <textarea
                 :if={@thread_draft[:selected?]}
                 id={"composer-draft-#{@thread_draft.id}"}
@@ -523,7 +530,7 @@
                 name="text"
                 rows="2"
                 phx-debounce="blur"
-                placeholder="Start a new thread. @mention files…"
+                placeholder="Start a new thread, @mention files"
                 aria-label="Message"
                 aria-autocomplete="list"
                 aria-controls="composer-suggestions"
@@ -541,7 +548,24 @@
                 name="text"
                 rows="2"
                 phx-debounce="blur"
-                placeholder={composer_placeholder(@composer_mode, @page)}
+                placeholder={
+                  composer_placeholder(
+                    @composer_mode,
+                    @page,
+                    turn_running?(@threads, @thread_states, @thread_id, @track)
+                  )
+                }
+                data-placeholder-ask={
+                  composer_placeholder(
+                    :ask,
+                    @page,
+                    turn_running?(@threads, @thread_states, @thread_id, @track)
+                  )
+                }
+                data-placeholder-comment={composer_placeholder(:comment, @page, false)}
+                data-ask-disabled={
+                  to_string(is_nil(@track.conversation_id) or @track.level == :read)
+                }
                 aria-label={if @composer_mode == :comment, do: "Comment", else: "Message"}
                 aria-describedby={
                   (@composer_mode == :comment && "composer-mode-hint") ||
@@ -665,6 +689,7 @@
                     aria-pressed={to_string(@composer_mode == :ask)}
                     phx-click="composer-mode"
                     phx-value-mode="ask"
+                    data-composer-mode="ask"
                   >
                     Ask agent
                   </button>
@@ -674,14 +699,25 @@
                     aria-pressed={to_string(@composer_mode == :comment)}
                     phx-click="composer-mode"
                     phx-value-mode="comment"
+                    data-composer-mode="comment"
                   >
                     Comment
                   </button>
                 </div>
+                <%!-- In the row, where the model is in Ask mode, so switching
+                  never grows the box. Drawn in both modes and shown by the
+                  box's `commenting` class, which the browser sets at once. --%>
+                <p
+                  :if={!@thread_draft[:selected?]}
+                  id="composer-mode-hint"
+                  class="composer-mode-hint"
+                >
+                  <.icon name="person" size={12} /><span>Comment — not sent to the agent</span>
+                </p>
                 <button
                   :if={@composer_mode == :ask}
                   type="button"
-                  class="ghost"
+                  class="ghost composer-ask-only composer-attach"
                   aria-label="Choose images"
                   phx-click={JS.dispatch("click", to: "##{@uploads.images.ref}")}
                 >
