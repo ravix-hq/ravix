@@ -700,12 +700,14 @@ defmodule RavixWeb.WorkspaceLiveTest do
     # The count is in the account menu, and a dot on the closed menu's
     # trigger says there is something in there to read.
     assert has_element?(view, "#account-menu #open-changes .badge")
-    assert has_element?(view, "#account-trigger #account-unseen", "new in What's new")
+    # The dot is drawn, not read: the trigger's name and its tooltip say
+    # what it flags (RAV-96).
+    assert has_element?(view, "#account-trigger #account-unseen[aria-hidden=true]")
     count = length(Accounts.unseen_changes(early))
 
     assert has_element?(
              view,
-             ~s|#account-trigger[aria-label="You, #{count} new in What's new"]|
+             ~s|#account-trigger[aria-label="You, #{count} new in What's new"][title="You · #{count} new in What's new"]|
            )
 
     view |> element("#open-changes") |> render_click()
@@ -713,6 +715,7 @@ defmodule RavixWeb.WorkspaceLiveTest do
     # Opening it is the acknowledgement: the count goes, and stays gone.
     refute has_element?(view, "#open-changes .badge")
     refute has_element?(view, "#account-unseen")
+    assert has_element?(view, ~s|#account-trigger[aria-label="You"][title="You"]|)
     assert Repo.get!(Ravix.Accounts.User, early.id).changes_seen_at
     {:ok, again, _} = live(log_in_user(conn, early), "/home")
     render_async(again)
@@ -1151,7 +1154,6 @@ defmodule RavixWeb.WorkspaceLiveTest do
     # One `MachineState` per row: the dot's class, its label and tooltip, and
     # the row's accessible name all say the same word.
     for {track, class, label, name, tooltip} <- [
-          {busy, "working", "Working", "Working", "Working: The agent is taking a turn."},
           {booting, "starting", "Starting", "Starting", "Starting: Setting up…"},
           {answered, "unread", "Unread reply", "Idle, Unread reply", "Unread reply · Idle"},
           {setup_broken, "error", "Error", "Error", "Error: The opening turn failed."},
@@ -1198,7 +1200,28 @@ defmodule RavixWeb.WorkspaceLiveTest do
 
     assert has_element?(view, "#{tab.(idle)} > .track-status[aria-hidden=true]")
     refute has_element?(view, "#{tab.(idle)} > .track-status > *")
-    assert has_element?(view, "#{tab.(busy)} > .track-status:not([aria-hidden]) > .dot.working")
+
+    # A working track spins in its age slot, which every row ends with, and
+    # draws no dot as well (RAV-96). The row's name still says Working.
+    for track <- tracks do
+      assert has_element?(view, "#{tab.(track)} > .track-meta:last-child")
+    end
+
+    assert has_element?(
+             view,
+             "#{tab.(busy)} > .track-meta > .track-spinner[role=img][aria-label=Working][title=\"Working: The agent is taking a turn.\"]"
+           )
+
+    refute has_element?(view, "#{tab.(busy)} .dot")
+    refute has_element?(view, "#{tab.(busy)} .track-age")
+
+    assert has_element?(
+             view,
+             "#{tab.(busy)}[data-label=\"#{Track.label(busy)}, created by @user, Working\"]"
+           )
+
+    refute has_element?(view, "#{tab.(idle)} .track-spinner")
+    assert has_element?(view, "#{tab.(idle)} > .track-meta > time.track-age")
     refute has_element?(view, ".project-tree-tracks .track-num")
   end
 

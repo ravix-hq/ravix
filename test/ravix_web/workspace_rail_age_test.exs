@@ -84,7 +84,12 @@ defmodule RavixWeb.WorkspaceRailAgeTest do
              "#track-age-#{prompted.id}[title='Last active #{RavixWeb.LocalTime.full(last, nil)}']"
            )
 
-    assert has_element?(view, "#{tab.(quiet)} .track-private", "Private")
+    # Private is a lock with a tooltip, and a word only a reader hears; the
+    # row's name says it too (RAV-96).
+    assert has_element?(view, "#{tab.(quiet)} .track-private[title^='Private'] svg")
+    assert has_element?(view, "#{tab.(quiet)} .track-private .sr-only", "Private")
+    assert has_element?(view, "#{tab.(quiet)}[data-label*=', private']")
+    refute has_element?(view, "#{tab.(prompted)}[data-label*=', private']")
     assert has_element?(view, "#{tab.(quiet)} #track-age-#{quiet.id}", "2d")
 
     # The link's name carries the age in words; the hook keeps it current

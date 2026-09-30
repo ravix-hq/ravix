@@ -2097,6 +2097,12 @@ defmodule RavixWeb.WorkspaceLive do
   defp open_dialog(socket, :changes), do: assign(socket, dialog: :changes)
   defp open_dialog(socket, :new_workspace), do: assign(socket, dialog: :new_workspace)
 
+  # What the gear's dot means, for its button's name and tooltip.
+  defp unseen_note(0, _separator), do: ""
+
+  defp unseen_note(count, separator),
+    do: "#{separator}#{count} new in What's new"
+
   defp unseen(socket) do
     changes = Accounts.unseen_changes(socket.assigns.current_user)
     assign(socket, changes: changes, changes_unseen: length(changes))
@@ -2432,6 +2438,7 @@ defmodule RavixWeb.WorkspaceLive do
     [
       Track.label(track),
       "created by @#{track.created_by_login}",
+      Map.get(track, :visibility) == :private && "private",
       track.origin.kind == :plan && "from a project plan",
       MachineState.label(tab_machine(track).state),
       (marker = tab_status(track)) in [:unread, :commented] && tab_status_label(marker)
@@ -2454,11 +2461,13 @@ defmodule RavixWeb.WorkspaceLive do
   end
 
   # A row's dot sits in a slot of its own width whether or not there is one,
-  # so every row's avatar and title start at the same x.
+  # so every row's avatar and title start at the same x. A working track's
+  # spinner is in its age slot instead (`meta_slot/1`), so it has no dot.
   attr :track, :map, required: true
 
   defp status_slot(assigns) do
-    assigns = assign(assigns, :status, tab_status(assigns.track))
+    assigns =
+      assign(assigns, :status, with(:working <- tab_status(assigns.track), do: nil))
 
     ~H"""
     <span class="track-status" aria-hidden={if is_nil(@status), do: "true"}>
@@ -2504,6 +2513,38 @@ defmodule RavixWeb.WorkspaceLive do
       datetime={DateTime.to_iso8601(@at)}
       title={"Last active " <> RavixWeb.LocalTime.full(@at, nil)}
     >{elem(ago(@at), 0)}</time>
+    """
+  end
+
+  # A private track's lock: an icon beside the title rather than a word that
+  # takes the title's room. The row's accessible name says "private".
+  defp private_mark(assigns) do
+    ~H"""
+    <span class="track-private" title="Private: only its creator and the people they invite">
+      <.icon name="lock" size={12} /><span class="sr-only">Private</span>
+    </span>
+    """
+  end
+
+  # A row's end (RAV-96): its age, or a spinner while the agent is taking a
+  # turn. The slot has one width either way, so titles end at the same x.
+  attr :track, :map, required: true
+
+  defp meta_slot(assigns) do
+    assigns = assign(assigns, :working, tab_status(assigns.track) == :working)
+
+    ~H"""
+    <span class="track-meta">
+      <span
+        :if={@working}
+        id={"track-working-#{@track.id}"}
+        class="loading-spinner track-spinner"
+        role="img"
+        aria-label="Working"
+        title={tab_status_title(@track)}
+      ></span>
+      <.age :if={!@working} id={"track-age-#{@track.id}"} at={@track.activity_at} />
+    </span>
     """
   end
 
