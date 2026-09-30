@@ -509,8 +509,8 @@ defmodule Ravix.Workspaces.RepositoriesTest do
       assert FakeTransport.calls(client) == []
 
       # Nor is it offered.
-      assert {:ok, choices} = Ravix.Projects.repository_choices(ctx.owner, ctx.project.id)
-      assert Enum.sort(choices) == ["Acme/API"]
+      assert {:ok, [%{repo: "Acme/API"}]} =
+               Ravix.Projects.repository_choices(ctx.owner, ctx.project.id)
     end
 
     test "the project's owner must still be able to create projects in the workspace", ctx do

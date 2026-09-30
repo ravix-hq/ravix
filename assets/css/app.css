@@ -2180,6 +2180,10 @@ section.first-prompt#project-start { align-self: center; padding: 32px 24px; }
 .secret-pending { font-style: italic; }
 .machine-review .machine-changes { margin: 0 0 16px; padding-left: 18px; line-height: 1.7; }
 .machine-review { width: min(520px, 100%); }
+/* RAV-76: Change repository's dialog; its list is the repo picker's. */
+.dialog.change-repository { width: min(560px, 100%); }
+.dialog.change-repository h3 { margin: 16px 0 6px; font-size: 13px; }
+.dialog.change-repository .repo-picker-list { max-height: min(30vh, 220px); }
 .access-page .access-summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; margin: 0 0 20px; font-size: 13px; }
 .access-page .access-summary li { padding: 12px 14px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); }
 
