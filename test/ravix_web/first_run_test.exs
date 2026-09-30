@@ -84,7 +84,7 @@ defmodule RavixWeb.FirstRunTest do
       repos([%{full_name: "acme/app", installation_id: 42}])
       view = home(conn, user())
 
-      assert has_element?(view, "#home-start h1", "Start your first track")
+      assert has_element?(view, "#home-title", "Start your first track")
       refute has_element?(view, ".home-recent")
       # The only repository GitHub shows is already chosen, and named.
       assert has_element?(
@@ -192,14 +192,16 @@ defmodule RavixWeb.FirstRunTest do
       assert Repo.all(PromptQueue.Item) == []
     end
 
-    test "somebody with a project gets their recent projects instead", %{conn: conn} do
+    test "somebody with a project gets their recent tracks instead", %{conn: conn} do
       user = user()
       project = insert_project(user: user, name: "Busy")
+      track = insert_track(project: project, created_by_login: user.login)
       reject(&Projects.repos/2)
       view = home(conn, user)
 
       refute has_element?(view, "#home-start")
-      assert has_element?(view, ".home-recent a[href='/p/#{project.id}']", "Busy")
+      assert has_element?(view, "#home-title", "Home")
+      assert has_element?(view, ".home-recent a[href='/p/#{project.id}/t/#{track.id}']", "Busy")
     end
   end
 

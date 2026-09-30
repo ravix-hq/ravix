@@ -231,9 +231,18 @@ defmodule RavixWeb.Live.NewProject do
           session_hash={@session_hash}
         />
       </div>
-      <.loading_status :if={@repos_loading and @project_mode != "scratch"}>
-        Loading GitHub repositories…
-      </.loading_status>
+      <%!-- The GitHub account select's place, held while the repositories
+        load, so the fields under it do not move when it arrives (RAV-100). --%>
+      <div
+        :if={@repos_loading and @project_mode != "scratch"}
+        id="project-repos-loading"
+        class="field repo-field-skeleton"
+        role="status"
+      >
+        <span class="sr-only">Loading GitHub repositories…</span>
+        <span class="skeleton skeleton-label" aria-hidden="true"></span>
+        <span class="skeleton skeleton-control" aria-hidden="true"></span>
+      </div>
       <form
         :if={@project_mode != "scratch" and @installations not in [nil, []]}
         id="installation-form"

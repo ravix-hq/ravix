@@ -398,6 +398,14 @@ textarea:focus, select:focus {
   box-shadow: 0 0 0 1px var(--accent-line);
 }
 input[type=checkbox], input[type=radio] { flex: none; }
+/* A form's select is drawn like the inputs beside it (RAV-100): their 34px,
+   and a chevron in the theme's colour rather than the platform's arrow. */
+.field select:not([multiple]) {
+  appearance: none; height: 34px; padding-right: 28px; line-height: 20px;
+  background-image: linear-gradient(45deg, transparent 50%, var(--dim) 50%), linear-gradient(135deg, var(--dim) 50%, transparent 50%);
+  background-position: calc(100% - 15px) 50%, calc(100% - 10px) 50%;
+  background-size: 5px 5px; background-repeat: no-repeat;
+}
 textarea { resize: vertical; font-family: inherit; }
 textarea.mono { font-family: var(--mono); }
 
@@ -572,10 +580,15 @@ html[data-yard="closed"] .workspace-trigger > :not(.workspace-mark) { display: n
 html[data-yard="closed"] .workspace-trigger-skeleton { flex: none; width: 28px; }
 .rail-row-skeleton { height: 14px; margin: 10px 8px; }
 .rail-row-skeleton:nth-child(odd) { width: 62%; }
+/* An inbox card's skeleton is a card's shape: the chip, project and age
+   row, the title, one line of detail (RAV-100). */
 .inbox-item-skeleton { pointer-events: none; }
-.inbox-item-skeleton .skeleton-chip { width: 84px; height: 16px; }
-.inbox-item-skeleton .skeleton-line { width: 70%; height: 12px; }
-.inbox-item-skeleton .skeleton-line.short { width: 40%; }
+.inbox-item-skeleton .row { gap: 8px; min-height: 20px; }
+.inbox-item-skeleton .skeleton-chip { width: 84px; height: 18px; }
+.inbox-item-skeleton .skeleton-project { width: 72px; height: 12px; }
+.inbox-item-skeleton .skeleton-age { width: 48px; height: 10px; }
+.inbox-item-skeleton .skeleton-title { width: 36%; height: 14px; margin-block: 3px; }
+.inbox-item-skeleton .skeleton-line { width: 58%; height: 12px; margin-block: 4px; }
 @keyframes skeleton-pulse { 50% { opacity: .55; } }
 @media (prefers-reduced-motion: reduce) { .skeleton { animation: none; } }
 .workspace-page { max-width: 720px; margin: 0 auto; padding: 24px 16px 48px; display: grid; gap: 16px; }
@@ -625,6 +638,8 @@ html[data-yard="closed"] .workspace-trigger-skeleton { flex: none; width: 28px; 
 .yard-item.on { background: var(--surface-active); color: var(--ink); }
 .yard-item .ico { flex: none; width: 15px; display: grid; place-items: center; color: var(--dimmer); }
 .yard-item.on .ico, .yard-item:hover .ico { color: var(--dim); }
+/* Pressed, until the server answers the click: the row says it heard. */
+.yard-item.phx-click-loading { background: var(--surface-active); color: var(--ink); cursor: progress; }
 .badge { display: inline-grid; place-items: center; min-width: 21px; height: 23px; padding: 0 6px; border: 1px solid var(--line); border-radius: 999px; color: var(--dim); background: var(--surface); font-size: 11px; font-weight: 400; }
 
 /* In the rail a count sits inside its row, never taller than it (RAV-96). */
@@ -1522,35 +1537,32 @@ html[data-yard="closed"] .workspace-trigger-skeleton { flex: none; width: 28px; 
 }
 .hero-sub { color: var(--dim); text-align: left; max-width: 48ch; margin: -8px 0 0; line-height: 1.55; }
 
-.workspace-home { min-height: 0; flex: 1; overflow: auto; }
-.workspace-home.centred { min-height: 0; height: 100%; align-items: start; justify-content: start; padding: 40px 36px; }
-.workspace-home .hero { margin: 0; width: min(520px, 100%); max-width: 520px; align-items: flex-start; gap: 14px; }
-.workspace-home h1,
-.workspace-home .wordmark { font-size: 16px !important; font-weight: 500; letter-spacing: -0.02em; }
-.workspace-home .hero-sub { text-align: left; max-width: 52ch; margin: 0; }
-.home-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; width: 100%; }
-.home-action {
-  display: inline-flex; flex-direction: row; align-items: center; gap: 8px; width: auto;
-  padding: 7px 14px; min-height: 0; text-align: left; border-radius: 8px;
+/* Home's recent tracks (RAV-100): who started each and when it last moved,
+   so two tracks of one repository read as two pieces of work. */
+.home-recent h2 { margin: 0 0 8px; color: var(--dim); font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .08em; }
+.recent-list { list-style: none; margin: 0; padding: 0; border: 1px solid var(--line); border-radius: var(--radius-lg); background: var(--panel); overflow: hidden; }
+.recent-list li + li, .recent-row-skeleton + .recent-row-skeleton { border-top: 1px solid var(--line); }
+.recent-row {
+  display: grid; grid-template-columns: 22px minmax(0, 1fr) minmax(0, 140px) 40px; align-items: center; gap: 12px;
+  padding: 10px 14px; color: var(--ink); text-decoration: none;
 }
-button.primary.home-action {
-  background: var(--ink); border-color: var(--ink); color: var(--bg);
-}
-button.primary.home-action:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--ink) 88%, var(--bg)); border-color: var(--ink); color: var(--bg);
-}
-.home-action:hover:not(:disabled) { background: var(--surface-hover); border-color: var(--line); }
-button.primary.home-action .ico { color: inherit; }
-.home-action .ico { flex: none; color: var(--dimmer); margin-top: 0; }
-.home-action span { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-.home-action strong { font-size: 13px; font-weight: 500; }
-.home-action small { color: var(--dimmer); font-size: 12px; line-height: 1.4; }
-.home-action:disabled { opacity: 0.55; }
-.home-recent { width: 100%; }
-.home-recent h2 { padding: 0 2px 8px; color: var(--dim); font-size: 10px; text-transform: uppercase; letter-spacing: 0.1em; }
-.home-recent .pick-row { display: grid; grid-template-columns: 18px minmax(0, 1fr) minmax(0, 1fr); padding: 8px 10px; border: 0; border-radius: 8px; }
-.home-recent .project-label { min-width: 0; white-space: normal; overflow-wrap: anywhere; }
-.home-recent .pick-row .meta { min-width: 0; margin-left: 0; overflow-wrap: anywhere; text-align: left; }
+.recent-row:hover { background: var(--surface-hover); color: var(--ink); text-decoration: none; }
+.recent-row:focus-visible { outline-offset: -2px; }
+.recent-main { display: grid; gap: 2px; min-width: 0; }
+.recent-main strong { font-weight: 500; }
+.recent-meta { color: var(--dim); font-size: 12px; }
+.recent-meta .mono { color: var(--dimmer); }
+.recent-owner { color: var(--dim); font-size: 12px; }
+.recent-row .track-age { justify-self: end; color: var(--dimmer); font-size: 11.5px; }
+/* The New project dialog: the agent line sits under its cards, not a
+   paragraph's margin away from them (RAV-100). */
+#project-runtime .agent-choices { margin-bottom: 0; }
+#project-runtime > .hint { margin: 4px 0 0; }
+.repo-field-skeleton .skeleton-label { width: 96px; height: 12px; margin-block: 3px 2px; }
+.repo-field-skeleton .skeleton-control { height: 34px; }
+.recent-row-skeleton { display: flex; align-items: center; gap: 12px; padding: 14px; }
+.recent-row-skeleton .skeleton-avatar { width: 22px; height: 22px; border-radius: 999px; }
+.recent-row-skeleton .skeleton-line { width: 40%; height: 12px; }
 
 .signin-page { position: relative; }
 .signin-card {
@@ -1626,7 +1638,6 @@ section.first-prompt#project-start { align-self: center; padding: 32px 24px; }
 .first-prompt-recent a { display: flex; align-items: baseline; gap: 10px; padding: 9px 12px; text-decoration: none; }
 .first-prompt-recent a:hover { background: var(--surface-hover); }
 .first-prompt-recent strong { font-weight: 500; }
-.workspace-home .first-prompt h1 { margin: 0; }
 .welcome-quick-start { margin-top: 16px; }
 .first-prompt-alt { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 0; }
 
@@ -1794,9 +1805,12 @@ section.first-prompt#project-start { align-self: center; padding: 32px 24px; }
 
 /* ── dialogs ───────────────────────────────────────────────────────────── */
 
+/* A dialog's top is pinned where it opened, so content arriving after it
+   opens (a repository list, an error) grows it downward and moves nothing
+   already read (RAV-100). */
 .scrim {
   position: fixed; inset: 0; z-index: 40; background: var(--scrim);
-  display: grid; place-items: center; padding: 24px;
+  display: grid; place-items: start center; padding: max(24px, 10vh) 24px 24px;
   animation: fade 120ms ease;
 }
 /* Set by the dialog's close, ahead of the server removing it. */
@@ -1817,7 +1831,6 @@ section.first-prompt#project-start { align-self: center; padding: 32px 24px; }
   color: var(--ink); text-align: left;
 }
 .pick-row:hover, .pick-row.on { background: var(--surface-hover); border-color: transparent; border-bottom-color: var(--line); }
-.home-recent .pick-row:hover, .home-recent .pick-row.on { border: 0; border-radius: 8px; background: var(--surface-hover); }
 .pick-row .ico { flex: none; color: var(--dimmer); }
 .pick-row .meta { margin-left: auto; display: flex; align-items: center; gap: 8px; color: var(--dimmer); font-size: 11.5px; }
 
@@ -1892,13 +1905,36 @@ section.first-prompt#project-start { align-self: center; padding: 32px 24px; }
 .field .hint { color: var(--dimmer); font-size: 11.5px; line-height: 1.55; }
 .keyline { display: flex; align-items: center; gap: 8px; padding: 6px 0; border-bottom: 1px solid var(--line); font-family: var(--mono); font-size: 12px; }
 
+/* ── stage pages (RAV-100) ─────────────────────────────────────────────────
+   Home, Inbox, Schedules and Not found share one container
+   (`CoreComponents.stage_page/1`): one max-width, one left edge, one
+   heading, whichever of them is open. */
+
+/* A live component's root around a stage page, passing the height on. */
+.stage-host { display: flex; flex-direction: column; flex: 1; min-height: 0; min-width: 0; }
+.stage-page { flex: 1; min-height: 0; overflow-y: auto; width: 100%; padding: 34px 32px 48px; }
+.stage-page-inner { max-width: 960px; margin-inline: auto; }
+.stage-page-header { display: flex; align-items: flex-start; gap: 16px; margin-bottom: 24px; }
+.stage-page-heading { flex: 1; min-width: 0; display: grid; gap: 6px; }
+.stage-page-header h1 { margin: 0; font-size: 23px; font-weight: 600; line-height: 1.25; display: flex; align-items: center; gap: 8px; }
+.stage-page-sub { color: var(--dim); line-height: 1.55; }
+.stage-page-actions { display: flex; align-items: center; gap: 8px; flex: none; }
+.page-more { margin-top: 4px; }
+.page-more summary { width: fit-content; cursor: pointer; color: var(--accent-ink); font-size: 12.5px; }
+.page-more p { margin: 8px 0 0; max-width: 72ch; }
+.page-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.page-actions > a.button {
+  display: inline-flex; align-items: center; gap: 6px; padding: 5px 10px; border: 1px solid var(--line);
+  border-radius: var(--radius); text-decoration: none;
+}
+.page-actions > a.button.primary { background: var(--accent-soft); border-color: var(--accent-line); color: var(--accent-ink); }
+.page-actions > a.button.primary:hover { background: color-mix(in srgb, var(--accent-soft) 80%, var(--accent)); }
+.page-actions > button { display: inline-flex; align-items: center; gap: 6px; }
+
 /* ── the inbox: cross-project attention feed ───────────────────────────── */
 
-.inbox { overflow-y: auto; padding: 34px 32px; width: 100%; }
-.inbox > header, .inbox-list, .inbox-empty { max-width: 900px; margin-inline: auto; }
-.inbox h1 { font-size: 23px; margin: 0; font-weight: 600; display: flex; align-items: center; gap: 8px; }
-.inbox header p, .inbox-empty p { color: var(--dim); }
-.inbox-list { list-style: none; padding: 0; margin: 28px auto 0; }
+.inbox-empty p { color: var(--dim); }
+.inbox-list { list-style: none; padding: 0; margin: 0; }
 .inbox-item {
   display: flex; flex-direction: column; gap: 12px; padding: 18px; margin: 0 0 12px;
   border: 1px solid var(--line); border-radius: var(--radius-lg); background: var(--panel);
@@ -1915,7 +1951,7 @@ section.first-prompt#project-start { align-self: center; padding: 32px 24px; }
   display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2;
   overflow: hidden; overflow-wrap: anywhere;
 }
-.inbox-empty { padding: 48px 0; }
+.inbox-empty { padding: 24px 0; }
 
 /* ── toasts ────────────────────────────────────────────────────────────── */
 
@@ -2081,14 +2117,9 @@ section.first-prompt#project-start { align-self: center; padding: 32px 24px; }
      moves under the card instead, where the card has left room for it. */
   .signin-page { padding-bottom: 96px; }
   .signin-page .corner-theme { position: absolute; bottom: 16px; left: 24px; }
-  .workspace-home,
-  .workspace-home.centred { padding: 28px 20px; }
-  .workspace-home .hero { gap: 16px; }
-  .workspace-home .hero-sub { text-align: left; }
-  .home-action { min-height: 0; flex-direction: row; gap: 8px; }
-  .home-recent .pick-row { grid-template-columns: 18px minmax(0, 1fr); padding: 10px 2px; row-gap: 4px; }
-  .home-recent .pick-row .meta { grid-column: 2; }
-  .inbox { padding: 22px 18px; }
+  .stage-page { padding: 22px 18px 40px; }
+  .recent-row { grid-template-columns: 22px minmax(0, 1fr) 40px; }
+  .recent-owner { display: none; }
   .inbox-item .row { flex-wrap: wrap; }
   .inbox-item time { width: 100%; }
   .landing { padding: 0 20px; }
@@ -2346,12 +2377,13 @@ body:has(.phx-error) #request-progress { display: none; }
 .dot.commented { background: var(--warn); }
 
 /* Recurring project prompts. */
-.schedules-page { overflow-y: auto; }
-.schedules-page > header, .schedules-layout { max-width: 1100px; margin-inline: auto; }
-.schedules-layout { margin-top: 24px; display: grid; grid-template-columns: minmax(260px, 380px) minmax(280px, 1fr); gap: 28px; align-items: start; }
+.schedules-layout { display: grid; grid-template-columns: minmax(260px, 380px) minmax(280px, 1fr); gap: 28px; align-items: start; }
 .schedule-editor, .schedule-card { border: 1px solid var(--line); border-radius: var(--radius); padding: 20px; background: var(--panel); }
 .schedule-editor h2, .schedule-card h2 { font-size: 16px; margin: 0 0 12px; overflow-wrap: anywhere; }
-.schedule-editor form { display: grid; gap: 14px; }
+.schedule-editor form { display: grid; gap: 0; }
+.schedule-hint { margin: 0 0 16px; color: var(--dimmer); font-size: 12px; line-height: 1.55; }
+.schedules-empty { padding: 8px; }
+.schedules-empty .empty { min-height: 0; padding: 32px 16px; }
 .schedule-list { display: grid; gap: 16px; min-width: 0; }
 .schedule-card p { margin: 8px 0; }
 .schedule-prompt { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 180px; overflow-y: auto; }
