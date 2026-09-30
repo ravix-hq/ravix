@@ -65,13 +65,20 @@ defmodule RavixWeb.TrackLiveTest do
   end
 
   test "dedicated lifecycle stages and close warnings stay visible", ctx do
-    refute has_element?(ctx.view, "#track-machine-scope")
+    # Shared or not is the header's to say, flag or no flag: the dock no
+    # longer carries a line about it.
+    assert has_element?(
+             ctx.view,
+             ~s(#track-machine-scope[title="Used by all of this project's tracks"]),
+             "Shared machine"
+           )
+
     stub(Ravix.Config, :dedicated_opens_enabled?, fn _ -> true end)
     {:ok, parent, _} = live(ctx.conn, "/p/#{ctx.project.id}/t/#{ctx.track.id}")
     view = find_live_child(parent, "track-host")
     settle(view)
     ctx = %{ctx | view: view, parent: parent}
-    assert has_element?(ctx.view, "#track-machine-scope", "Shared project machine")
+    assert has_element?(ctx.view, "#track-machine-scope", "Shared machine")
 
     for {stage, state, text} <- [
           {"creating", :provisioning, "Creating this track's machine…"},
@@ -1620,6 +1627,19 @@ defmodule RavixWeb.TrackLiveTest do
   end
 
   describe "the machine state chip" do
+    # A probe that finds the machine running, so the chip says only what the
+    # row does; what a probe adds has its own tests.
+    setup ctx do
+      stub(Terminal, :status, fn _, _, _ ->
+        {:ok, %Terminal.Status{available: true, why: nil, cwd: ctx.track.workdir}}
+      end)
+
+      {:ok, parent, _} = live(ctx.conn, "/p/#{ctx.project.id}/t/#{ctx.track.id}")
+      view = find_live_child(parent, "track-host")
+      settle(view)
+      %{parent: parent, view: view}
+    end
+
     # The row as the page's next detail read will present it, then the hub
     # message that makes the page read it again.
     defp machine_row(ctx, attrs) do
@@ -1730,7 +1750,7 @@ defmodule RavixWeb.TrackLiveTest do
       chip(ctx.view, "Idle", nil)
     end
 
-    test "a machine the probe finds running is not called asleep in the dock", ctx do
+    test "a machine the probe finds running is not called asleep in the header", ctx do
       stub(Terminal, :status, fn _, _, _ ->
         {:ok, %Terminal.Status{available: true, why: nil, cwd: ctx.track.workdir}}
       end)
@@ -1745,8 +1765,8 @@ defmodule RavixWeb.TrackLiveTest do
       {:ok, parent, _} = live(ctx.conn, "/p/#{ctx.project.id}/t/#{ctx.track.id}")
       view = find_live_child(parent, "track-host")
       settle(view)
-      assert has_element?(view, "#track-machine-status", "Idle.")
-      refute has_element?(view, "#track-machine-status", "Asleep")
+      chip(view, "Idle", nil)
+      refute has_element?(view, "#track-machine-state", "Asleep")
     end
 
     test "a sleep or wake is re-read from the row and the memo, not Fountain", ctx do
@@ -1775,7 +1795,7 @@ defmodule RavixWeb.TrackLiveTest do
       refute_received {:get, true}
     end
 
-    test "the dock's status line uses the same words", ctx do
+    test "an unanswered probe on an asleep machine leaves the header's words alone", ctx do
       stub(Terminal, :status, fn _, _, _ ->
         {:ok, %Terminal.Status{available: false, why: :no_sprite, cwd: ctx.track.workdir}}
       end)
@@ -1793,8 +1813,9 @@ defmodule RavixWeb.TrackLiveTest do
       view = find_live_child(parent, "track-host")
       settle(view)
       chip(view, "Asleep", "Your next message wakes it.")
-      assert has_element?(view, "#track-machine-status", "Asleep. Your next message wakes it.")
+      refute has_element?(view, "#track-machine-status")
       refute render(view) =~ "asleep or unreachable"
+      refute render(view) =~ "did not answer just now"
     end
   end
 
@@ -1835,9 +1856,10 @@ defmodule RavixWeb.TrackLiveTest do
         assert has_element?(ctx.view, "#panel-asleep button#panel-wake:not([disabled])", "Wake")
         refute has_element?(ctx.view, ".workspace-panel [role=alert]")
 
-        # The dock names the state and leaves the rest to the panel.
-        assert ctx.view |> element("#track-machine-status") |> render() =~ ~r/>\s*Asleep\.\s*</
-        refute has_element?(ctx.view, "#track-machine-status", "Your next message wakes it")
+        # The header names the state and the dock says nothing of it.
+        chip(ctx.view, "Asleep", "Your next message wakes it.")
+        refute has_element?(ctx.view, "#track-machine-status")
+        refute has_element?(ctx.view, "#track-machine-label")
         refute render(ctx.view) =~ "Files load when it wakes"
       end
     end
@@ -1853,7 +1875,7 @@ defmodule RavixWeb.TrackLiveTest do
       assert has_element?(ctx.view, "#git-asleep #panel-wake", "Wake")
       assert has_element?(ctx.view, "#git-pull", "Pull request #209")
       assert has_element?(ctx.view, "#checks-empty h3", "No checks yet")
-      assert ctx.view |> element("#track-machine-status") |> render() =~ ~r/>\s*Asleep\.\s*</
+      assert has_element?(ctx.view, "#track-machine-state", "Asleep")
     end
 
     test "Wake calls the wake path and the tab is read again", ctx do
@@ -1942,7 +1964,7 @@ defmodule RavixWeb.TrackLiveTest do
       # The banner is the live region for these words; the panel does not repeat them aloud.
       refute has_element?(ctx.view, "#panel-setup [role=status]")
       refute has_element?(ctx.view, "#panel-wake")
-      assert ctx.view |> element("#track-machine-status") |> render() =~ ~r/>\s*Starting\.\s*</
+      assert has_element?(ctx.view, "#track-machine-state", "Starting")
     end
 
     test "a track with nothing changed and nothing checked says so in one line each", ctx do
@@ -3948,13 +3970,15 @@ defmodule RavixWeb.TrackLiveTest do
     assert render(ctx.view) =~ "File content is truncated"
   end
 
-  for {layout, label} <- [
-        shared: "Shared project machine (used by all of this project's tracks)",
-        dedicated: "This track's machine"
+  for {layout, scope, label} <- [
+        {:shared, "Shared machine",
+         "Shared project machine (used by all of this project's tracks)"},
+        {:dedicated, "Own machine", "This track's machine"}
       ] do
     @layout layout
+    @machine_scope scope
     @machine_label label
-    test "#{layout} machine ownership is visible in the dock, terminal and Vitals", ctx do
+    test "#{layout} machine ownership is visible in the header, terminal and Vitals", ctx do
       Repo.update!(
         Ecto.Changeset.change(ctx.track, sandbox_layout: @layout, opened_at: DateTime.utc_now())
       )
@@ -3970,8 +3994,12 @@ defmodule RavixWeb.TrackLiveTest do
       {:ok, parent, _} = live(ctx.conn, "/p/#{ctx.project.id}/t/#{ctx.track.id}")
       view = find_live_child(parent, "track-host")
       render_async(view)
-      assert has_element?(view, "#track-machine-label", @machine_label)
-      assert has_element?(view, "#track-machine-status", "Idle.")
+      assert has_element?(view, "#track-machine-scope", @machine_scope)
+      chip(view, "Idle", nil)
+      # The dock is its tab strip: no standing line above it.
+      refute has_element?(view, "#track-machine-label")
+      refute has_element?(view, "#track-machine-status")
+      refute has_element?(view, ".machine-dock-host > [role=status]")
       view |> element("button[phx-click=dock][phx-value-name=terminal]") |> render_click()
       assert has_element?(view, "#terminal-machine-label", @machine_label)
       view |> element("button[phx-click=dock][phx-value-name=vitals]") |> render_click()
@@ -3985,8 +4013,8 @@ defmodule RavixWeb.TrackLiveTest do
         no_machine: "No machine is available yet.",
         no_token:
           "Machine status is unavailable because the machine connection is not configured.",
-        no_sprite: "Idle. The machine did not answer just now; your next message wakes it.",
-        unreachable: "Idle. The machine did not answer just now; your next message wakes it.",
+        no_sprite: "The machine did not answer just now; your next message wakes it.",
+        unreachable: "The machine did not answer just now; your next message wakes it.",
         error: "Machine status is unavailable. Try again later."
       ] do
     @status_reason reason
@@ -4004,7 +4032,7 @@ defmodule RavixWeb.TrackLiveTest do
       {:ok, parent, _} = live(ctx.conn, "/p/#{ctx.project.id}/t/#{ctx.track.id}")
       view = find_live_child(parent, "track-host")
       render_async(view)
-      assert has_element?(view, "#track-machine-status", @status_sentence)
+      chip(view, "Idle", @status_sentence)
     end
   end
 
@@ -4041,7 +4069,7 @@ defmodule RavixWeb.TrackLiveTest do
     refute has_element?(ctx.view, "input[data-terminal-input][disabled]")
   end
 
-  test "the machine status says a shared track runs on the whole project's machine", ctx do
+  test "the header says a shared track runs on the whole project's machine", ctx do
     stub(Ravix.Terminal, :status, fn _, _, _ ->
       {:ok, %Ravix.Terminal.Status{available: true, why: nil, cwd: ctx.track.workdir}}
     end)
@@ -4055,8 +4083,8 @@ defmodule RavixWeb.TrackLiveTest do
 
     assert has_element?(
              view,
-             "#track-machine-label",
-             "Shared project machine (used by all of this project's tracks)"
+             ~s(#track-machine-scope[title="Used by all of this project's tracks"]),
+             "Shared machine"
            )
   end
 

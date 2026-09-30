@@ -189,6 +189,10 @@ defmodule RavixWeb.TrackLive do
         # Whether this person still reaches this track, and when that has to
         # be asked again. See `guard/2`.
         track_guard: nil,
+        # What the dock's passive probe last found for this track's machine
+        # (`Ravix.Terminal.status/3`), with the sleep the row recorded when it
+        # answered, or nil before it does. See `probed/2`.
+        machine_probe: nil,
         setup_now: DateTime.utc_now()
       )
 
@@ -867,6 +871,17 @@ defmodule RavixWeb.TrackLive do
   # one stack. See `RavixWeb.Live.Result.flash/3`.
   def handle_info({:flash, kind, message}, socket),
     do: {:noreply, flash(socket, kind, message)}
+
+  # The dock's probe, sent from `RavixWeb.Live.MachineDock` in this same
+  # process. One for a track this page has since left is dropped.
+  def handle_info({:machine_probe, track_id, probe}, socket) do
+    if track_id == socket.assigns.track_id do
+      slept = socket.assigns.track && socket.assigns.track.sandbox_suspended_at
+      {:noreply, assign(socket, machine_probe: probe && {probe, slept})}
+    else
+      {:noreply, socket}
+    end
+  end
 
   def handle_info({:hub, %Event{} = event}, socket) do
     if Event.concerns?(event, socket.assigns.track_id) do
@@ -1713,6 +1728,7 @@ defmodule RavixWeb.TrackLive do
       project_id: project.id,
       track: track,
       setup_now: DateTime.utc_now(),
+      machine_probe: nil,
       project: project,
       header: nil,
       assigned_plan: %{items: [], plan: nil},
@@ -1921,7 +1937,10 @@ defmodule RavixWeb.TrackLive do
       "Runs on @#{project.owner_login}'s #{RavixWeb.AgentName.label(track.runtime || project.runtime)}"
 
   defp machine_scope(%{sandbox_layout: :dedicated}), do: "Own machine"
-  defp machine_scope(_track), do: "Shared project machine"
+  defp machine_scope(_track), do: "Shared machine"
+
+  defp machine_scope_title(%{sandbox_layout: :dedicated}), do: "This track's own machine"
+  defp machine_scope_title(_track), do: "Used by all of this project's tracks"
 
   # Whether a header crumb is short enough to show whole. A longer one may
   # shrink, but only to its floor in app.css; a shorter one never shrinks,
@@ -2949,10 +2968,48 @@ defmodule RavixWeb.TrackLive do
     MachineState.of(track, running: running, now: now)
   end
 
+  # The header chip's state, corrected and qualified by what the dock's probe
+  # knows that the track row does not: that the machine is in fact running
+  # (the row's Asleep is cleared on the way --- unless the row has recorded
+  # a sleep since the probe answered), or, for a machine the row can
+  # only call Idle, that there is no machine yet, that this deployment cannot
+  # reach machines at all, or that the machine did not answer. Every other
+  # state already says what it is doing, and the probe does not add to it.
+  defp probed(machine, nil, _track), do: machine
+
+  defp probed(%{state: :asleep} = machine, {%{available: true}, slept}, %{
+         sandbox_suspended_at: slept
+       }),
+       do: %{machine | state: :idle, detail: nil}
+
+  defp probed(%{state: :idle} = machine, {probe, _slept}, _track) do
+    case probe_note(probe) do
+      nil -> machine
+      note -> note(machine, note)
+    end
+  end
+
+  defp probed(machine, _probe, _track), do: machine
+
+  defp probe_note(%{why: :no_machine}), do: "No machine is available yet."
+
+  defp probe_note(%{why: :no_token}),
+    do: "Machine status is unavailable because the machine connection is not configured."
+
+  defp probe_note(%{why: why}) when why in [:no_sprite, :unreachable],
+    do: "The machine did not answer just now; your next message wakes it."
+
+  defp probe_note(:unavailable), do: "Machine status is unavailable. Try again later."
+  defp probe_note(_probe), do: nil
+
+  defp note(%{detail: nil} = machine, note), do: %{machine | detail: note}
+  defp note(%{detail: detail} = machine, note), do: %{machine | detail: detail <> " " <> note}
+
   attr :machine, :map, required: true
 
-  # The header's state chip. Only the word is a live region: the detail can
-  # tick (a retry countdown), so it describes the chip rather than announcing.
+  # The header's state chip, and the page's one live region for the machine's
+  # state. Only the word is announced: the detail can tick (a retry
+  # countdown), so it describes the chip rather than announcing.
   defp machine_chip(assigns) do
     ~H"""
     <span
