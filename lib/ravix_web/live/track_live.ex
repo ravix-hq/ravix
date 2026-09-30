@@ -63,7 +63,6 @@ defmodule RavixWeb.TrackLive do
   alias Ravix.GitHub.ChecksReport
   alias Ravix.{Hub, Previews, PromptQueue, SessionConfig, Terminal, Tracks}
   alias Ravix.Hub.Event
-  alias Ravix.PromptQueue.Recovery
   alias Ravix.Tracks.{AgentFailure, Diff, Files, Follower, MachineState}
   alias Ravix.Tracks.Transcript
   alias Ravix.Tracks.Transcript.Block, as: TranscriptBlock
@@ -73,12 +72,12 @@ defmodule RavixWeb.TrackLive do
   alias RavixWeb.Live.Form
   alias RavixWeb.Live.Guard
   alias RavixWeb.Live.MachineDock
+  alias RavixWeb.Live.ModelMenu
   alias RavixWeb.Live.Panel
   alias RavixWeb.Live.Params
   alias RavixWeb.Live.ThreadConnect
   alias RavixWeb.Live.ToolCall
   alias RavixWeb.Markdown
-  alias RavixWeb.ModelName
 
   @impl true
   def mount(_params, session, socket) do
@@ -189,6 +188,10 @@ defmodule RavixWeb.TrackLive do
         # Whether this person still reaches this track, and when that has to
         # be asked again. See `guard/2`.
         track_guard: nil,
+        # What the dock's passive probe last found for this track's machine
+        # (`Ravix.Terminal.status/3`), with the sleep the row recorded when it
+        # answered, or nil before it does. See `probed/2`.
+        machine_probe: nil,
         setup_now: DateTime.utc_now()
       )
 
@@ -867,6 +870,17 @@ defmodule RavixWeb.TrackLive do
   # one stack. See `RavixWeb.Live.Result.flash/3`.
   def handle_info({:flash, kind, message}, socket),
     do: {:noreply, flash(socket, kind, message)}
+
+  # The dock's probe, sent from `RavixWeb.Live.MachineDock` in this same
+  # process. One for a track this page has since left is dropped.
+  def handle_info({:machine_probe, track_id, probe}, socket) do
+    if track_id == socket.assigns.track_id do
+      slept = socket.assigns.track && socket.assigns.track.sandbox_suspended_at
+      {:noreply, assign(socket, machine_probe: probe && {probe, slept})}
+    else
+      {:noreply, socket}
+    end
+  end
 
   def handle_info({:hub, %Event{} = event}, socket) do
     if Event.concerns?(event, socket.assigns.track_id) do
@@ -1713,6 +1727,7 @@ defmodule RavixWeb.TrackLive do
       project_id: project.id,
       track: track,
       setup_now: DateTime.utc_now(),
+      machine_probe: nil,
       project: project,
       header: nil,
       assigned_plan: %{items: [], plan: nil},
@@ -1921,7 +1936,10 @@ defmodule RavixWeb.TrackLive do
       "Runs on @#{project.owner_login}'s #{RavixWeb.AgentName.label(track.runtime || project.runtime)}"
 
   defp machine_scope(%{sandbox_layout: :dedicated}), do: "Own machine"
-  defp machine_scope(_track), do: "Shared project machine"
+  defp machine_scope(_track), do: "Shared machine"
+
+  defp machine_scope_title(%{sandbox_layout: :dedicated}), do: "This track's own machine"
+  defp machine_scope_title(_track), do: "Used by all of this project's tracks"
 
   # Whether a header crumb is short enough to show whole. A longer one may
   # shrink, but only to its floor in app.css; a shorter one never shrinks,
@@ -2184,146 +2202,11 @@ defmodule RavixWeb.TrackLive do
     |> workspace_async(:preview_action, fn -> call.(user, id, hash) end)
   end
 
-  attr :runtime, :string, default: nil
-  attr :model, :string, required: true, doc: "what the shown conversation runs"
-
-  attr :session_options, :list,
-    default: nil,
-    doc: "the runtime's advertised ACP options (`Ravix.SessionConfig`), nil when unknown"
-
-  attr :session_config, :map, default: %{}, doc: "the thread's chosen option values"
-  attr :project_model, :string, required: true
-  attr :models, :list, required: true, doc: "the catalog's models for the project's runtime"
-  attr :disabled, :boolean, default: false
-
-  @doc """
-  The model under the composer, and the menu that changes it for the shown
-  conversation from its next turn.
-
-  A native popover, like the account menu: light dismiss, Escape and focus
-  return come with it, and choosing an item hides it. The project's model
-  is marked as the default, and choosing it puts the conversation back on
-  whatever the project runs. With no catalog to offer, or while a turn
-  runs, it is the plain label it used to be, or a disabled trigger.
-
-  Effort and Fast (RAV-52) come from what the runtime advertised on the
-  conversation's latest turn (Fountain ADR 0062): the `thought_level`
-  select, with the adapter's own values and names, and a Fast toggle. Which
-  models offer them is the adapter's to say, so nothing here lists models.
-  Before any turn has reported, or on a Fountain without the field, neither
-  is shown and the label is the model alone.
-  """
-  def model_menu(%{models: []} = assigns) do
-    assigns = assign(assigns, :label, chip_label(assigns))
-
-    ~H"""
-    <span class="composer-model" title={@label}>{@label}</span>
-    """
-  end
-
-  def model_menu(assigns) do
-    %{effort: effort, fast: fast} = SessionConfig.controls(assigns.session_options)
-
-    assigns =
-      assigns
-      |> assign(:choices, Enum.uniq(assigns.models ++ [assigns.model]))
-      |> assign(:effort, effort)
-      |> assign(:effort_value, SessionConfig.in_force(effort, assigns.session_config))
-      |> assign(:fast, fast)
-      |> assign(
-        :fast_on?,
-        SessionConfig.on?(SessionConfig.in_force(fast, assigns.session_config))
-      )
-      |> assign(:label, chip_label(assigns))
-
-    ~H"""
-    <button
-      type="button"
-      id="model-trigger"
-      class="composer-model model-trigger"
-      popovertarget="model-menu"
-      aria-label={@label}
-      title={@label}
-      disabled={@disabled}
-    ><span class="truncate">{@label}</span><span class="sr-only">, change model</span><.icon
-      name="chevron"
-      size={10}
-      open={true}
-    /></button>
-    <div id="model-menu" class="model-menu" popover role="menu" aria-label="Model">
-      <p class="model-default-hint">Also your default for new threads</p>
-      <button
-        :for={choice <- @choices}
-        type="button"
-        class="account-item model-option"
-        role="menuitemradio"
-        aria-checked={to_string(choice == @model)}
-        popovertarget="model-menu"
-        popovertargetaction="hide"
-        phx-click="set-model"
-        phx-value-model={if choice == @project_model, do: "", else: choice}
-        title={ModelName.friendly(choice)}
-      >
-        <span class="truncate">{ModelName.friendly(choice)}</span><small :if={
-          choice == @project_model
-        }>Project default</small><span class="spacer"></span><span
-          :if={choice == @model}
-          class="check"
-          aria-hidden="true"
-        >✓</span>
-      </button>
-      <div :if={@effort} id="model-effort" role="group" aria-labelledby="model-effort-label">
-        <p id="model-effort-label" class="model-section-label">{@effort.name}</p>
-        <button
-          :for={choice <- @effort.choices}
-          type="button"
-          class="account-item model-option"
-          role="menuitemradio"
-          aria-checked={to_string(choice.value == @effort_value)}
-          popovertarget="model-menu"
-          popovertargetaction="hide"
-          phx-click="set-session-option"
-          phx-value-id={@effort.id}
-          phx-value-choice={choice.value}
-        >
-          <span class="truncate">{choice.name}</span><span class="spacer"></span><span
-            :if={choice.value == @effort_value}
-            class="check"
-            aria-hidden="true"
-          >✓</span>
-        </button>
-      </div>
-      <button
-        :if={@fast}
-        id="model-fast"
-        type="button"
-        class="account-item model-option model-fast"
-        role="menuitemcheckbox"
-        aria-checked={to_string(@fast_on?)}
-        popovertarget="model-menu"
-        popovertargetaction="hide"
-        phx-click="set-session-option"
-        phx-value-id={@fast.id}
-        phx-value-choice={to_string(!@fast_on?)}
-      >
-        <span class="truncate">{@fast.name}</span><span class="spacer"></span><span
-          :if={@fast_on?}
-          class="check"
-          aria-hidden="true"
-        >✓</span>
-      </button>
-    </div>
-    """
-  end
+  @doc "The model under the composer: `RavixWeb.Live.ModelMenu.menu/1`."
+  defdelegate model_menu(assigns), to: ModelMenu, as: :menu
 
   # "<model> · <effort>", and the Fast option's name when it is on: what the
   # runtime advertised, so before it has, the label is the model alone.
-  defp chip_label(assigns) do
-    [agent_model(assigns.runtime, assigns.model)]
-    |> Enum.concat(SessionConfig.summary(assigns.session_options, assigns.session_config))
-    |> Enum.join(" · ")
-  end
-
   defp thread_failure(socket, reason) do
     draft = socket.assigns.thread_draft || %{runtime: nil, options: nil}
     runtime = draft.runtime || socket.assigns.track.runtime || socket.assigns.project.runtime
@@ -2358,14 +2241,7 @@ defmodule RavixWeb.TrackLive do
       else: item.wait_reason
   end
 
-  defp agent_model(nil, model) when is_binary(model) and model != "",
-    do: ModelName.friendly(model)
-
-  defp agent_model(runtime, model) do
-    [RavixWeb.AgentName.label(runtime) || "Agent", ModelName.friendly(model)]
-    |> Enum.reject(&(&1 == ""))
-    |> Enum.join(" · ")
-  end
+  defp agent_model(runtime, model), do: ModelMenu.agent_model(runtime, model)
 
   attr :threads, :list, required: true
   attr :thread_id, :string, required: true
@@ -2884,6 +2760,52 @@ defmodule RavixWeb.TrackLive do
     end
   end
 
+  # What setup is doing, as the named steps it goes through, so the first
+  # minute of a new track reads as progress rather than as one spinner. The
+  # step under way is the machine's stage where it reports one (a dedicated
+  # machine does) and otherwise follows `setup_state`. Each step is `:done`,
+  # `:now`, `:failed` or `:todo`.
+  @doc false
+  def setup_steps(track, project) do
+    current = setup_step_now(track.sandbox_stage, track.setup_state)
+    failed = track.setup_state == "failed"
+
+    track
+    |> setup_step_labels(project && project.repo)
+    |> Enum.with_index()
+    |> Enum.map(fn {{key, label}, index} ->
+      %{key: key, label: label, state: setup_step_state(index, current, failed)}
+    end)
+  end
+
+  defp setup_step_labels(track, repo) do
+    machine =
+      if track.sandbox_layout == :dedicated,
+        do: "Start this track's machine",
+        else: "Wake the project machine"
+
+    clone = if repo, do: "Check out #{repo} on a new branch", else: "Make a new branch"
+
+    [
+      {:machine, machine},
+      {:clone, clone},
+      {:setup, "Run setup"},
+      {:agent, "Hand your first prompt to the agent"}
+    ]
+  end
+
+  defp setup_step_now(_stage, "ready"), do: 3
+  defp setup_step_now("creating", _state), do: 0
+  defp setup_step_now("cloning", _state), do: 1
+  defp setup_step_now("setup", _state), do: 2
+  defp setup_step_now(_stage, "pending"), do: 1
+  defp setup_step_now(_stage, _state), do: 2
+
+  defp setup_step_state(index, current, _failed) when index < current, do: :done
+  defp setup_step_state(current, current, true), do: :failed
+  defp setup_step_state(current, current, false), do: :now
+  defp setup_step_state(_index, _current, _failed), do: :todo
+
   defp pull_state_label(:merged), do: "Merged"
   defp pull_state_label(:closed), do: "Closed"
   defp pull_state_label(:open), do: "Open"
@@ -2903,10 +2825,48 @@ defmodule RavixWeb.TrackLive do
     MachineState.of(track, running: running, now: now)
   end
 
+  # The header chip's state, corrected and qualified by what the dock's probe
+  # knows that the track row does not: that the machine is in fact running
+  # (the row's Asleep is cleared on the way --- unless the row has recorded
+  # a sleep since the probe answered), or, for a machine the row can
+  # only call Idle, that there is no machine yet, that this deployment cannot
+  # reach machines at all, or that the machine did not answer. Every other
+  # state already says what it is doing, and the probe does not add to it.
+  defp probed(machine, nil, _track), do: machine
+
+  defp probed(%{state: :asleep} = machine, {%{available: true}, slept}, %{
+         sandbox_suspended_at: slept
+       }),
+       do: %{machine | state: :idle, detail: nil}
+
+  defp probed(%{state: :idle} = machine, {probe, _slept}, _track) do
+    case probe_note(probe) do
+      nil -> machine
+      note -> note(machine, note)
+    end
+  end
+
+  defp probed(machine, _probe, _track), do: machine
+
+  defp probe_note(%{why: :no_machine}), do: "No machine is available yet."
+
+  defp probe_note(%{why: :no_token}),
+    do: "Machine status is unavailable because the machine connection is not configured."
+
+  defp probe_note(%{why: why}) when why in [:no_sprite, :unreachable],
+    do: "The machine did not answer just now; your next message wakes it."
+
+  defp probe_note(:unavailable), do: "Machine status is unavailable. Try again later."
+  defp probe_note(_probe), do: nil
+
+  defp note(%{detail: nil} = machine, note), do: %{machine | detail: note}
+  defp note(%{detail: detail} = machine, note), do: %{machine | detail: detail <> " " <> note}
+
   attr :machine, :map, required: true
 
-  # The header's state chip. Only the word is a live region: the detail can
-  # tick (a retry countdown), so it describes the chip rather than announcing.
+  # The header's state chip, and the page's one live region for the machine's
+  # state. Only the word is announced: the detail can tick (a retry
+  # countdown), so it describes the chip rather than announcing.
   defp machine_chip(assigns) do
     ~H"""
     <span
@@ -3457,6 +3417,7 @@ defmodule RavixWeb.TrackLive do
     assigns =
       assign(assigns,
         label: work_label(assigns.blocks, length(tools)),
+        kinds: work_kinds(tools),
         now: now && running(now, assigns.workdir),
         thoughts: thoughts,
         rows: rows
@@ -3469,7 +3430,12 @@ defmodule RavixWeb.TrackLive do
       phx-mounted={JS.ignore_attributes("open")}
     >
       <summary>
-        <span>{@label}</span>
+        <.disclosure_chevron />
+        <span :if={@label != ""}>{@label}</span>
+        <span :if={@kinds != []} class="work-kinds">
+          <.icon :for={{icon, word} <- @kinds} name={icon} size={13} data-kind={word} />
+          <span class="sr-only">Used: {Enum.map_join(@kinds, ", ", &elem(&1, 1))}</span>
+        </span>
         <span :if={@now} class="work-now">{@now}</span>
       </summary>
       <div class="workspace-work-body">
@@ -3479,7 +3445,10 @@ defmodule RavixWeb.TrackLive do
           class="workspace-thinking"
           phx-mounted={JS.ignore_attributes("open")}
         >
-          <summary>{counted(length(@thoughts), "thought")}</summary>
+          <summary>
+            <.disclosure_chevron />
+            <span>{counted(length(@thoughts), "thought")}</span>
+          </summary>
           <.block :for={thought <- @thoughts} block={thought} html={rendered(@rendered, thought)} />
         </details>
         <div :for={{block, index} <- Enum.with_index(@rows)}>
@@ -3503,14 +3472,29 @@ defmodule RavixWeb.TrackLive do
     end
   end
 
+  # Thoughts are counted on their own toggle inside the fold, not on this
+  # line, unless they are all the fold holds and the line would say nothing.
   defp work_label(blocks, tools) do
     [
       counted(tools, "tool call"),
-      counted(Enum.count(blocks, &match?(%TranscriptBlock.Text{}, &1)), "message"),
-      counted(Enum.count(blocks, &match?(%TranscriptBlock.Thinking{}, &1)), "thought")
+      counted(Enum.count(blocks, &match?(%TranscriptBlock.Text{}, &1)), "message")
     ]
     |> Enum.reject(&is_nil/1)
-    |> Enum.join(", ")
+    |> case do
+      [] -> counted(Enum.count(blocks, &match?(%TranscriptBlock.Thinking{}, &1)), "thought") || ""
+      counts -> Enum.join(counts, ", ")
+    end
+  end
+
+  # The distinct kinds of work the calls did, in the order each was first
+  # used, capped so the line stays a glance.
+  @work_kinds 4
+  defp work_kinds(tools) do
+    tools
+    |> Enum.map(&ToolCall.summary_kind/1)
+    |> Enum.reject(&is_nil/1)
+    |> Enum.uniq()
+    |> Enum.take(@work_kinds)
   end
 
   defp counted(0, _noun), do: nil
@@ -3731,8 +3715,8 @@ defmodule RavixWeb.TrackLive do
         class="ghost"
         popovertarget="model-menu"
       >Change setting</button>
-      <details :if={@block.body != ""}>
-        <summary>Technical details</summary>
+      <details :if={@block.body != ""} class="failure-details">
+        <summary><.disclosure_chevron /> Technical details</summary>
         <pre>{@block.details || @block.body}</pre>
       </details>
     </div>
@@ -3892,12 +3876,12 @@ defmodule RavixWeb.TrackLive do
     """
   end
 
-  # A prompt as its author meant it to be read: the preview instructions,
-  # restored context and author marker taken off, which the retry puts back
-  # into the composer as typed and the transcript and queue draw.
+  # A prompt as its author meant it to be read: Ravix's delivery wrappers
+  # and the author marker taken off, which the retry puts back into the
+  # composer as typed and the transcript and queue draw.
   defp visible_prompt(prompt) do
-    {prompt, restored?} = Recovery.visible_prompt(prompt)
-    {speaker, body} = prompt |> Ravix.Previews.Agent.visible_prompt() |> prompt_author()
+    {prompt, restored?} = PromptQueue.visible_prompt(prompt)
+    {speaker, body} = prompt_author(prompt)
     {speaker, body, restored?}
   end
 

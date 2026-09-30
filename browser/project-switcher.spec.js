@@ -27,7 +27,7 @@ test('project tree and quick-jump navigate with keyboard and fit desktop and pho
     const path = new URL(page.url()).pathname;
     await page.locator('#yard .workspace-project.current .project-add').click();
     const dialog = page.getByRole('dialog', { name: 'New track', exact: true });
-    await dialog.getByRole('button', { name: 'Advanced', exact: true }).click();
+    await dialog.getByRole('button', { name: 'Options', exact: true }).click();
     await dialog.getByLabel('Branch name').fill(name.startsWith('Tree Alpha') ? 'alpha-work' : 'beta-work');
     await dialog.getByRole('button', { name: 'Create track', exact: true }).click();
     await expect(dialog).not.toBeVisible();

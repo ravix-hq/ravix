@@ -171,6 +171,23 @@ defmodule Ravix.Workspaces.Store do
             where: p.workspace_id == ^workspace_id and p.user_id == ^user_id
         )
 
+        # ownership: `Workspaces.remove_member/3` admitted the remover through
+        # `Access.workspace_access/2`, re-checked under this lock. RAV-75: a
+        # direct project grant in this workspace overrides its default, Read
+        # included; left behind, it would keep somebody the workspace removed
+        # in its projects. A grant racing this waits on the membership lock
+        # (`People.Store.grant_project_role/4`).
+        Repo.delete_all(
+          from pm in Ravix.Projects.ProjectMember,
+            where:
+              pm.user_id == ^user_id and
+                pm.project_id in subquery(
+                  from p in Project,
+                    where: p.workspace_id == ^workspace_id,
+                    select: p.id
+                )
+        )
+
         revoked
       else
         {:error, reason} -> Repo.rollback(reason)

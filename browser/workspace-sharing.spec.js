@@ -4,6 +4,7 @@ import { test, expect } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
 import { signIn, connectClaude } from './sign-in.js';
 import { expectInlineChoice } from './controls.js';
+import { chooseSharing } from './new-track.js';
 
 // ADR 0009 phase 5, with RAVIX_WORKSPACE_ACCESS on (`bun run
 // test:browser:workspace-access`): the track header's Share dialog shares a
@@ -28,8 +29,8 @@ const idOf = path => {
 async function openTrack(page, visibility, branch) {
   await page.locator('#yard .workspace-project.current .project-add').click();
   const track = page.getByRole('dialog', { name: 'New track', exact: true });
-  await track.getByLabel('Sharing', { exact: true }).selectOption(visibility);
-  await track.getByRole('button', { name: 'Advanced', exact: true }).click();
+  await chooseSharing(track, visibility);
+  await track.getByRole('button', { name: 'Options', exact: true }).click();
   await track.getByLabel('Branch name', { exact: true }).fill(branch);
   await track.getByRole('button', { name: 'Create track', exact: true }).click();
   await expect(page.locator('.track-crumbs')).toContainText(branch);
@@ -140,9 +141,10 @@ test('the Share dialog shares a private track with one member, and nobody else l
   }
 });
 
-// RAV-32: a workspace project's People dialog lists who is in it but offers
-// no invitation and no invite link; it points at the workspace instead.
-test("a workspace project's People dialog offers no invite link and points to the workspace", async ({ page }) => {
+// RAV-32: a workspace project's People dialog offers no invitation and no
+// invite link. RAV-75: it lists everyone who reaches the project with where
+// their role comes from, and gives a workspace member a different role.
+test("a workspace project's People dialog lists every source and gives a different role", async ({ page }) => {
   test.skip(process.env.RAVIX_WORKSPACE_ACCESS !== 'true', 'Runs under test:browser:workspace-access');
   const sql = browserSql();
 
@@ -160,15 +162,55 @@ test("a workspace project's People dialog offers no invite link and points to th
   const workspaceId = sql(`SELECT workspace_id FROM ravix.projects WHERE id = '${projectId}'`);
   expect(workspaceId).toMatch(/^[a-f0-9-]{36}$/);
 
+  // Two more members: one with a direct grant, one the workspace alone admits.
+  sql(`INSERT INTO ravix.users (id, github_id, login, created_at, last_seen_at) VALUES
+         ('00000000-0000-4000-8000-000000097501', '97501', 'accessalice', NOW(), NOW()),
+         ('00000000-0000-4000-8000-000000097502', '97502', 'accesscarol', NOW(), NOW())
+         ON CONFLICT DO NOTHING`);
+  sql(`INSERT INTO ravix.workspace_memberships (workspace_id, user_id, role, created_at)
+         SELECT '${workspaceId}', id, 'member', NOW() FROM ravix.users
+         WHERE login IN ('accessalice', 'accesscarol') ON CONFLICT DO NOTHING`);
+  sql(`INSERT INTO ravix.project_members (project_id, user_id, invited_by, role, created_at)
+         VALUES ('${projectId}', '00000000-0000-4000-8000-000000097501',
+                 '00000000-0000-4000-8000-000000009013', 'write', NOW())`);
+
   await page.goto(projectPath);
   await page.getByRole('button', { name: 'People', exact: true }).click();
   const people = page.getByRole('dialog', { name: 'Project people', exact: true });
   await expect(people).toBeVisible();
   await expect(people.getByLabel('GitHub username')).toHaveCount(0);
   await expect(people).not.toContainText('invite link');
-  await expect(people.getByRole('link', { name: "the workspace's members page" }))
-    .toHaveAttribute('href', `/w/${workspaceId}/settings/members`);
+  await expect(people).not.toContainText('members page');
+  const summary = people.getByRole('list', { name: 'Access summary' });
+  await expect(summary).toContainText('Base role: Write');
+  await expect(summary).toContainText('Direct access: 1 person');
+  // The earlier test in this file admits two more members to the same workspace.
+  const members = sql(`SELECT count(*) FROM ravix.workspace_memberships
+                         WHERE workspace_id = '${workspaceId}' AND revoked_at IS NULL`);
+  await expect(summary).toContainText(`${members} sharecreator members get Write by default`);
+  await expect(people.locator('#people-person-sharecreator')).toContainText('Admin');
+  await expect(people.locator('#people-person-sharecreator')).toContainText('owner');
+  await expect(people.locator('#people-person-accessalice')).toContainText('direct');
+  const carol = people.locator('#people-person-accesscarol');
+  await expect(carol).toContainText('from workspace');
   const axe = await new AxeBuilder({ page }).include('#people-dialog')
     .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa']).analyze();
   expect(axe.violations).toEqual([]);
+
+  // Give the workspace member a lower role: it becomes a direct grant.
+  await carol.getByRole('button', { name: 'Give @accesscarol a different role', exact: true }).click();
+  const menu = page.getByRole('menu', { name: 'Role for @accesscarol', exact: true });
+  await expect(menu).toBeVisible();
+  await menu.getByRole('menuitemradio', { name: /^Read/ }).click();
+  await expect(carol).toContainText('direct');
+  await expect(carol.getByRole('button', { name: 'Role for @accesscarol: Read', exact: true })).toBeVisible();
+  await expect(summary).toContainText('Direct access: 2 people');
+  expect(sql(`SELECT role FROM ravix.project_members WHERE project_id = '${projectId}'
+                AND user_id = '00000000-0000-4000-8000-000000097502'`)).toBe('read');
+
+  // And back to the workspace's.
+  await carol.getByRole('button', { name: 'Role for @accesscarol: Read', exact: true }).click();
+  await menu.getByRole('menuitem', { name: 'Use workspace role (Write)', exact: true }).click();
+  await expect(carol).toContainText('from workspace');
+  await expect(summary).toContainText('Direct access: 1 person');
 });

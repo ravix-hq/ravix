@@ -105,9 +105,13 @@ defmodule Ravix.MemberRolesTest do
       assert {:error, :not_found} = Access.project_access(c.reader, c.project.id)
     end
 
-    test "the highest grant wins on a project-visible track", c do
+    test "the track's own grant wins over the project's, lower or higher (RAV-75)", c do
       insert_project_member(c.project, c.reader, role: :write)
-      assert {:ok, %{level: :write}} = Access.track_access(c.reader, c.track.id)
+      assert {:ok, %{level: :read}} = Access.track_access(c.reader, c.track.id)
+      assert {:error, {:forbidden, _}} = prompt(c.reader, c.track)
+
+      insert_project_member(c.project, c.admin, role: :read)
+      assert {:ok, %{level: :admin}} = Access.track_access(c.admin, c.track.id)
     end
 
     test "the owner holds only their seat on somebody else's private track", c do

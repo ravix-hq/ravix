@@ -8,7 +8,19 @@ defmodule RavixWeb.TrackLiveTest do
   alias Ravix.Hub.Event
   alias Ravix.{People, Previews, PromptQueue, QueryCount, Repo, Terminal, Tracks, Vitals}
   alias Ravix.PromptQueue.View, as: QueuedPrompt
-  alias Ravix.Tracks.{Diff, Files, Follower, MachineState, Setup, Track, TrackMember, Transcript}
+
+  alias Ravix.Tracks.{
+    Attribution,
+    Diff,
+    Files,
+    Follower,
+    MachineState,
+    Setup,
+    Track,
+    TrackMember,
+    Transcript
+  }
+
   alias RavixWeb.Live.Guard
 
   alias Ravix.Plans.Progress
@@ -65,13 +77,20 @@ defmodule RavixWeb.TrackLiveTest do
   end
 
   test "dedicated lifecycle stages and close warnings stay visible", ctx do
-    refute has_element?(ctx.view, "#track-machine-scope")
+    # Shared or not is the header's to say, flag or no flag: the dock no
+    # longer carries a line about it.
+    assert has_element?(
+             ctx.view,
+             ~s(#track-machine-scope[title="Used by all of this project's tracks"]),
+             "Shared machine"
+           )
+
     stub(Ravix.Config, :dedicated_opens_enabled?, fn _ -> true end)
     {:ok, parent, _} = live(ctx.conn, "/p/#{ctx.project.id}/t/#{ctx.track.id}")
     view = find_live_child(parent, "track-host")
     settle(view)
     ctx = %{ctx | view: view, parent: parent}
-    assert has_element?(ctx.view, "#track-machine-scope", "Shared project machine")
+    assert has_element?(ctx.view, "#track-machine-scope", "Shared machine")
 
     for {stage, state, text} <- [
           {"creating", :provisioning, "Creating this track's machine…"},
@@ -1620,6 +1639,19 @@ defmodule RavixWeb.TrackLiveTest do
   end
 
   describe "the machine state chip" do
+    # A probe that finds the machine running, so the chip says only what the
+    # row does; what a probe adds has its own tests.
+    setup ctx do
+      stub(Terminal, :status, fn _, _, _ ->
+        {:ok, %Terminal.Status{available: true, why: nil, cwd: ctx.track.workdir}}
+      end)
+
+      {:ok, parent, _} = live(ctx.conn, "/p/#{ctx.project.id}/t/#{ctx.track.id}")
+      view = find_live_child(parent, "track-host")
+      settle(view)
+      %{parent: parent, view: view}
+    end
+
     # The row as the page's next detail read will present it, then the hub
     # message that makes the page read it again.
     defp machine_row(ctx, attrs) do
@@ -1730,7 +1762,7 @@ defmodule RavixWeb.TrackLiveTest do
       chip(ctx.view, "Idle", nil)
     end
 
-    test "a machine the probe finds running is not called asleep in the dock", ctx do
+    test "a machine the probe finds running is not called asleep in the header", ctx do
       stub(Terminal, :status, fn _, _, _ ->
         {:ok, %Terminal.Status{available: true, why: nil, cwd: ctx.track.workdir}}
       end)
@@ -1745,8 +1777,8 @@ defmodule RavixWeb.TrackLiveTest do
       {:ok, parent, _} = live(ctx.conn, "/p/#{ctx.project.id}/t/#{ctx.track.id}")
       view = find_live_child(parent, "track-host")
       settle(view)
-      assert has_element?(view, "#track-machine-status", "Idle.")
-      refute has_element?(view, "#track-machine-status", "Asleep")
+      chip(view, "Idle", nil)
+      refute has_element?(view, "#track-machine-state", "Asleep")
     end
 
     test "a sleep or wake is re-read from the row and the memo, not Fountain", ctx do
@@ -1775,7 +1807,7 @@ defmodule RavixWeb.TrackLiveTest do
       refute_received {:get, true}
     end
 
-    test "the dock's status line uses the same words", ctx do
+    test "an unanswered probe on an asleep machine leaves the header's words alone", ctx do
       stub(Terminal, :status, fn _, _, _ ->
         {:ok, %Terminal.Status{available: false, why: :no_sprite, cwd: ctx.track.workdir}}
       end)
@@ -1793,8 +1825,9 @@ defmodule RavixWeb.TrackLiveTest do
       view = find_live_child(parent, "track-host")
       settle(view)
       chip(view, "Asleep", "Your next message wakes it.")
-      assert has_element?(view, "#track-machine-status", "Asleep. Your next message wakes it.")
+      refute has_element?(view, "#track-machine-status")
       refute render(view) =~ "asleep or unreachable"
+      refute render(view) =~ "did not answer just now"
     end
   end
 
@@ -1835,9 +1868,10 @@ defmodule RavixWeb.TrackLiveTest do
         assert has_element?(ctx.view, "#panel-asleep button#panel-wake:not([disabled])", "Wake")
         refute has_element?(ctx.view, ".workspace-panel [role=alert]")
 
-        # The dock names the state and leaves the rest to the panel.
-        assert ctx.view |> element("#track-machine-status") |> render() =~ ~r/>\s*Asleep\.\s*</
-        refute has_element?(ctx.view, "#track-machine-status", "Your next message wakes it")
+        # The header names the state and the dock says nothing of it.
+        chip(ctx.view, "Asleep", "Your next message wakes it.")
+        refute has_element?(ctx.view, "#track-machine-status")
+        refute has_element?(ctx.view, "#track-machine-label")
         refute render(ctx.view) =~ "Files load when it wakes"
       end
     end
@@ -1853,7 +1887,7 @@ defmodule RavixWeb.TrackLiveTest do
       assert has_element?(ctx.view, "#git-asleep #panel-wake", "Wake")
       assert has_element?(ctx.view, "#git-pull", "Pull request #209")
       assert has_element?(ctx.view, "#checks-empty h3", "No checks yet")
-      assert ctx.view |> element("#track-machine-status") |> render() =~ ~r/>\s*Asleep\.\s*</
+      assert has_element?(ctx.view, "#track-machine-state", "Asleep")
     end
 
     test "Wake calls the wake path and the tab is read again", ctx do
@@ -1942,7 +1976,7 @@ defmodule RavixWeb.TrackLiveTest do
       # The banner is the live region for these words; the panel does not repeat them aloud.
       refute has_element?(ctx.view, "#panel-setup [role=status]")
       refute has_element?(ctx.view, "#panel-wake")
-      assert ctx.view |> element("#track-machine-status") |> render() =~ ~r/>\s*Starting\.\s*</
+      assert has_element?(ctx.view, "#track-machine-state", "Starting")
     end
 
     test "a track with nothing changed and nothing checked says so in one line each", ctx do
@@ -3948,13 +3982,15 @@ defmodule RavixWeb.TrackLiveTest do
     assert render(ctx.view) =~ "File content is truncated"
   end
 
-  for {layout, label} <- [
-        shared: "Shared project machine (used by all of this project's tracks)",
-        dedicated: "This track's machine"
+  for {layout, scope, label} <- [
+        {:shared, "Shared machine",
+         "Shared project machine (used by all of this project's tracks)"},
+        {:dedicated, "Own machine", "This track's machine"}
       ] do
     @layout layout
+    @machine_scope scope
     @machine_label label
-    test "#{layout} machine ownership is visible in the dock, terminal and Vitals", ctx do
+    test "#{layout} machine ownership is visible in the header, terminal and Vitals", ctx do
       Repo.update!(
         Ecto.Changeset.change(ctx.track, sandbox_layout: @layout, opened_at: DateTime.utc_now())
       )
@@ -3970,8 +4006,12 @@ defmodule RavixWeb.TrackLiveTest do
       {:ok, parent, _} = live(ctx.conn, "/p/#{ctx.project.id}/t/#{ctx.track.id}")
       view = find_live_child(parent, "track-host")
       render_async(view)
-      assert has_element?(view, "#track-machine-label", @machine_label)
-      assert has_element?(view, "#track-machine-status", "Idle.")
+      assert has_element?(view, "#track-machine-scope", @machine_scope)
+      chip(view, "Idle", nil)
+      # The dock is its tab strip: no standing line above it.
+      refute has_element?(view, "#track-machine-label")
+      refute has_element?(view, "#track-machine-status")
+      refute has_element?(view, ".machine-dock-host > [role=status]")
       view |> element("button[phx-click=dock][phx-value-name=terminal]") |> render_click()
       assert has_element?(view, "#terminal-machine-label", @machine_label)
       view |> element("button[phx-click=dock][phx-value-name=vitals]") |> render_click()
@@ -3985,8 +4025,8 @@ defmodule RavixWeb.TrackLiveTest do
         no_machine: "No machine is available yet.",
         no_token:
           "Machine status is unavailable because the machine connection is not configured.",
-        no_sprite: "Idle. The machine did not answer just now; your next message wakes it.",
-        unreachable: "Idle. The machine did not answer just now; your next message wakes it.",
+        no_sprite: "The machine did not answer just now; your next message wakes it.",
+        unreachable: "The machine did not answer just now; your next message wakes it.",
         error: "Machine status is unavailable. Try again later."
       ] do
     @status_reason reason
@@ -4004,7 +4044,7 @@ defmodule RavixWeb.TrackLiveTest do
       {:ok, parent, _} = live(ctx.conn, "/p/#{ctx.project.id}/t/#{ctx.track.id}")
       view = find_live_child(parent, "track-host")
       render_async(view)
-      assert has_element?(view, "#track-machine-status", @status_sentence)
+      chip(view, "Idle", @status_sentence)
     end
   end
 
@@ -4041,7 +4081,7 @@ defmodule RavixWeb.TrackLiveTest do
     refute has_element?(ctx.view, "input[data-terminal-input][disabled]")
   end
 
-  test "the machine status says a shared track runs on the whole project's machine", ctx do
+  test "the header says a shared track runs on the whole project's machine", ctx do
     stub(Ravix.Terminal, :status, fn _, _, _ ->
       {:ok, %Ravix.Terminal.Status{available: true, why: nil, cwd: ctx.track.workdir}}
     end)
@@ -4055,8 +4095,8 @@ defmodule RavixWeb.TrackLiveTest do
 
     assert has_element?(
              view,
-             "#track-machine-label",
-             "Shared project machine (used by all of this project's tracks)"
+             ~s(#track-machine-scope[title="Used by all of this project's tracks"]),
+             "Shared machine"
            )
   end
 
@@ -5783,6 +5823,67 @@ defmodule RavixWeb.TrackLiveTest do
     refute has_element?(ctx.view, "#transcript-turns script")
   end
 
+  test "attributed prompts show their sender and only what they typed (RAV-86)", ctx do
+    starter = insert_user(login: "starter", github_id: "4242", name: "Sam Starter")
+    attribution = Attribution.commit_block(starter)
+    preview = Previews.Agent.start_marker() <> "\nhidden tools\n" <> Previews.Agent.end_marker()
+
+    page =
+      Transcript.page(
+        [
+          opened(
+            1,
+            "attributed",
+            attribution <> "\n\n" <> PromptQueue.with_author("teammate", "Fix **it**")
+          ),
+          opened(
+            2,
+            "previewed",
+            Enum.join(
+              [preview, attribution, PromptQueue.with_author("teammate", "Start the preview")],
+              "\n\n"
+            )
+          ),
+          opened(3, "solo", attribution <> "\n\nMy own track"),
+          opened(4, "legacy", "A message without author metadata")
+        ],
+        "claude"
+      )
+
+    stub(Tracks, :events, fn _, _, _thread_opts -> {:ok, page} end)
+    render_click(ctx.view, "retry-load")
+    render_async(ctx.view)
+
+    assert has_element?(ctx.view, "#turns-attributed .speaker", "@teammate")
+    assert has_element?(ctx.view, "#turns-attributed .workspace-prompt strong", "it")
+    assert has_element?(ctx.view, "#turns-previewed .speaker", "@teammate")
+    assert has_element?(ctx.view, "#turns-previewed .workspace-prompt", "Start the preview")
+    assert has_element?(ctx.view, "#turns-solo .speaker", "User")
+    assert has_element?(ctx.view, "#turns-solo .workspace-prompt", "My own track")
+    assert has_element?(ctx.view, "#turns-legacy .speaker", "User")
+
+    assert has_element?(
+             ctx.view,
+             "#turns-legacy .workspace-prompt",
+             "A message without author metadata"
+           )
+
+    html = render(ctx.view)
+
+    for hidden <- ["[ravix commit attribution]", "noreply", "Co-authored-by", "hidden tools"],
+        do: refute(html =~ hidden)
+
+    [start | events] = Ravix.AgentOutageFixture.events("outage")
+    delivered = attribution <> "\n\n" <> PromptQueue.with_author("teammate", "Fix the outage")
+    start = Map.put(start, "blocks", [%{"kind" => "prompt", "body" => delivered}])
+    stub(Tracks, :events, fn _, _, _ -> {:ok, Transcript.page([start | events], "codex")} end)
+    render_click(ctx.view, "retry-load")
+    render_async(ctx.view)
+
+    ctx.view |> element("button[phx-click=retry-turn]", "Retry message") |> render_click()
+    assert_push_event(ctx.view, "composer:retry", %{text: "Fix the outage", images: false})
+  end
+
   test "prompts render as markdown, in the transcript and the queue, escaping raw html", ctx do
     body = "Do **x** with `y`:\n\n1. first\n- second\n\n<script>alert(1)</script>"
 
@@ -5923,8 +6024,15 @@ defmodule RavixWeb.TrackLiveTest do
     assert has_element?(
              ctx.view,
              "#turns-turn .workspace-work > summary",
-             "2 tool calls, 1 message, 1 thought"
+             "2 tool calls, 1 message"
            )
+
+    # Thoughts are counted inside the fold, not on its line, which shows
+    # what kind of work the calls did instead.
+    refute has_element?(ctx.view, "#turns-turn .workspace-work > summary", "thought")
+    assert has_element?(ctx.view, "#turns-turn .workspace-thinking > summary", "1 thought")
+    assert has_element?(ctx.view, ~s|#turns-turn .work-kinds > svg[data-kind="shell"]|)
+    assert has_element?(ctx.view, "#turns-turn .work-kinds .sr-only", "Used: shell")
 
     # The folded line counts work, never failures.
     refute has_element?(ctx.view, "#turns-turn .workspace-work > summary .chip")
@@ -6040,7 +6148,8 @@ defmodule RavixWeb.TrackLiveTest do
     render_async(ctx.view)
 
     # Three thoughts, one toggle, ahead of the calls rather than between them.
-    assert has_element?(ctx.view, "#turns-turn .workspace-work > summary", "3 thoughts")
+    assert has_element?(ctx.view, "#turns-turn .workspace-work > summary", "3 tool calls")
+    refute has_element?(ctx.view, "#turns-turn .workspace-work > summary", "thoughts")
 
     assert has_element?(
              ctx.view,
@@ -6123,6 +6232,91 @@ defmodule RavixWeb.TrackLiveTest do
     assert has_element?(ctx.view, "#work-turn-4 > summary .tool-name", "Edit")
     assert has_element?(ctx.view, "#work-turn-4 > summary .chip.tool-running", "running")
     assert has_element?(ctx.view, "#turns-turn .work-now", "Edit lib/app.ex")
+  end
+
+  test "a turn's folded line shows the kinds of work its calls did, first used first", ctx do
+    update = fn data ->
+      Jason.encode!(%{jsonrpc: "2.0", method: "session/update", params: %{update: data}})
+    end
+
+    call = fn id, kind, input ->
+      [
+        %{sessionUpdate: "tool_call", toolCallId: id, title: id, kind: kind, rawInput: input},
+        %{sessionUpdate: "tool_call_update", toolCallId: id, status: "completed"}
+      ]
+    end
+
+    frames =
+      Enum.concat([
+        call.("todo", "other", %{todos: []}),
+        call.("read", "read", %{file_path: "lib/app.ex"}),
+        call.("rm", "delete", %{file_path: "tmp/x"}),
+        call.("sh", "execute", %{command: "mix test"}),
+        call.("again", "read", %{file_path: "lib/b.ex"}),
+        call.("write", "edit", %{file_path: "lib/new.ex", content: "new"}),
+        call.("edit", "edit", %{file_path: "lib/app.ex", old_string: "a", new_string: "b"}),
+        call.("grep", "search", %{pattern: "app"}),
+        call.("web", "fetch", %{url: "https://example.com"}),
+        [%{sessionUpdate: "agent_message_chunk", content: %{type: "text", text: "Done."}}]
+      ])
+
+    turn = fn id, frames ->
+      frames
+      |> Enum.with_index(1)
+      |> Enum.map(fn {data, n} ->
+        %{
+          "id" => id * 100 + n,
+          "turn_id" => "t#{id}",
+          "kind" => "output",
+          "stream" => "acp",
+          "data" => update.(data)
+        }
+      end)
+    end
+
+    thought = %{sessionUpdate: "agent_thought_chunk", content: %{type: "text", text: "Hmm."}}
+    answer = %{sessionUpdate: "agent_message_chunk", content: %{type: "text", text: "Yes."}}
+
+    events =
+      [opened(0, "t1", "Do it") | turn.(1, frames)] ++
+        [opened(200, "t2", "Think") | turn.(2, [thought, answer])]
+
+    stub(Tracks, :events, fn _, _, _ -> {:ok, Transcript.page(events, "claude")} end)
+    render_click(ctx.view, "retry-load")
+    render_async(ctx.view)
+
+    # Distinct kinds in first-use order: the wrench and the delete are left
+    # out, a second read and the edit after a write add nothing, and the cap
+    # of four leaves the fetch off.
+    kinds =
+      ctx.view
+      |> element("#turns-t1 .workspace-work > summary .work-kinds")
+      |> render()
+      |> then(&Regex.scan(~r/data-kind="([^"]+)"/, &1, capture: :all_but_first))
+      |> List.flatten()
+
+    assert kinds == ["read", "shell", "edit", "search"]
+    assert has_element?(ctx.view, ~s|#turns-t1 .work-kinds > svg[aria-hidden="true"]|)
+
+    assert has_element?(
+             ctx.view,
+             "#turns-t1 .work-kinds .sr-only",
+             "Used: read, shell, edit, search"
+           )
+
+    assert has_element?(ctx.view, "#turns-t1 .workspace-work > summary", "9 tool calls")
+
+    # Both toggles draw the app's chevron rather than the native marker.
+    assert has_element?(ctx.view, "#turns-t1 .workspace-work > summary > svg.disclosure-chevron")
+
+    # A fold of thoughts alone still says what it holds, and has no kinds.
+    assert has_element?(ctx.view, "#turns-t2 .workspace-work > summary", "1 thought")
+    refute has_element?(ctx.view, "#turns-t2 .work-kinds")
+
+    assert has_element?(
+             ctx.view,
+             "#turns-t2 .workspace-thinking > summary > svg.disclosure-chevron"
+           )
   end
 
   defp count(html, needle), do: length(String.split(html, needle)) - 1

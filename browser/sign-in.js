@@ -50,13 +50,16 @@ export async function connectClaude(page) {
   const returnTo = new URL(page.url()).pathname + new URL(page.url()).search;
   await page.goto('/welcome/agent');
   await expect(page.locator('[data-phx-main]')).toHaveClass(/phx-connected/);
-  await page.getByRole('button', { name: /^Claude Code/ }).click();
-  await page.getByRole('button', { name: 'Subscription', exact: true }).click();
-  await expect(page.getByLabel('Subscription token', { exact: true })).toBeVisible();
-  if (!(await page.locator('#welcome-connected').isVisible())) {
+  // The card says Connect or Connected once Fountain has said what is held.
+  const status = page.locator('#agent-claude-status');
+  const connect = page.getByRole('button', { name: 'Connect Claude Code', exact: true });
+  await expect(status.getByText('Connected').or(connect)).toBeVisible();
+  await expect(status).not.toContainText('Checking');
+  if (await connect.isVisible()) {
+    await connect.click();
     await page.getByLabel('Subscription token', { exact: true }).fill('sk-ant-oat01-browser-fixture');
     await page.getByRole('button', { name: 'Connect Claude Code', exact: true }).click();
-    await expect(page.locator('#welcome-connected')).toContainText('Claude Code is connected');
+    await expect(status).toContainText('Connected');
   }
   await page.goto(returnTo);
   await expect(page.locator('[data-phx-main]')).toHaveClass(/phx-connected/);

@@ -59,6 +59,7 @@ defmodule RavixWeb.Live.Form do
           | :settings
           | :workspace
           | :credential
+          | :quick_start
 
   @typedoc """
   A form's shape: the field types to cast, and which field each refusal
@@ -94,6 +95,19 @@ defmodule RavixWeb.Live.Form do
        %{
          "no_name" => :name,
          "invalid_repository" => :repo,
+         "invalid_runtime" => :runtime,
+         "agent_unavailable" => :runtime,
+         "agent_not_connected" => :runtime
+       }},
+    # A prompt and where to run it; see `RavixWeb.Live.QuickStart`. The
+    # project and track it creates refuse with their own codes, and the ones
+    # about an input land on it.
+    quick_start:
+      {%{target: :string, prompt: :string, runtime: :string},
+       %{
+         "empty_prompt" => :prompt,
+         "no_target" => :target,
+         "invalid_repository" => :target,
          "invalid_runtime" => :runtime,
          "agent_unavailable" => :runtime,
          "agent_not_connected" => :runtime

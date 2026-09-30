@@ -907,6 +907,10 @@ defmodule Ravix.PromptQueueTest do
       assert prompt =~ Attribution.trailer(f.owner)
       assert prompt =~ "started by @#{f.owner.login}"
       assert String.ends_with?(prompt, "[from @#{f.guest.login}] commit the fix")
+
+      # RAV-86: what the transcript draws is the sender's marker and words.
+      assert PromptQueue.visible_prompt(prompt) ==
+               {"[from @#{f.guest.login}] commit the fix", false}
     end
 
     test "with RAVIX_WORKSPACE_ACCESS off the prompt is as before", f do

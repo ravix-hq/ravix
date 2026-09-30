@@ -206,6 +206,18 @@ defmodule RavixWeb.SettingsFrameTest do
       assert has_element?(view, "#settings-sections")
     end
 
+    test "the project's People dialog (RAV-75) opens over a settings page and closes back", ctx do
+      stub_settings(ctx.project)
+      view = open(ctx.conn, ctx.user, "/p/#{ctx.project.id}/settings/agent")
+      render_click(view, "dialog", %{name: "people"})
+      assert has_element?(view, "#people-dialog")
+      assert has_element?(view, "#settings-sections")
+      view |> element("#people-dialog button[aria-label=Close]") |> render_click()
+      refute_patched(view)
+      refute has_element?(view, "#people-dialog")
+      assert has_element?(view, "#settings-nav-agent[aria-current=page]")
+    end
+
     test "a revoked session cannot save a section", ctx do
       stub_settings(ctx.project)
       reject(&Ravix.Projects.update_settings/3)

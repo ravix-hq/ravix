@@ -12,6 +12,7 @@ defmodule RavixWeb.WorkspaceLive do
   alias Ravix.Workspaces.{Picker, Repositories}
   alias RavixWeb.Live.Form
   alias RavixWeb.Live.Guard
+  alias RavixWeb.Live.QuickStart
   alias RavixWeb.Live.Settings
   alias RavixWeb.Live.ThreadConnect
   alias RavixWeb.Live.WorkspaceGitHub
@@ -172,8 +173,12 @@ defmodule RavixWeb.WorkspaceLive do
         # is on; nil draws today's project select. See `Ravix.Workspaces.Picker`.
         picker: nil,
         # Scratch projects in their own rail group, with the same switch.
-        scratch_group: Workspaces.enabled?()
+        scratch_group: Workspaces.enabled?(),
+        # Whether `/home`'s first-prompt form has asked GitHub what it may
+        # offer; once per page, like the New project dialog's read.
+        quick_repos: false
       )
+      |> QuickStart.init()
 
     {:ok, if(socket.assigns.current_user, do: socket |> unseen() |> reload_async(), else: socket)}
   end
@@ -188,7 +193,7 @@ defmodule RavixWeb.WorkspaceLive do
       |> assign(yard_open: false, pending_url: nil, settings: nil)
 
     case wrong_page(socket) do
-      nil -> {:noreply, socket |> open_url(params) |> open_settings(params)}
+      nil -> {:noreply, socket |> open_url(params) |> open_settings(params) |> quick_repos()}
       to -> {:noreply, push_navigate(socket, to: to)}
     end
   end
@@ -844,6 +849,23 @@ defmodule RavixWeb.WorkspaceLive do
     end
   end
 
+  def handle_event("quick-start-edit", %{"quick_start" => params}, socket),
+    do: {:noreply, QuickStart.edit(socket, params)}
+
+  def handle_event("quick-start-suggest", %{"prompt" => prompt}, socket),
+    do: {:noreply, QuickStart.suggest(socket, prompt)}
+
+  def handle_event("quick-start", %{"quick_start" => params}, socket) do
+    user = socket.assigns.current_user
+
+    {:noreply,
+     QuickStart.submit(socket, params, quick_targets(socket), socket.assigns.repos, fn target,
+                                                                                       prompt,
+                                                                                       runtime ->
+       created(QuickStart.run(user, target, prompt, runtime), user)
+     end)}
+  end
+
   def handle_event("create-project", %{"new_project" => params}, socket) do
     {:noreply,
      NewProject.create(socket, params, fn user, attrs ->
@@ -889,7 +911,7 @@ defmodule RavixWeb.WorkspaceLive do
      socket
      |> assign(busy: true, track_form: Form.new(:new_track, params))
      |> traced_async(:create_track, fn ->
-       created(open_track(user, id, attrs, prompt), user)
+       created(QuickStart.open_track(user, id, attrs, prompt), user)
      end)}
   end
 
@@ -989,6 +1011,34 @@ defmodule RavixWeb.WorkspaceLive do
      )}
   end
 
+  # The empty states' first prompt (`RavixWeb.Live.QuickStart`): into the
+  # track it opened, with the rail read in the same task so the patch lands
+  # on a project the rail lists. A project made whose track then could not
+  # open is still opened, with the reason said.
+  def handle_async(:quick_start, {:ok, response}, socket) do
+    {:noreply,
+     result(
+       assign(socket, quick_busy: false),
+       response,
+       fn
+         s, {%{project: p, track: nil, error: reason}, rail} ->
+           s
+           |> apply_rail(rail)
+           |> QuickStart.init()
+           |> error(reason)
+           |> push_patch(to: "/p/#{p.id}")
+
+         s, {%{project: p, track: t, queued: queued}, rail} ->
+           s
+           |> apply_rail(rail)
+           |> QuickStart.init()
+           |> first_prompt_refused(queued)
+           |> push_patch(to: "/p/#{p.id}/t/#{t.id}")
+       end,
+       :track_form
+     )}
+  end
+
   def handle_async(:agent_disconnect_notice, {:ok, message}, socket),
     do: {:noreply, flash(socket, :info, message)}
 
@@ -1000,11 +1050,13 @@ defmodule RavixWeb.WorkspaceLive do
   def handle_async(:repos, {:ok, response}, socket) do
     {:noreply,
      result(assign(socket, repos_loading: false), response, fn s, data ->
-       assign(s,
+       s
+       |> assign(
          repos: data.repos,
          installations: data.installations,
          installation: data.selected
        )
+       |> quick_preselect()
      end)}
   end
 
@@ -1048,10 +1100,14 @@ defmodule RavixWeb.WorkspaceLive do
 
       params = socket.assigns.pending_url ->
         {:noreply,
-         socket |> assign(pending_url: nil) |> open_url(params) |> open_settings(params)}
+         socket
+         |> assign(pending_url: nil)
+         |> open_url(params)
+         |> open_settings(params)
+         |> quick_repos()}
 
       true ->
-        {:noreply, socket}
+        {:noreply, quick_repos(socket)}
     end
   end
 
@@ -1075,6 +1131,9 @@ defmodule RavixWeb.WorkspaceLive do
 
   def handle_async({:tracks, id}, {:exit, _reason}, socket),
     do: {:noreply, track_load_failed(socket, id)}
+
+  def handle_async(:quick_start, {:exit, reason}, socket),
+    do: {:noreply, socket |> assign(quick_busy: false) |> exit(reason)}
 
   def handle_async(name, {:exit, reason}, socket) when name in [:refs, :repos] do
     flag = if name == :refs, do: :refs_loading, else: :repos_loading
@@ -1548,37 +1607,20 @@ defmodule RavixWeb.WorkspaceLive do
     end)
   end
 
-  # The two creates, once they have something to show. The page patches to
+  # The creates, once they have something to show. The page patches to
   # what was created, and `handle_params/3` will only open a project that is
   # in the rail, so the rail is read here, in the task that did the creating,
   # and arrives in the same answer. Off this process, as every rail read
   # is, and in hand before the patch, which a `reload_async/1` could
   # not promise.
-  # A prompt typed into the create dialog is the track's first message: it
-  # goes through the same queue as one sent from the composer, on the
-  # default thread, and waits there until setup is ready. The track is
-  # already open by then, so a refused prompt does not undo it; the page
-  # opens the track and says the prompt was not queued.
-  defp open_track(user, project_id, attrs, prompt) do
-    with {:ok, track} <- Tracks.open(user, project_id, attrs) do
-      if String.trim(prompt) == "",
-        do: {:ok, {track, :none}},
-        else:
-          {:ok,
-           {track,
-            Tracks.prompt(user, track.id, %{prompt: prompt, request_id: Ecto.UUID.generate()})}}
+  # A prompt typed into the create dialog, or into an empty state's form, is
+  # the track's first message; see `RavixWeb.Live.QuickStart.open_track/4`.
+  defp first_prompt_refused(socket, queued) do
+    case QuickStart.refused(queued) do
+      nil -> socket
+      message -> put_flash(socket, :error, message)
     end
   end
-
-  defp first_prompt_refused(socket, {:error, reason}),
-    do:
-      put_flash(
-        socket,
-        :error,
-        "The track opened, but its first prompt was not queued. #{RavixWeb.Error.from(reason).message}"
-      )
-
-  defp first_prompt_refused(socket, _queued), do: socket
 
   defp created({:ok, value}, user), do: {:ok, {value, read_rail(user)}}
   defp created(response, _user), do: response
@@ -2083,6 +2125,49 @@ defmodule RavixWeb.WorkspaceLive do
     end
   end
 
+  # What the empty states' first-prompt form may start in: the project on
+  # screen, or on `/home` (which has none) a repository GitHub shows, or
+  # scratch.
+  defp quick_targets(%{assigns: %{project: %{} = project}}) do
+    if project.access != :tracks,
+      do: [{"Projects", [{project.repo || project.name, "project:" <> project.id}]}],
+      else: []
+  end
+
+  defp quick_targets(socket),
+    do: QuickStart.targets(socket.assigns.repos)
+
+  # Somebody on `/home` with nothing started yet is offered repositories
+  # they have not made a project of, which is a GitHub read. Asked once,
+  # when that page first shows its empty state.
+  defp quick_repos(
+         %{assigns: %{live_action: :projects, rail_loaded: true, quick_repos: false}} = socket
+       ) do
+    if fresh_start?(socket.assigns.projects),
+      do: socket |> assign(quick_repos: true) |> load_repos(nil),
+      else: socket
+  end
+
+  defp quick_repos(socket), do: socket
+
+  # Nothing to pick up where one left off: no project in the rail. Somebody
+  # with projects keeps their Recent list, and a project with no tracks has
+  # the same form on its own page.
+  defp fresh_start?(projects), do: projects == []
+
+  # The only repository is the one somebody means.
+  defp quick_preselect(%{assigns: %{project: nil, quick_form: form}} = socket) do
+    case {form.params["target"], QuickStart.preselect(quick_targets(socket))} do
+      {blank, value} when blank in [nil, ""] and is_binary(value) ->
+        QuickStart.edit(socket, %{"target" => value})
+
+      _ ->
+        socket
+    end
+  end
+
+  defp quick_preselect(socket), do: socket
+
   defp track_suffix(nil), do: ""
   defp track_suffix(id), do: "/t/#{id}"
 
@@ -2244,6 +2329,21 @@ defmodule RavixWeb.WorkspaceLive do
   defp ref_id(%{name: name}), do: name
   defp ref_label(%{number: number, title: title}), do: "##{number} #{title}"
   defp ref_label(%{name: name}), do: name
+
+  # The New track chips (RAV-60): where the track opens, and who sees it.
+  defp track_destination(%{repo: repo}) when is_binary(repo), do: repo
+  defp track_destination(project), do: "Scratch · #{project.display_name}"
+
+  defp private_tracks?(user), do: Ravix.Config.dedicated_opens_enabled?(user)
+
+  defp sharing_choices,
+    do: [
+      {"project", "Everyone", "Everyone in this project"},
+      {"private", "Only me", "Only me and the people I invite"}
+    ]
+
+  defp sharing_label("private"), do: "Only me"
+  defp sharing_label(_visibility), do: "Everyone"
 
   defp attention_count(tracks),
     do:

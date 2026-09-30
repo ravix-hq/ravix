@@ -169,6 +169,8 @@
         <button
           id="top-new-track"
           class="primary"
+          data-new-track-trigger
+          aria-keyshortcuts="Control+N Meta+N"
           phx-click={JS.push_focus() |> JS.push("top-new-track")}
         >
           <.icon name="plus" />New track
@@ -696,8 +698,69 @@
             Choose a track shared with you in the tabs above.
           </p>
         </div>
+        <section
+          :if={
+            @project && is_nil(@track_id) && @project.access != :tracks &&
+              @live_action != :plans && is_nil(@selected_plan_id) && !@new_plan &&
+              is_nil(@settings)
+          }
+          id="project-start"
+          class="first-prompt"
+          aria-label="Start work in this project"
+        >
+          <%= if (@tracks[@project.id] || []) == [] do %>
+            <QuickStart.composer
+              id="project-quick-start"
+              form={@quick_form}
+              project={@project}
+              busy={@quick_busy}
+            />
+            <QuickStart.explainer id="project-explainer" />
+          <% else %>
+            <h2>Recent tracks</h2>
+            <ul class="first-prompt-recent">
+              <li :for={track <- Enum.take(@tracks[@project.id], 5)}>
+                <.link patch={"/p/#{@project.id}/t/#{track.id}"}>
+                  <strong>{track.title}</strong> <code class="dimmer">{track.branch}</code>
+                </.link>
+              </li>
+            </ul>
+          <% end %>
+        </section>
         <div :if={is_nil(@project) && @live_action == :projects} class="centred workspace-home">
-          <div class="hero">
+          <section
+            :if={@rail_loaded && fresh_start?(@projects)}
+            id="home-start"
+            class="first-prompt"
+            aria-labelledby="home-start-h"
+          >
+            <h1 id="home-start-h">Start your first track</h1>
+            <p class="hero-sub">
+              Pick a repository and describe the change. Ravix opens a track, and your agent starts there.
+            </p>
+            <QuickStart.composer
+              id="home-quick-start"
+              form={@quick_form}
+              groups={QuickStart.targets(@repos)}
+              loading={@repos_loading}
+              busy={@quick_busy}
+            />
+            <QuickStart.explainer id="home-explainer" />
+            <p class="hint first-prompt-alt">
+              <button
+                class="ghost home-action"
+                phx-click={JS.push_focus() |> JS.push("dialog")}
+                phx-value-name="new-project"
+              >
+                <.icon name="plus" size={14} class="ico" /> New project
+              </button>
+              to add a repository without starting a track yet.
+            </p>
+          </section>
+          <div
+            :if={!@rail_loaded || !fresh_start?(@projects)}
+            class="hero"
+          >
             <div class="home-heading">
               <h1 :if={@rail_loaded}>
                 {if @projects == [],
@@ -1012,86 +1075,125 @@
         busy={@busy}
       />
     </.dialog>
+    <%!-- RAV-60: the prompt leads and has focus; the destination, sharing
+      and agent are chips whose menus are popovers, and the footer with
+      Create never scrolls away. The chips' radios belong to the form by
+      `form=`, since the repository's own forms cannot nest inside it. --%>
     <.dialog
       :if={@dialog == :new_track && @track_project}
       id="new-track-dialog"
       title="New track"
       on_close={dismiss(@project, @track_id, @settings)}
+      focus_on_mount={false}
     >
-      <RavixWeb.Live.RepoPicker.picker
-        :if={@picker}
-        picker={@picker}
-        selected={@track_project}
-        busy={@busy}
-      />
-      <form :if={!@picker} id="new-track-project-form" phx-change="new-track-project">
-        <label for="new-track-project">Project / repository</label>
-        <select id="new-track-project" name="project" disabled={@busy}>
-          <option
-            :for={project <- @projects}
-            :if={project.access != :tracks}
-            value={project.id}
-            selected={project.id == @track_project.id}
-          >
-            {project.display_name}{if project.repo, do: " · #{project.repo}"}
-          </option>
-        </select>
-      </form>
+      <div class="new-track-chips">
+        <RavixWeb.Live.ModelMenu.chip
+          id="new-track-repo"
+          label={track_destination(@track_project)}
+          haspopup="dialog"
+          class="pick-chip"
+          menu_class="chip-popover-below repo-popover"
+          menu_label="Repository"
+          disabled={@busy}
+        >
+          <:trigger>
+            <.icon name={if @track_project.repo, do: "folder", else: "machine"} size={13} />
+            {track_destination(@track_project)}
+          </:trigger>
+          <RavixWeb.Live.RepoPicker.picker
+            :if={@picker}
+            picker={@picker}
+            selected={@track_project}
+            busy={@busy}
+          />
+          <form :if={!@picker} id="new-track-project-form" phx-change="new-track-project">
+            <label for="new-track-project">Project / repository</label>
+            <select id="new-track-project" name="project" disabled={@busy} data-chip-focus>
+              <option
+                :for={project <- @projects}
+                :if={project.access != :tracks}
+                value={project.id}
+                selected={project.id == @track_project.id}
+              >
+                {project.display_name}{if project.repo, do: " · #{project.repo}"}
+              </option>
+            </select>
+          </form>
+        </RavixWeb.Live.ModelMenu.chip>
+        <span class="spacer"></span>
+        <RavixWeb.Live.ModelMenu.chip
+          :if={private_tracks?(@current_user)}
+          id="new-track-sharing"
+          label={"Sharing: " <> sharing_label(@track_form.params["visibility"])}
+          haspopup="dialog"
+          class="pick-chip"
+          menu_class="chip-popover-below chip-popover-end"
+          menu_label="Sharing"
+          disabled={@busy}
+        >
+          <:trigger>
+            <.icon
+              name={if @track_form.params["visibility"] == "private", do: "lock", else: "globe"}
+              size={13}
+            />{sharing_label(@track_form.params["visibility"])}
+          </:trigger>
+          <fieldset class="chip-group">
+            <legend>Who can see this track</legend>
+            <label
+              :for={{value, title, detail} <- sharing_choices()}
+              class="account-item model-option"
+            >
+              <input
+                type="radio"
+                class="sr-only"
+                name="new_track[visibility]"
+                value={value}
+                form="new-track-form"
+                checked={(@track_form.params["visibility"] || "project") == value}
+                data-chip-close
+              />
+              <span class="chip-choice"><span>{title}</span><small>{detail}</small></span>
+              <span class="spacer"></span>
+              <span
+                :if={(@track_form.params["visibility"] || "project") == value}
+                class="check"
+                aria-hidden="true"
+              >✓</span>
+            </label>
+          </fieldset>
+        </RavixWeb.Live.ModelMenu.chip>
+        <span :if={!private_tracks?(@current_user)} class="pick-chip pick-chip-static">
+          <.icon name="globe" size={13} />Everyone
+          <input type="hidden" name="new_track[visibility]" value="project" form="new-track-form" />
+        </span>
+      </div>
       <.form
         :let={f}
         for={@track_form}
         id="new-track-form"
         phx-submit="create-track"
         phx-change="edit"
+        phx-hook="ProjectFormFocus"
+        data-focus="#new-track-prompt"
       >
         <.input
           field={f[:prompt]}
           id="new-track-prompt"
           type="textarea"
-          label="What do you want to work on?"
-          rows="3"
+          class="new-track-prompt"
+          rows="5"
           maxlength="100000"
           phx-hook="SubmitOnEnter"
           phx-debounce="300"
-          placeholder="Optional. Sent to the agent once setup is ready."
+          placeholder="What do you want to work on?"
+          aria-label="What do you want to work on?"
           aria-describedby="new-track-prompt-hint"
           disabled={@busy}
         />
-        <p id="new-track-prompt-hint" class="hint">
-          Enter creates the track; Shift+Enter adds a line.
+        <p id="new-track-prompt-hint" class="sr-only">
+          Sent to the agent once setup is ready. Enter creates the track; Shift+Enter adds a line.
         </p>
-        <.input
-          field={f[:visibility]}
-          type="select"
-          label="Sharing"
-          options={
-            [{"Everyone in this project", "project"}] ++
-              if(Ravix.Config.dedicated_opens_enabled?(@current_user),
-                do: [{"Only people I invite", "private"}],
-                else: []
-              )
-          }
-          value={f[:visibility].value || "project"}
-        />
-        <RavixWeb.Live.RuntimePicker.fields
-          :if={@track_options}
-          options={@track_options}
-          params={@track_form.params}
-          name="new_track"
-        />
-        <p :if={!@advanced_track} class="hint">
-          New worktree from {@track_project.default_branch || "the default branch"}, with an automatic name.
-        </p>
-        <button
-          type="button"
-          class="ghost"
-          phx-click="advanced-track"
-          aria-expanded={to_string(@advanced_track)}
-          aria-controls="track-advanced"
-        >
-          {if @advanced_track, do: "Hide advanced", else: "Advanced"}
-        </button>
-        <div id="track-advanced" hidden={!@advanced_track}>
+        <div id="track-advanced" class="track-advanced" hidden={!@advanced_track}>
           <div class="workspace-actions origin-options">
             <button
               :for={{kind, label} <- origin_choices()}
@@ -1156,15 +1258,6 @@
           </p>
         </div>
         <.loading_status :if={@busy}>Opening track and preparing its worktree…</.loading_status>
-        <button
-          class="primary"
-          disabled={
-            @busy || (@origin_kind != :blank && @refs == []) || creator_blocked?(@track_options)
-          }
-          phx-disable-with="Opening…"
-        >
-          {if @busy, do: "Opening track…", else: "Create track"}
-        </button>
       </.form>
       <RavixWeb.Live.ThreadConnect.panel
         options={@track_options}
@@ -1172,6 +1265,49 @@
         current_user={@current_user}
         session_hash={@session_hash}
       />
+      <:footer>
+        <RavixWeb.Live.RuntimePicker.menu
+          :if={@track_options}
+          id="new-track-model"
+          options={@track_options}
+          params={@track_form.params}
+          name="new_track"
+          form="new-track-form"
+          disabled={@busy}
+        />
+        <span :if={!@track_options} class="pick-chip pick-chip-static dim">Loading agents…</span>
+        <button
+          type="button"
+          id="new-track-options"
+          class="ghost chip-options"
+          phx-click="advanced-track"
+          aria-expanded={to_string(@advanced_track)}
+          aria-controls="track-advanced"
+          title={
+            if @advanced_track,
+              do: "Hide options",
+              else:
+                "New worktree from #{@track_project.default_branch || "the default branch"}, with an automatic name"
+          }
+        >
+          <.icon name="more" size={14} /><span>Options</span>
+        </button>
+        <span class="spacer"></span>
+        <button
+          type="submit"
+          form="new-track-form"
+          id="new-track-create"
+          class="primary"
+          aria-label="Create track"
+          aria-keyshortcuts="Enter"
+          disabled={
+            @busy || (@origin_kind != :blank && @refs == []) || creator_blocked?(@track_options)
+          }
+          phx-disable-with="Opening…"
+        >
+          {if @busy, do: "Opening track…", else: "Create"}<kbd :if={!@busy} aria-hidden="true">↵</kbd>
+        </button>
+      </:footer>
     </.dialog>
     <.dialog
       :if={@dialog == :changes}

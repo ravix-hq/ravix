@@ -72,6 +72,21 @@ defmodule Ravix.Tracks.Attribution do
   end
 
   @doc """
+  A delivered prompt with a leading `commit_block/1` and the blank line
+  after it removed: the block is the agent's to read, and its noreply
+  address is nobody else's to see. Anything else is returned unchanged.
+  """
+  @spec visible_prompt(String.t()) :: String.t()
+  def visible_prompt(prompt) do
+    with true <- String.starts_with?(prompt, @start <> "\n"),
+         [_block, rest] <- String.split(prompt, "\n" <> @stop <> "\n\n", parts: 2) do
+      rest
+    else
+      _ -> prompt
+    end
+  end
+
+  @doc """
   The attribution block for delivering a prompt on `thread_id` of `track`,
   or `""` when there is nobody to credit or the switch is off.
 

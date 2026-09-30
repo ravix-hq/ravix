@@ -733,16 +733,17 @@ defmodule Ravix.PeopleTest do
       assert {:ok, people} = People.list(ctx.guest, ctx.shared.id)
       assert length(people) == 2
 
-      # Every entry carries exactly these five, so a page never infers which
+      # Every entry carries exactly these seven, so a page never infers which
       # kind of person it is holding from the absence of a key. That is now
       # `@enforce_keys` on `Ravix.People.Person` rather than a convention
-      # this loop is the only check on; what it still catches is a *fifth*
-      # field arriving off the user row. `role` is ADR 0010's, from the seat.
+      # this loop is the only check on; what it still catches is another
+      # field arriving off the user row. `role` is ADR 0010's, from the seat;
+      # `source` and `fallback` are RAV-75's, and set on a project's list.
       for person <- people do
         assert %Person{} = person
 
         assert person |> Map.from_struct() |> Map.keys() |> Enum.sort() ==
-                 [:avatar_url, :login, :name, :role, :via]
+                 [:avatar_url, :fallback, :login, :name, :role, :source, :via]
       end
 
       assert {:ok, people} = People.list_project(ctx.guest, ctx.project.id)
@@ -752,7 +753,7 @@ defmodule Ravix.PeopleTest do
         assert %Person{} = person
 
         assert person |> Map.from_struct() |> Map.keys() |> Enum.sort() ==
-                 [:avatar_url, :login, :name, :role, :via]
+                 [:avatar_url, :fallback, :login, :name, :role, :source, :via]
       end
     end
   end
@@ -973,8 +974,22 @@ defmodule Ravix.PeopleTest do
       assert {:ok, people} = People.list_project(ctx.owner, ctx.project.id)
 
       assert people == [
-               %Person{login: "ana", name: "Ana", avatar_url: nil, via: :owner, role: :admin},
-               %Person{login: "bo", name: "Bo", avatar_url: nil, via: :project, role: :write},
+               %Person{
+                 login: "ana",
+                 name: "Ana",
+                 avatar_url: nil,
+                 via: :owner,
+                 role: :admin,
+                 source: :owner
+               },
+               %Person{
+                 login: "bo",
+                 name: "Bo",
+                 avatar_url: nil,
+                 via: :project,
+                 role: :write,
+                 source: :direct
+               },
                %Person{login: "dana", name: nil, avatar_url: nil, via: :pending}
              ]
 

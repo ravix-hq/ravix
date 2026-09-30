@@ -46,14 +46,20 @@ test('a first prompt typed in the create dialog opens the track with it waiting 
   // backstop is thirty seconds, so each wait allows a full sweep and more.
   await expect(page.locator('#track-setup-status')).toHaveCount(0, { timeout: 60_000 });
   await expect(queue).toHaveCount(0, { timeout: 45_000 });
-  const bubble = page.locator('#transcript-turns .workspace-prompt')
-    .filter({ hasText: 'Add a health check endpoint' });
+  const delivered = '#transcript-turns .workspace-turn > .said > .workspace-prompt';
+  const bubble = page.locator(delivered).filter({ hasText: 'Add a health check endpoint' });
   await expect(bubble).toHaveCount(1, { timeout: 20_000 });
   await expect(bubble.locator('strong')).toHaveText('health check');
   // The typed newline is a break, not a space.
   await expect(bubble.locator('p br')).toHaveCount(1);
   await expect(bubble.locator('pre code')).toHaveText(wide);
-  const fit = await bubble.evaluate(el => {
+  // Each patch to the running turn replaces its `.said`, so a handle resolved
+  // before one is detached by the time it is measured (RAV-78). Find and
+  // measure in one synchronous call, which no patch can interrupt.
+  const fit = await page.evaluate(({ delivered, text }) => {
+    const [el, ...rest] = [...document.querySelectorAll(delivered)]
+      .filter(bubble => bubble.textContent.includes(text));
+    if (!el || rest.length) return null;
     const pre = el.querySelector('pre');
     return {
       bubble: el.getBoundingClientRect().width,
@@ -62,7 +68,8 @@ test('a first prompt typed in the create dialog opens the track with it waiting 
       scrolls: pre.scrollWidth > pre.clientWidth,
       overflow: getComputedStyle(pre).overflowX,
     };
-  });
+  }, { delivered, text: 'Add a health check endpoint' });
+  expect(fit).not.toBeNull();
   expect(fit.bubble).toBeLessThanOrEqual(fit.column + 0.5);
   expect(fit.column).toBeLessThanOrEqual(fit.turn * 0.8 + 0.5);
   expect(fit.scrolls).toBe(true);
