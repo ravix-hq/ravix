@@ -8,6 +8,8 @@
 // zone. An ancestor with `data-label` is a link whose accessible name hides
 // the text, so its `aria-label` is that label plus the age in words.
 
+import {fullTime} from './local_time.js'
+
 const MINUTE = 60, HOUR = 60 * MINUTE, DAY = 24 * HOUR, MONTH = 30 * DAY, YEAR = 365 * DAY
 export const TICK_MS = 30_000
 
@@ -28,12 +30,21 @@ export function age(then, now = Date.now()) {
 const mounted = new Set()
 let timer = null
 
+// `data-style="ago"` writes "2h ago" rather than the rail's bare "2h", for
+// a place with room for the words; `data-title-prefix` replaces the
+// tooltip's "Last active ".
+function text(el, short) {
+  if (el.dataset.style !== 'ago') return short
+  return short === 'now' ? 'just now' : `${short} ago`
+}
+
 function render(el, now = Date.now()) {
   const then = Date.parse(el.getAttribute('datetime'))
   if (Number.isNaN(then)) return
   const {short, words} = age(then, now)
-  if (el.textContent !== short) el.textContent = short
-  el.title = `Last active ${new Date(then).toLocaleString()}`
+  const shown = text(el, short)
+  if (el.textContent !== shown) el.textContent = shown
+  el.title = `${el.dataset.titlePrefix ?? 'Last active '}${fullTime(then)}`
   const link = el.closest('[data-label]')
   if (link) link.setAttribute('aria-label', `${link.dataset.label}, active ${words}`)
 }

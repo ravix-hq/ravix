@@ -31,6 +31,7 @@
 //   CopyCode        copy a Help example exactly, with success or failure feedback
 //   TurnTimer       a running turn's elapsed time, ticking without a round-trip
 //   RelativeTime    a sidebar row's "22h" age, kept current without server ticks
+//   LocalTime       a timestamp in the viewer's own zone and locale
 //   SubmitOnEnter   the create dialog's first prompt: Enter creates, Shift+Enter is a new line
 //   HeaderFit       a track header's status chips: whole words or just their icons
 //   ChipMenu        a chip's popover: aria-expanded, Escape and focus return inside a dialog
@@ -64,12 +65,14 @@ import {CopyCode} from "./hooks/copy_code"
 import {ShareMention} from "./hooks/share_mention"
 import {TurnTimer} from "./hooks/turn_timer"
 import {RelativeTime} from "./hooks/relative_time"
+import {LocalTime} from "./hooks/local_time"
 import {SubmitOnEnter} from "./hooks/submit_on_enter"
 import {HeaderFit} from "./hooks/header_fit"
 import {ChipMenu} from "./hooks/chip_menu"
 
 
-const hooks = {ThreadTabs, AgentConfirmation, Theme, PanelResize, PanelToggle, TranscriptTail, Composer, Terminal, Notify, SettingsSections, ProjectTree, QuickJump, ProjectSections, CopyCode, ProjectFormFocus, ShareMention, TurnTimer, RelativeTime, SubmitOnEnter, Shell, HeaderFit, ChipMenu}
+
+const hooks = {ThreadTabs, AgentConfirmation, Theme, PanelResize, PanelToggle, TranscriptTail, Composer, Terminal, Notify, SettingsSections, ProjectTree, QuickJump, ProjectSections, CopyCode, ProjectFormFocus, ShareMention, TurnTimer, RelativeTime, SubmitOnEnter, Shell, HeaderFit, LocalTime, ChipMenu}
 
 const csrfToken = document.querySelector("meta[name='csrf-token']").getAttribute("content")
 clearTransportFallback(window)

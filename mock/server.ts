@@ -63,6 +63,12 @@ interface Conv {
   inserted_at: string;
   /** The conversation's own model (Fountain ADR 0061); null follows the agent's. */
   model: string | null;
+  /**
+   * ADR 0062: the adapter's option list as of the latest prompt, null until a
+   * turn has reported one, and the values in force on the open session.
+   */
+  session_config_options: SessionConfigOption[] | null;
+  session_values: Record<string, string | boolean>;
   turn_generation: number;
   inference_credential_id: string | null;
   inference_revision: number;
@@ -384,7 +390,92 @@ const toolDone = (id: string, out: string) =>
  */
 type PromptImage = { data: string; media_type: string };
 
-async function runTurn(conv: Conv, prompt: string, clientRequestId: string | null, images: PromptImage[], attaching = false): Promise<void> {
+// ── ACP session config options (Fountain ADR 0062) ──────────────────────
+
+type SessionConfig = Record<string, string | boolean>;
+type SessionConfigOption = {
+  id: string; name: string; category: string; type: "select" | "boolean";
+  currentValue: string | boolean; options?: { value: string; name: string }[];
+};
+
+/** A prompt's `session_config`: only the shape is checked, as Fountain does. */
+function sessionConfig(raw: unknown): SessionConfig | "invalid" {
+  if (raw === undefined || raw === null) return {};
+  if (typeof raw !== "object" || Array.isArray(raw)) return "invalid";
+  const entries = Object.entries(raw as Record<string, unknown>);
+  if (entries.length > 16) return "invalid";
+  for (const [id, value] of entries) {
+    if (!/^[A-Za-z0-9._:-]{1,64}$/.test(id) || id === "model") return "invalid";
+    if (typeof value !== "boolean" && (typeof value !== "string" || value.length < 1 || value.length > 200)) return "invalid";
+  }
+  return raw as SessionConfig;
+}
+
+const select = (values: [string, string][]) => values.map(([value, name]) => ({ value, name }));
+
+/**
+ * What the pinned adapters advertise, by model: claude-agent-acp 0.81.2
+ * (`effort`, `fast`, `mode`) and codex-acp 1.10.0 (`reasoning_effort`,
+ * `fast-mode`, `mode`). Values vary by model, as they do upstream: Sonnet has
+ * no `xhigh` or `max`, and only Opus 5.5 and GPT-6 Astra have a fast tier.
+ */
+function advertised(conv: Conv): SessionConfigOption[] {
+  const agent = state.agents.find((a) => a.id === conv.agent_id);
+  const model = conv.model ?? (typeof agent?.model === "string" ? agent.model : "");
+  const opts: SessionConfigOption[] = [];
+  if (conv.runtime === "codex") {
+    opts.push({ id: "reasoning_effort", name: "Reasoning effort", category: "thought_level", type: "select", currentValue: "medium",
+      options: select([["low", "Low"], ["medium", "Medium"], ["high", "High"], ["xhigh", "Extra high"]]) });
+    if (model.includes("gpt-6-astra")) opts.push({ id: "fast-mode", name: "Fast mode", category: "model_config", type: "boolean", currentValue: false });
+    opts.push({ id: "mode", name: "Mode", category: "mode", type: "select", currentValue: "auto",
+      options: select([["read-only", "Read only"], ["auto", "Auto"], ["full-access", "Full access"]]) });
+  } else {
+    if (!model.includes("haiku")) {
+      const levels: [string, string][] = [["default", "Default"], ["low", "Low"], ["medium", "Medium"], ["high", "High"]];
+      if (!model.includes("sonnet")) levels.push(["xhigh", "Extra high"], ["max", "Max"]);
+      opts.push({ id: "effort", name: "Effort", category: "thought_level", type: "select", currentValue: "default", options: select(levels) });
+    }
+    if (model.endsWith("claude-opus-5-5")) opts.push({ id: "fast", name: "Fast mode", category: "model_config", type: "boolean", currentValue: false });
+    opts.push({ id: "mode", name: "Mode", category: "mode", type: "select", currentValue: "default",
+      options: select([["default", "Default"], ["acceptEdits", "Accept edits"], ["plan", "Plan"], ["auto", "Auto"]]) });
+  }
+  return opts.map((o) => (o.id in conv.session_values ? { ...o, currentValue: conv.session_values[o.id]! } : o));
+}
+
+/** Apply a turn's options as Fountain's peer does; false when one is refused. */
+function applyConfig(conv: Conv, record: Record<string, unknown>, config: SessionConfig, emit: (ev: Record<string, unknown>) => void): boolean {
+  const selection = record.config_selection as Record<string, unknown> | null;
+  const offered = advertised(conv);
+  const ordered = Object.keys(config).sort((a, b) => {
+    const i = offered.findIndex((o) => o.id === a), j = offered.findIndex((o) => o.id === b);
+    return (i < 0 ? 99 : i) - (j < 0 ? 99 : j);
+  });
+  for (const id of ordered) {
+    const value = config[id]!;
+    const option = offered.find((o) => o.id === id);
+    if (!option) {
+      selection!.skipped = [...((selection!.skipped as string[]) ?? []), id];
+      emit({ kind: "stage", stage: "config", state: "done", data: JSON.stringify({ outcome: "skipped", id, requested: value, reason: "not advertised by the runtime for this model" }) });
+      continue;
+    }
+    const ok = option.type === "boolean" ? typeof value === "boolean" : option.options!.some((c) => c.value === value);
+    if (!ok) {
+      const detail = `Invalid value for config option ${id}: ${value}`;
+      Object.assign(selection!, { status: "failed", failed_id: id, error:
+        `Could not set ${id} to ${JSON.stringify(value)}: ${detail}. No prompt was sent. Choose a value from the conversation's session_config_options, or remove ${id} from session_config.` });
+      emit({ kind: "stage", stage: "config", state: "failed", data: JSON.stringify({ id, requested: value, detail }) });
+      conv.session_config_options = advertised(conv);
+      return false;
+    }
+    conv.session_values[id] = value;
+    selection!.applied = { ...((selection!.applied as SessionConfig) ?? {}), [id]: value };
+    emit({ kind: "stage", stage: "config", state: "done", data: JSON.stringify({ outcome: "applied", id, requested: value, confirmed: value }) });
+  }
+  conv.session_config_options = advertised(conv);
+  return true;
+}
+
+async function runTurn(conv: Conv, prompt: string, clientRequestId: string | null, images: PromptImage[], attaching = false, config: SessionConfig = {}): Promise<void> {
   const generation = conv.turn_generation;
   const disk = state.boxes.get(conv.sandbox_id!);
   if (!disk) return;
@@ -421,6 +512,7 @@ async function runTurn(conv: Conv, prompt: string, clientRequestId: string | nul
     client_request_id: clientRequestId,
     image_count: images.length,
     images,
+    config_selection: Object.keys(config).length ? { requested: config } as Record<string, unknown> : null,
   };
   state.turns.set(conv.id, [...(state.turns.get(conv.id) ?? []), record]);
 
@@ -429,6 +521,16 @@ async function runTurn(conv: Conv, prompt: string, clientRequestId: string | nul
     record.status = "running";
   }
   emit({ kind: "stage", stage: "turn", state: "started" });
+  // ADR 0062: the options go on after the model and before the prompt, and a
+  // refusal fails the turn before anything is written to the agent.
+  if (!applyConfig(conv, record, config, emit)) {
+    conv.status = "idle";
+    conv.last_active_at = now();
+    record.status = "failed";
+    emit({ kind: "stage", stage: "turn", state: "failed", data: JSON.stringify({ error: (record.config_selection as Record<string, unknown>).error }) });
+    releaseTurn(conv);
+    return;
+  }
   // The Claude adapter lists its slash commands once the session exists,
   // which on this mock is the conversation's first turn; the composer's `/`
   // menu reads them from here.
@@ -679,7 +781,7 @@ function invalidateInference(set: { id: string; revision: number }): void {
   }
 }
 
-function accept(conv: Conv, prompt: string, clientRequestId: string | null = null, images: PromptImage[] = [], attaching = false): { error: string } | null {
+function accept(conv: Conv, prompt: string, clientRequestId: string | null = null, images: PromptImage[] = [], attaching = false, config: SessionConfig = {}): { error: string } | null {
   const source = state.credentialSets.find(s => s.id === conv.inference_credential_id);
   if (source && source.revision !== conv.inference_revision) return { error: "inference_source_changed" };
   if (source) {
@@ -697,7 +799,7 @@ function accept(conv: Conv, prompt: string, clientRequestId: string | null = nul
   holders.add(conv.id);
   state.busy.set(key, holders);
   conv.status = attaching ? "idle" : "running";
-  void runTurn(conv, prompt, clientRequestId, images, attaching).catch((error) => {
+  void runTurn(conv, prompt, clientRequestId, images, attaching, config).catch((error) => {
     if (error === cancelledTurn) return;
     if (conv.status !== "terminated") endTurn(conv, "failed");
     console.error("mock: turn failed");
@@ -753,7 +855,7 @@ export async function fountain(req: Request, url: URL): Promise<Response | null>
       data: {
         runtimes: ["claude", "codex"],
         models: {
-          claude: ["anthropic/claude-opus-5", "anthropic/claude-sonnet-5"],
+          claude: ["anthropic/claude-opus-5-5", "anthropic/claude-opus-5", "anthropic/claude-sonnet-5"],
           codex: ["openai/gpt-6-astra", "openai/gpt-5.5"],
         },
         package_managers: ["apt", "npm"],
@@ -1162,6 +1264,8 @@ export async function fountain(req: Request, url: URL): Promise<Response | null>
       last_active_at: null,
       inserted_at: now(),
       model: typeof b.model === "string" ? b.model : null,
+      session_config_options: null,
+      session_values: {},
     };
     // A prompt sent with the launch is the first turn. Ravix sends the
     // opening turn this way on the launch that *provisions* the box and
@@ -1181,8 +1285,10 @@ export async function fountain(req: Request, url: URL): Promise<Response | null>
   if (convPrompt) {
     const conv = state.conversations.find((c) => c.id === convPrompt[1]);
     if (!conv) return json({ error: "not_found" }, 404);
-    const { prompt, client_request_id, images } = body as { prompt?: unknown; client_request_id?: unknown; images?: PromptImage[] };
-    const refused = accept(conv, String(prompt ?? ""), typeof client_request_id === "string" ? client_request_id : null, images ?? []);
+    const { prompt, client_request_id, images, session_config } = body as { prompt?: unknown; client_request_id?: unknown; images?: PromptImage[]; session_config?: unknown };
+    const config = sessionConfig(session_config);
+    if (config === "invalid") return json({ error: "session_config_invalid", message: "session_config must map option ids to strings or booleans" }, 422);
+    const refused = accept(conv, String(prompt ?? ""), typeof client_request_id === "string" ? client_request_id : null, images ?? [], false, config);
     if (refused) return json(refused, 409);
     return json({ status: "accepted" });
   }
@@ -1406,7 +1512,9 @@ const PEOPLE = [
     { id: 9033, login: "mentioner", name: "Mention Author", avatar_url: `${BASE}/ghweb/avatar.svg` },
     { id: 9034, login: "escaper", name: "Escape Presser", avatar_url: `${BASE}/ghweb/avatar.svg` },
     { id: 9035, login: "sidebartree", name: "Sidebar Tree", avatar_url: `${BASE}/ghweb/avatar.svg` },
-    { id: 9036, login: "newtrackfit", name: "New Track Fit", avatar_url: `${BASE}/ghweb/avatar.svg` },
+    { id: 9036, login: "modeleffort", name: "Model Effort", avatar_url: `${BASE}/ghweb/avatar.svg` },
+    { id: 9047, login: "addowner", name: "Add Owner", avatar_url: `${BASE}/ghweb/avatar.svg` },
+    { id: 9048, login: "newtrackfit", name: "New Track Fit", avatar_url: `${BASE}/ghweb/avatar.svg` },
   ] : []),
   { id: 9001, login: "dana", name: "Dana Okonkwo", avatar_url: `${BASE}/ghweb/avatar.svg?dana` },
   { id: 9002, login: "eli", name: "Eli Fischer", avatar_url: `${BASE}/ghweb/avatar.svg?eli` },

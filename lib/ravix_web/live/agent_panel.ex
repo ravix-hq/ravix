@@ -625,7 +625,7 @@ defmodule RavixWeb.Live.AgentPanel do
     <%= cond do %>
       <% is_binary(@subscription.exhausted_until) -> %>
         Its plan is spent until
-        <.provider_time value={@subscription.exhausted_until} />; Codex runs are refused until then.
+        <.provider_time id="chatgpt-subscription-until" value={@subscription.exhausted_until} />; Codex runs are refused until then.
       <% @subscription.status == "active" -> %>
       <% true -> %>
         Codex runs on your projects are refused until you sign in again.

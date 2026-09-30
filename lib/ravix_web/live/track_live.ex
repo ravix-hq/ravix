@@ -61,7 +61,7 @@ defmodule RavixWeb.TrackLive do
   alias Ravix.Accounts.Access
   alias Ravix.Comments
   alias Ravix.GitHub.ChecksReport
-  alias Ravix.{Hub, Previews, PromptQueue, Terminal, Tracks}
+  alias Ravix.{Hub, Previews, PromptQueue, SessionConfig, Terminal, Tracks}
   alias Ravix.Hub.Event
   alias Ravix.PromptQueue.Recovery
   alias Ravix.Tracks.{AgentFailure, Diff, Files, Follower, MachineState}
@@ -89,6 +89,9 @@ defmodule RavixWeb.TrackLive do
       assign(socket,
         track_id: session["track_id"],
         thread_id: session["track_id"],
+        # The zone the browser reported to the workspace on connect, for the
+        # server's reading of timestamps before `LocalTime` rewrites them.
+        timezone: Ravix.Schedules.timezone(session["timezone"]),
         thread_generation: 0,
         threads: [],
         sibling_followers: %{},
@@ -487,6 +490,25 @@ defmodule RavixWeb.TrackLive do
       do: {:noreply, socket},
       else: {:noreply, begin(socket, :model, &Tracks.set_model(&1, &2, thread_id, model))}
   end
+
+  # RAV-52: one of the shown conversation's session config options (effort
+  # or Fast), from its next prompt. Checked here against the options this
+  # page was shown, and again by the context against a fresh read: an id
+  # that is not the effort or Fast option, or a value the runtime did not
+  # list, never reaches it. Ids and values stay strings; no atom is made.
+  # It shares the model's slot in `pending`: one write from the menu at a time.
+  def handle_event("set-session-option", %{"id" => id, "choice" => value}, socket)
+      when is_binary(id) and is_binary(value) do
+    controls = SessionConfig.controls(socket.assigns.track.session_options)
+
+    case SessionConfig.choose(controls, id, value) do
+      {:ok, id, _value} -> {:noreply, set_session_option(socket, id, value)}
+      :error -> {:noreply, session_option_refused(socket)}
+    end
+  end
+
+  def handle_event("set-session-option", _params, socket),
+    do: {:noreply, session_option_refused(socket)}
 
   def handle_event("retry-track", _, socket) do
     thread_id = socket.assigns.thread_id
@@ -2138,6 +2160,17 @@ defmodule RavixWeb.TrackLive do
     |> traced_async({:git_status, id}, fn -> Tracks.git_status(user, id) end)
   end
 
+  defp set_session_option(socket, id, value) do
+    thread_id = socket.assigns.thread_id
+
+    if MapSet.member?(socket.assigns.pending, :model),
+      do: socket,
+      else: begin(socket, :model, &Tracks.set_session_option(&1, &2, thread_id, id, value))
+  end
+
+  defp session_option_refused(socket),
+    do: flash(socket, :error, "That setting isn't offered for this agent and model.")
+
   # The four preview buttons all do the same thing to the page -- mark the
   # panel busy and answer later -- and differ only in which context call they
   # make, so that call is what they pass in.
@@ -2154,6 +2187,8 @@ defmodule RavixWeb.TrackLive do
   @doc "The model under the composer: `RavixWeb.Live.ModelMenu.menu/1`."
   defdelegate model_menu(assigns), to: ModelMenu, as: :menu
 
+  # "<model> · <effort>", and the Fast option's name when it is on: what the
+  # runtime advertised, so before it has, the label is the model alone.
   defp thread_failure(socket, reason) do
     draft = socket.assigns.thread_draft || %{runtime: nil, options: nil}
     runtime = draft.runtime || socket.assigns.track.runtime || socket.assigns.project.runtime
@@ -3015,6 +3050,9 @@ defmodule RavixWeb.TrackLive do
   # trips, on every load, stage and send of every other page on this track.
   defp hub(%Event{name: :read}, socket), do: socket
 
+  # An Inbox excerpt was kept; this page reads the transcript itself.
+  defp hub(%Event{name: :reply}, socket), do: socket
+
   # A comment on the shown thread is drawn and, since this person is looking
   # at it, read. One on a sibling thread moves only that tab's dot.
   defp hub(%Event{name: :comment, thread_id: thread_id}, socket) do
@@ -3337,14 +3375,19 @@ defmodule RavixWeb.TrackLive do
   defp counted(1, noun), do: "1 #{noun}"
   defp counted(n, noun), do: "#{n} #{noun}s"
 
+  attr :id, :string, required: true
   attr :turn, :map, required: true
   attr :workdir, :string, default: nil
+  attr :options, :list, default: nil
+  attr :zone, :string, default: nil
 
   # What a finished turn cost and left behind: how long it ran, when it
-  # ended, the answer to copy, and the files its edits touched. The time is
-  # written in UTC, matching the inbox and schedule timestamps.
+  # ended, the answer to copy, the files its edits touched, and the effort
+  # and Fast it ran with (RAV-52). The time is the viewer's own
+  # (`RavixWeb.CoreComponents.local_time/1`).
   defp turn_footer(assigns) do
     %{turn: turn, workdir: workdir} = assigns
+    config = SessionConfig.describe(turn.config_selection, assigns.options)
     {started, ended} = turn_span(turn.events)
     files = changed_files(turn.blocks, workdir)
     {shown, rest} = Enum.split(files, 2)
@@ -3355,16 +3398,26 @@ defmodule RavixWeb.TrackLive do
         ended: ended,
         answer: answer(turn.blocks),
         shown: shown,
-        rest: rest
+        rest: rest,
+        applied: config.applied,
+        skipped: config.skipped
       )
 
     ~H"""
     <footer class="turn-footer">
+      <span :if={@applied != []} class="turn-config" title="Settings this turn ran with">
+        {Enum.join(@applied, " · ")}
+      </span>
+      <span :if={@applied != []} aria-hidden="true">·</span>
       <span :if={@duration}>{@duration}</span>
       <span :if={@duration && @ended} aria-hidden="true">·</span>
-      <time :if={@ended} datetime={DateTime.to_iso8601(@ended)}>
-        {Calendar.strftime(@ended, "%H:%M")} UTC
-      </time>
+      <.local_time
+        :if={@ended}
+        id={@id <> "-ended"}
+        at={@ended}
+        zone={@zone}
+        title_prefix="Ended "
+      />
       <button
         :if={@answer != ""}
         type="button"
@@ -3387,11 +3440,17 @@ defmodule RavixWeb.TrackLive do
         +{length(@rest)} more <span class="diff-add">+{Enum.sum_by(@rest, & &1.added)}</span>
         <span class="diff-del">−{Enum.sum_by(@rest, & &1.removed)}</span>
       </span>
+      <span :if={@skipped != []} class="turn-config-skipped">
+        {Enum.join(@skipped, ", ")} skipped: this model doesn't offer {if length(@skipped) == 1,
+          do: "it",
+          else: "them"}
+      </span>
     </footer>
     """
   end
 
   attr :turn, :map, required: true
+  attr :zone, :string, default: nil
 
   # How long a running turn has been going. The server writes the elapsed
   # time as of this render; `assets/js/hooks/turn_timer.js` keeps it ticking
@@ -3410,7 +3469,7 @@ defmodule RavixWeb.TrackLive do
         phx-hook="TurnTimer"
         data-started={DateTime.to_iso8601(@started)}
         data-now={DateTime.to_iso8601(@now)}
-        title={"Running since #{Calendar.strftime(@started, "%H:%M")} UTC"}
+        title={"Running since #{RavixWeb.LocalTime.full(@started, @zone)}"}
       >{duration(DateTime.diff(@now, @started))}</span>
     </footer>
     """
@@ -3524,6 +3583,12 @@ defmodule RavixWeb.TrackLive do
       <strong>{Transcript.failure_label(@block.stage)}</strong>
       <p :if={@block.body != ""}>{Ravix.Fountain.Error.reason_message(@block.body)}</p>
       <p>{Transcript.failure_next_step(@block)}</p>
+      <button
+        :if={@block.stage == "config"}
+        type="button"
+        class="ghost"
+        popovertarget="model-menu"
+      >Change setting</button>
       <details :if={@block.body != ""}>
         <summary>Technical details</summary>
         <pre>{@block.details || @block.body}</pre>
@@ -3607,6 +3672,7 @@ defmodule RavixWeb.TrackLive do
   attr :comment, :map, required: true
   attr :current_user, :map, required: true
   attr :editing, :any, default: nil
+  attr :zone, :string, default: nil
 
   defp thread_comment(assigns) do
     comment = assigns.comment
@@ -3630,9 +3696,11 @@ defmodule RavixWeb.TrackLive do
         <strong>@{@login}</strong>
         <span class="chip">Comment · not sent to the agent</span>
         <span class="spacer"></span>
-        <time datetime={DateTime.to_iso8601(@comment.inserted_at)}>
-          {Calendar.strftime(@comment.inserted_at, "%b %-d, %H:%M UTC")}
-        </time>
+        <.local_time
+          id={"comment-#{@comment.id}-at"}
+          at={@comment.inserted_at}
+          zone={@zone}
+        />
         <span :if={@comment.edited_at && !@deleted?} class="thread-comment-edited">edited</span>
       </header>
       <p :if={@deleted?} class="thread-comment-deleted">Comment deleted</p>

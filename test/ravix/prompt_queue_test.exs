@@ -1703,4 +1703,69 @@ defmodule Ravix.PromptQueueTest do
     PromptQueue.Store.cancel_track(track_id)
     assert_receive {:hub, %Event{name: :queue, track_id: ^track_id}}
   end
+
+  # ── ACP session config options (RAV-52, Fountain ADR 0062) ────────────
+
+  describe "a thread's session config" do
+    defp choose(track, config),
+      do: Ravix.Tracks.Store.set_thread_session_config(track.id, config)
+
+    test "rides on every prompt, and nothing is sent as a prompt turn of its own", f do
+      choose(f.track, %{"effort" => "high", "fast" => true})
+      client = fountain([read("idle"), accept(), read("idle"), accept()], verify: false)
+
+      {:ok, %Item{id: first}} = send_prompt(f.track, f.owner, "first")
+      Server.tick(f.server)
+      {:ok, %Item{id: second}} = send_prompt(f.track, f.owner, "second")
+      Server.tick(f.server)
+
+      config = %{"effort" => "high", "fast" => true}
+
+      assert posted(client) == [
+               %{"prompt" => "first", "client_request_id" => first, "session_config" => config},
+               %{"prompt" => "second", "client_request_id" => second, "session_config" => config}
+             ]
+
+      refute Enum.any?(posted(client), &String.starts_with?(&1["prompt"], ["/effort", "/fast"]))
+      assert status_of(first) == :sent and status_of(second) == :sent
+    end
+
+    test "codex's own ids pass through unchanged", f do
+      choose(f.track, %{"reasoning_effort" => "xhigh", "fast-mode" => false})
+      client = fountain([read("idle"), accept()])
+
+      {:ok, _} = send_prompt(f.track, f.owner, "hello")
+      Server.tick(f.server)
+
+      assert [%{"session_config" => %{"reasoning_effort" => "xhigh", "fast-mode" => false}}] =
+               posted(client)
+    end
+
+    test "a thread that chose nothing sends no session_config", f do
+      client = fountain([read("idle"), accept()])
+      {:ok, _} = send_prompt(f.track, f.owner, "hello")
+      Server.tick(f.server)
+
+      assert [body] = posted(client)
+      refute Map.has_key?(body, "session_config")
+    end
+
+    test "a 422 session_config_invalid fails the prompt saying what to change", f do
+      choose(f.track, %{"effort" => "high"})
+
+      fountain([
+        read("idle"),
+        {%{method: "POST", path: "/api/conversations/c1/prompts"},
+         {422, [], %{error: "session_config_invalid", message: "bad shape"}}}
+      ])
+
+      {:ok, %Item{id: id}} = send_prompt(f.track, f.owner, "hello")
+      capture_log(fn -> Server.tick(f.server) end)
+
+      assert %Item{status: :failed, error: error, error_code: "session_config_invalid"} =
+               PromptQueue.Store.get(id)
+
+      assert error =~ "Change it in the model menu"
+    end
+  end
 end

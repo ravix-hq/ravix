@@ -10,6 +10,8 @@ defmodule Ravix.Tracks.View do
   and `mention` the newest unread comment naming this person; those two are
   what the Inbox lists. `reply_unread` is nil where only the agent's side
   was read (a single `present/2`), and then means the same as `unread`.
+  `reply` is the opening of the newest unread reply, as its thread kept it
+  (`Ravix.Tracks.Reply`), for the Inbox card; nil until one is kept.
 
   `billing` is who pays for the track's agent (ADR 0009 phase 6): `:creator`
   on a creator-billed track, `:owner` otherwise; `payer_login` names them and
@@ -20,6 +22,10 @@ defmodule Ravix.Tracks.View do
   `model` is the model the shown conversation runs instead of its agent's,
   read live off Fountain like the status, and nil when it follows the
   project's model.
+
+  `session_options` is the runtime's advertised ACP config options for the
+  shown conversation, live off Fountain (ADR 0062), nil until a turn has
+  reported them; `session_config` is the thread's own choice (RAV-52).
 
   `activity_at` is when anything last happened on the track, as far as
   Ravix already knows without asking again: the newest of its creation,
@@ -95,7 +101,10 @@ defmodule Ravix.Tracks.View do
                 setup_error_code: nil,
                 runtime: nil,
                 default_model: nil,
+                session_config: %{},
+                session_options: nil,
                 reply_unread: nil,
+                reply: nil,
                 mention: nil,
                 billing: :owner,
                 payer_login: nil,
@@ -129,10 +138,13 @@ defmodule Ravix.Tracks.View do
           level: Ravix.Accounts.Access.level() | nil,
           unread: boolean(),
           reply_unread: boolean() | nil,
+          reply: %{excerpt: String.t(), at: DateTime.t()} | nil,
           mention: %{comment_id: String.t(), author_login: String.t(), at: DateTime.t()} | nil,
           model: String.t() | nil,
           runtime: String.t() | nil,
           default_model: String.t() | nil,
+          session_config: Ravix.SessionConfig.config(),
+          session_options: [Ravix.SessionConfig.Option.t()] | nil,
           threads: [map()],
           setup_state: String.t(),
           setup_attempts: non_neg_integer(),

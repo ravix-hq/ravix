@@ -2,6 +2,15 @@ defmodule Ravix.Changelog do
   @moduledoc "Curated user-facing changes shipped with Ravix."
   @entries [
     %{
+      id: "2026-09-30-effort-and-fast",
+      date: ~D[2026-09-30],
+      kind: :new,
+      title: "Reasoning effort and Fast mode",
+      body:
+        "Set how hard the agent thinks, and turn on Fast where the model offers it, from the model menu. Your choice applies from the next message and becomes your default for new threads.",
+      action: nil
+    },
+    %{
       id: "2026-09-30-terminals",
       date: ~D[2026-09-30],
       kind: :new,

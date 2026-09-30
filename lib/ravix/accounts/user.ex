@@ -32,6 +32,9 @@ defmodule Ravix.Accounts.User do
     # ever here. Connectivity comes from `Ravix.Accounts.Inference.held/1`.
     field :preferred_runtime, Ecto.Enum, values: [:claude, :codex]
     field :preferred_model, :string
+    # RAV-52: per runtime, the session config a new thread starts with
+    # (`%{"claude" => %{"effort" => "high"}}`; see `Ravix.SessionConfig`).
+    field :preferred_session_config, :map, default: %{}
     field :credential_connected_at, :map, default: %{}
     field :agent, Ecto.Enum, values: [:claude, :codex]
     field :credential_set_id, :string

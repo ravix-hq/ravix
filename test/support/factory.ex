@@ -267,6 +267,22 @@ defmodule Ravix.Factory do
     TrackRead.changeset(%TrackRead{}, attrs) |> Repo.insert!()
   end
 
+  @doc """
+  Keep `excerpt` as the newest reply on every thread of `track`, as of `at`
+  (`Ravix.Tracks.Reply`). A track whose conversation was last active before
+  `at` is then current, and an Inbox showing it asks Fountain nothing more.
+  """
+  @spec keep_reply(Track.t(), String.t() | nil, DateTime.t()) :: :ok
+  def keep_reply(%Track{id: id}, excerpt \\ nil, at \\ DateTime.utc_now()) do
+    import Ecto.Query, only: [from: 2]
+
+    Repo.update_all(from(t in Ravix.Tracks.Thread, where: t.track_id == ^id),
+      set: [reply_excerpt: excerpt, reply_at: at]
+    )
+
+    :ok
+  end
+
   # -- prompt queue ---------------------------------------------------------
 
   @doc "Attributes for a queued prompt. `track: t` and `user: u` become ids."

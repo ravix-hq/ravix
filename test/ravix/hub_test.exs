@@ -33,7 +33,7 @@ defmodule Ravix.HubTest do
       assert %Event{user_id: nil} = Event.new(:tracks, "p1", track_id: "t1")
     end
 
-    test "refuses a name that is not one of the nine" do
+    test "refuses a name that is not one of the ten" do
       # The set is closed on purpose: these are written here and never
       # received from outside, so a typo should not become a live event
       # nobody handles.
@@ -42,7 +42,18 @@ defmodule Ravix.HubTest do
       assert_raise FunctionClauseError, fn -> Event.new(:people, nil) end
 
       assert Enum.sort(Event.names()) ==
-               [:comment, :here, :machine, :people, :queue, :read, :settings, :tracks, :turn]
+               [
+                 :comment,
+                 :here,
+                 :machine,
+                 :people,
+                 :queue,
+                 :read,
+                 :reply,
+                 :settings,
+                 :tracks,
+                 :turn
+               ]
     end
   end
 

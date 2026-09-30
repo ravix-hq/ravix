@@ -92,3 +92,9 @@ test("an unreadable start leaves the server's text alone", () => {
   jest.advanceTimersByTime(5000)
   expect(hook.el.textContent).toBe("6s")
 })
+
+test("the tooltip gives the start in the viewer's zone", () => {
+  const {hook} = render()
+  expect(hook.el.title).toStartWith("Running since ")
+  expect(hook.el.title).toContain(String(new Date(now).getFullYear()))
+})

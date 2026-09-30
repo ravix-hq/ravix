@@ -126,6 +126,7 @@ defmodule Ravix.TranscriptFixture do
       |> Map.drop([
         :fold,
         :failure,
+        :config_selection,
         :conversation_id,
         :history,
         :oldest_event_id,

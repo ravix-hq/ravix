@@ -1,11 +1,13 @@
 defmodule Ravix.Tracks.Settlement do
   @moduledoc "Durable settlement classification, with supervised catch-up for previously unwatched turns."
   alias Ravix.{Cluster, Fountain, Hub, Trace}
-  alias Ravix.Tracks.{AgentFailure, Billing, Store, Transcript}
+  alias Ravix.Tracks.{AgentFailure, Billing, Reply, Store, Transcript}
   alias Ravix.Tracks.Transcript.Event
 
   @doc "Schedule missing settled turns without making the reader wait for classification."
   def enqueue(page, classified, binding) do
+    Reply.note(page, List.last(binding.conversation_ids))
+
     Enum.each(page.turns, fn turn ->
       key = {turn.conversation_id, turn.id}
 
@@ -276,6 +278,10 @@ defmodule Ravix.Tracks.Settlement do
     # failed (`Ravix.Tracks.Billing.observe_turn/5`).
     with {:ok, %Ravix.Tracks.TurnFailure{}} <- result,
          do: observe_billing(conversation_id, events, runtime)
+
+    # The turn's events are in hand: keep the opening of its reply for the
+    # Inbox (`Ravix.Tracks.Reply`), whoever classified it first.
+    if match?({:ok, _}, result), do: Reply.record(conversation_id, events, runtime)
 
     result
   end

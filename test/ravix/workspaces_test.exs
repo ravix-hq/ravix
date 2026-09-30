@@ -93,7 +93,7 @@ defmodule Ravix.WorkspacesTest do
         assert {:ok, ^workspace} = Workspaces.personal_workspace(user)
       end
 
-      assert Backfill.run() == %{workspaces: 0, memberships: 0, projects: 0}
+      assert Backfill.run() == %{workspaces: 0, memberships: 0, projects: 0, installations: 0}
       assert Repo.aggregate(where(Workspace, personal_user_id: ^a.id), :count) == 1
       assert Repo.aggregate(where(Membership, user_id: ^a.id), :count) == 1
     end
@@ -109,7 +109,13 @@ defmodule Ravix.WorkspacesTest do
 
       assert %{workspaces: 2, memberships: 2} = Backfill.run(batch_size: 1)
       assert Enum.all?(users, &personal/1)
-      assert Backfill.run(batch_size: 1) == %{workspaces: 0, memberships: 0, projects: 0}
+
+      assert Backfill.run(batch_size: 1) == %{
+               workspaces: 0,
+               memberships: 0,
+               projects: 0,
+               installations: 0
+             }
     end
 
     test "repairs a workspace an interrupted run left without its owner, but never un-revokes" do

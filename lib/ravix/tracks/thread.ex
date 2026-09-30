@@ -15,6 +15,9 @@ defmodule Ravix.Tracks.Thread do
     field :recovery_context_pending, :boolean, default: false
     field :runtime, :string
     field :model, :string
+    # RAV-52: the runtime's ACP session config option ids to values (effort,
+    # Fast), sent as every prompt's `session_config` (`Ravix.SessionConfig`).
+    field :session_config, :map, default: %{}
     field :title, :string
     # RAV-48: `:auto` when Ravix titled it from the first prompt or the
     # runtime's session title, `:manual` when a person named it, nil for the
@@ -26,6 +29,12 @@ defmodule Ravix.Tracks.Thread do
     # Attribution, never billing -- the track's creator pays (see
     # `Ravix.Tracks.Track.payer/2`). Unwritten yet; nil is an unknown starter.
     field :started_by, :string
+    # RAV-66, expand only: the opening lines of the newest reply, plain and
+    # bounded (`Ravix.Tracks.Reply`), and when it settled. The Inbox reads
+    # them off the thread rows it already holds. Written only through
+    # `Tracks.Store.put_reply/3`.
+    field :reply_excerpt, :string
+    field :reply_at, :utc_datetime_usec
   end
 
   @title_length 40
@@ -72,6 +81,7 @@ defmodule Ravix.Tracks.Thread do
       :closed_at,
       :runtime,
       :model,
+      :session_config,
       :started_by
     ])
     |> Ravix.Schema.put_new_id()

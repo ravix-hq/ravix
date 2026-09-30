@@ -124,6 +124,28 @@ defmodule Ravix.ThreadRuntimeTest do
     assert Store.thread(ctx.track.id).runtime == nil
   end
 
+  test "a new thread starts on the person's remembered session config for its runtime", ctx do
+    alias Ravix.Accounts.ThreadPreference
+    {:ok, _} = ThreadPreference.remember_session_option(ctx.owner, "claude", "effort", "max")
+    {:ok, _} = ThreadPreference.remember_session_option(ctx.owner, "claude", "fast", true)
+    {:ok, _} = ThreadPreference.remember_session_option(ctx.owner, "codex", "fast-mode", true)
+
+    # Whatever the model: Fountain skips an id the model does not offer.
+    assert {:ok, sonnet} =
+             start_thread(ctx.owner, ctx.track.id, %{model: "anthropic/claude-sonnet-5"})
+
+    assert sonnet.session_config == %{"effort" => "max", "fast" => true}
+
+    Repo.update!(Ecto.Changeset.change(ctx.project, runtime: "codex", model: "openai/gpt-5.6"))
+    stub(Fountain, :sandbox, fn _, "disk" -> {:ok, Shapes.sandbox(%{"id" => "disk"})} end)
+
+    assert {:ok, codex} = start_thread(ctx.owner, ctx.track.id, %{runtime: "codex"})
+    assert {codex.runtime, codex.session_config} == {"codex", %{"fast-mode" => true}}
+
+    stranger = insert_user()
+    assert ThreadPreference.session_config(stranger, "claude") == %{}
+  end
+
   test "without a preference the last runtime wins, and accepting a default does not pin it",
        ctx do
     stub(Ravix.Config, :dedicated_opens_enabled?, fn _ -> true end)

@@ -39,7 +39,7 @@ env = dict(os.environ, MIX_ENV="prod", PORT=str(ports[0]), PHX_SERVER="true",
            RAVIX_BROWSER_TEST="1", RAVIX_THREADS_ENABLED="true",
            RAVIX_DEDICATED_OPEN_USER_IDS="00000000-0000-4000-8000-000000009003,00000000-0000-4000-8000-000000009004,"
                                          "00000000-0000-4000-8000-000000009009,00000000-0000-4000-8000-000000009013,"
-                                         "00000000-0000-4000-8000-000000009036",
+                                         "00000000-0000-4000-8000-000000009048",
            # ADR 0009's switch, off as in production unless the run asks:
            # `bun run test:browser:workspace-access` turns it on for the
            # specs that need it (workspace-visibility.spec.js,
@@ -84,7 +84,7 @@ with tempfile.TemporaryDirectory(prefix="ravix-browser-") as tmp:
                         "'workspacecreator', NOW(), NOW()), "
                         "('00000000-0000-4000-8000-000000009013', '9013', "
                         "'sharecreator', NOW(), NOW()), "
-                        "('00000000-0000-4000-8000-000000009036', '9036', "
+                        "('00000000-0000-4000-8000-000000009048', '9048', "
                         "'newtrackfit', NOW(), NOW())"], check=True)
         app = start(["python3", "scripts/dev-mock.py"], env)
         while app.poll() is None and mock.poll() is None:

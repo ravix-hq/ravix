@@ -336,6 +336,20 @@ also save that person's preference. Choosing the project model in the composer
 clears the saved preference, restoring derivation from connected credentials.
 MCP runtime/model arguments never change a person's preference. Existing threads retain their runtime.
 
+The model menu also offers the runtime's **effort** and **Fast** where the
+conversation's runtime advertises them (Fountain ADR 0062,
+`Ravix.SessionConfig`): the `thought_level` option with the adapter's own
+values and names, and a Fast toggle from `model_config`. Claude calls them
+`effort` and `fast`, Codex `reasoning_effort` and `fast-mode`, and which
+models offer which values is the adapter's to say. They appear once the
+conversation's first turn has reported its options, and are hidden on a
+Fountain without them. The thread keeps its choice (`threads.session_config`)
+and sends it as every prompt's `session_config`, because Fountain applies a
+prompt's options to that turn only. Each turn's footer names what it ran with
+and any option the model skipped; a refused value fails the turn before the
+prompt, with the runtime's message and a way to change it. The choice is also
+remembered per runtime as the person's default for new threads.
+
 Until explicitly chosen, the preference uses the most recently connected held
 credential (ChatGPT link, API key, or Claude token) and that runtime's default
 model: the catalog's known default (`anthropic/claude-opus-5` or

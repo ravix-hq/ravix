@@ -81,7 +81,7 @@ defmodule RavixWeb.WorkspaceRailAgeTest do
 
     assert has_element?(
              view,
-             "#track-age-#{prompted.id}[title='Last active #{Calendar.strftime(last, "%b %-d, %Y %H:%M UTC")}']"
+             "#track-age-#{prompted.id}[title='Last active #{RavixWeb.LocalTime.full(last, nil)}']"
            )
 
     assert has_element?(view, "#{tab.(quiet)} .track-private", "Private")

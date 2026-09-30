@@ -59,6 +59,7 @@ defmodule Ravix.Tracks do
   alias Ravix.PromptQueue.Body
   alias Ravix.PromptQueue.Body.Image
   alias Ravix.PromptQueue.Server, as: QueueServer
+  alias Ravix.SessionConfig
   alias Ravix.Spec
   alias Ravix.Trace
   alias Ravix.Tracks.Sandbox.Maintenance
@@ -77,6 +78,7 @@ defmodule Ravix.Tracks do
     Names,
     Opening,
     Origin,
+    Reply,
     Runtime,
     Setup,
     Sleep,
@@ -245,9 +247,63 @@ defmodule Ravix.Tracks do
             activity_at(row, [view.last_active_at | Enum.map(conversations, & &1.last_active_at)]),
           unread: Enum.any?(threads, & &1.unread),
           reply_unread: Enum.any?(threads, & &1.reply_unread),
+          reply: reply_of(threads),
           mention: threads |> Enum.map(& &1.mention) |> Enum.reject(&is_nil/1) |> newest()
       }
     end)
+  end
+
+  # The Inbox card's excerpt: the newest unread reply among the threads
+  # that kept one. Nil when none did yet, and the card says so generically.
+  defp reply_of(threads) do
+    threads
+    |> Enum.filter(&(&1.reply_unread and is_binary(&1.reply_excerpt)))
+    |> Enum.max_by(& &1.reply_at, DateTime, fn -> nil end)
+    |> case do
+      nil -> nil
+      thread -> %{excerpt: thread.reply_excerpt, at: thread.reply_at}
+    end
+  end
+
+  @doc """
+  Whether any unread thread on `user`'s own `views` has a newer reply than
+  the excerpt it kept, so that `backfill_replies/2` has something to fetch.
+  Reads nothing: the page asks this on every redraw of its Inbox, and
+  `backfill_replies/2` admits the tracks before it fetches.
+  """
+  @spec stale_replies?(User.t(), [View.t()]) :: boolean()
+  def stale_replies?(%User{}, views), do: stale_replies(views) != []
+
+  @doc """
+  Fetch the reply excerpt of every unread thread on `views` whose kept one
+  is older than its conversation (`Ravix.Tracks.Reply.backfill/2`), for the
+  Inbox, which is the one page that shows them. It waits on Fountain, so a
+  page calls it from `start_async`; the `:reply` each fill publishes redraws
+  the cards. The tracks are admitted again through `Access.open_tracks/2`.
+  """
+  @spec backfill_replies(User.t(), [View.t()]) :: :ok
+  def backfill_replies(%User{} = user, views) do
+    stale = stale_replies(views)
+
+    if stale != [] do
+      projects = stale |> Enum.map(&elem(&1, 0).project_id) |> Enum.uniq()
+      admitted = user |> Access.open_tracks(projects) |> MapSet.new(fn {row, _} -> row.id end)
+
+      stale
+      |> Enum.filter(fn {view, _thread} -> MapSet.member?(admitted, view.id) end)
+      |> Enum.map(&elem(&1, 1))
+      |> Reply.backfill()
+    end
+
+    :ok
+  end
+
+  defp stale_replies(views) do
+    for view <- views,
+        thread <- view.threads,
+        Map.get(thread, :reply_unread) == true,
+        Reply.stale?(thread),
+        do: {view, thread}
   end
 
   defp newest([]), do: nil
@@ -363,7 +419,9 @@ defmodule Ravix.Tracks do
              viewer: user
            )
            |> Map.put(:runtime, thread.runtime || project.runtime)
-           |> Map.put(:default_model, thread.model || project.model),
+           |> Map.put(:default_model, thread.model || project.model)
+           |> Map.put(:session_config, SessionConfig.clean(thread.session_config))
+           |> Map.put(:session_options, session_options(live[thread.conversation_id])),
          threads: threads,
          header: header,
          starters: Spec.starters(%{project | runtime: thread.runtime || project.runtime}),
@@ -433,6 +491,9 @@ defmodule Ravix.Tracks do
           model: (conversation && conversation.model) || thread.model || project.model,
           default: thread.id == track_id,
           conversation_id: thread.conversation_id,
+          reply_excerpt: thread.reply_excerpt,
+          reply_at: thread.reply_at,
+          last_active_at: conversation && conversation.last_active_at,
           status:
             if(conversation && conversation.status in [:running, :pending, :failed],
               do: conversation.status,
@@ -816,10 +877,16 @@ defmodule Ravix.Tracks do
                    conversation_id: conversation_id,
                    title: title,
                    runtime: selection.runtime,
-                   model: selection.model,
+                   model: selection.model
+                 }
+                 |> Map.put(
+                   :session_config,
+                   ThreadPreference.session_config(user, selection.runtime)
+                 )
+                 |> Map.merge(%{
                    # Attribution only (`Co-authored-by`), never the payer.
                    started_by: user.id
-                 },
+                 }),
                  track,
                  user,
                  request_id,
@@ -1613,6 +1680,69 @@ defmodule Ravix.Tracks do
         error
     end
   end
+
+  @doc """
+  Choose one of the shown conversation's ACP session config options (RAV-52,
+  Fountain ADR 0062): its reasoning effort or its Fast toggle, from its next
+  prompt on, and this person's default for new threads on the same runtime.
+
+  `id` and `value` are the page's strings. They are checked against what
+  the conversation's runtime advertised on its latest turn, read fresh from
+  Fountain: `id` must be the effort or the Fast option
+  (`Ravix.SessionConfig.controls/1`), and `value` one of the effort's listed
+  values or `"true"`/`"false"`. Nothing is sent now; every prompt carries
+  the thread's `session_config`, because Fountain keeps a prompt's options
+  for that turn only. A conversation that has advertised nothing (a
+  Fountain before ADR 0062, or no turn yet) is refused.
+  """
+  @spec set_session_option(User.t(), String.t(), String.t() | nil, term(), term()) ::
+          {:ok, SessionConfig.config()} | {:error, reason()}
+  def set_session_option(%User{} = user, track_id, thread_id, id, value) do
+    with {:ok, %{track: track, project: project, thread: thread}} <-
+           Access.thread_access(user, track_id, thread_id, :write),
+         :ok <-
+           check(
+             is_nil(track.closed_at) and track.sandbox_state not in [:closing, :terminated],
+             {:conflict, "closed_track", "This track is closing or closed."}
+           ),
+         :ok <-
+           check(
+             thread.conversation_id,
+             {:conflict, "not_open", "This track has no conversation yet."}
+           ),
+         {:ok, client} <- fountain(),
+         {:ok, conversation} <- Fountain.get_conversation(client, thread.conversation_id),
+         {:ok, id, value} <- advertised(conversation, id, value),
+         runtime = thread.runtime || project.runtime,
+         {:ok, _} <- ThreadPreference.remember_session_option(user, runtime, id, value) do
+      config = thread.session_config |> SessionConfig.clean() |> Map.put(id, value)
+      Store.set_thread_session_config(thread.id, config)
+      publish_tracks(project.id, track.id)
+      {:ok, config}
+    end
+  end
+
+  defp advertised(%Conversation{session_config_options: nil}, _id, _value),
+    do:
+      {:error,
+       {:conflict, "session_config_unavailable",
+        "This conversation hasn't reported its settings yet. Send a message first."}}
+
+  defp advertised(%Conversation{session_config_options: options}, id, value) do
+    case options |> SessionConfig.controls() |> SessionConfig.choose(id, value) do
+      {:ok, id, value} ->
+        {:ok, id, value}
+
+      :error ->
+        {:error,
+         {:unprocessable, "session_config_unsupported",
+          "This agent and model don't offer that setting."}}
+    end
+  end
+
+  # The options the page offers: the live conversation's, or none known.
+  defp session_options(%Conversation{session_config_options: options}), do: options
+  defp session_options(_conversation), do: nil
 
   defp thread_model(client, project, %{runtime: nil}, model),
     do: model_override(client, project, model)

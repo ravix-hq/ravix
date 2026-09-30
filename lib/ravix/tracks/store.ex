@@ -102,6 +102,28 @@ defmodule Ravix.Tracks.Store do
     end
   end
 
+  @doc """
+  Record the opening of the reply `conversation_id`'s thread settled at `at`,
+  unless the thread already holds a newer one: settlement, a transcript read
+  and an Inbox backfill may all arrive, in any order, for the same reply.
+  Returns the project of the thread it wrote, or nil when nothing moved.
+  """
+  @spec put_reply(String.t(), String.t() | nil, DateTime.t()) :: String.t() | nil
+  def put_reply(conversation_id, excerpt, %DateTime{} = at) do
+    query =
+      from th in Thread,
+        join: t in Track,
+        on: t.id == th.track_id,
+        where: th.conversation_id == ^conversation_id,
+        where: is_nil(th.reply_at) or th.reply_at < ^at,
+        select: t.project_id
+
+    case Repo.update_all(query, set: [reply_excerpt: excerpt, reply_at: at]) do
+      {0, _} -> nil
+      {_count, [project_id | _]} -> project_id
+    end
+  end
+
   def turn_classified?(conversation_id, turn_id),
     do:
       Repo.exists?(
@@ -251,6 +273,12 @@ defmodule Ravix.Tracks.Store do
 
   def set_thread_model(id, model) do
     from(t in Thread, where: t.id == ^id) |> Repo.update_all(set: [model: model])
+    :ok
+  end
+
+  @doc "A thread's session config, already checked against what its runtime advertised."
+  def set_thread_session_config(id, config) when is_map(config) do
+    from(t in Thread, where: t.id == ^id) |> Repo.update_all(set: [session_config: config])
     :ok
   end
 

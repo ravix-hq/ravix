@@ -15,6 +15,7 @@ defmodule RavixWeb.Live.ModelMenu do
   """
   use RavixWeb, :html
 
+  alias Ravix.SessionConfig
   alias RavixWeb.ModelName
 
   attr :id, :string, required: true, doc: "the chip is `<id>-trigger`, the popover `<id>-menu`"
@@ -133,6 +134,12 @@ defmodule RavixWeb.Live.ModelMenu do
 
   attr :runtime, :string, default: nil
   attr :model, :string, required: true, doc: "what the shown conversation runs"
+
+  attr :session_options, :list,
+    default: nil,
+    doc: "the runtime's advertised ACP options (`Ravix.SessionConfig`), nil when unknown"
+
+  attr :session_config, :map, default: %{}, doc: "the thread's chosen option values"
   attr :project_model, :string, required: true
   attr :models, :list, required: true, doc: "the catalog's models for the project's runtime"
   attr :disabled, :boolean, default: false
@@ -145,20 +152,41 @@ defmodule RavixWeb.Live.ModelMenu do
   default, and choosing it puts the conversation back on whatever the
   project runs. With no catalog to offer, or while a turn runs, it is the
   plain label it used to be, or a disabled trigger.
+
+  Effort and Fast (RAV-52) come from what the runtime advertised on the
+  conversation's latest turn (Fountain ADR 0062): the `thought_level`
+  select, with the adapter's own values and names, and a Fast toggle. Which
+  models offer them is the adapter's to say, so nothing here lists models.
+  Before any turn has reported, or on a Fountain without the field, neither
+  is shown and the label is the model alone.
   """
   def menu(%{models: []} = assigns) do
+    assigns = assign(assigns, :label, chip_label(assigns))
+
     ~H"""
-    <span class="composer-model" title={agent_model(@runtime, @model)}>{agent_model(@runtime, @model)}</span>
+    <span class="composer-model" title={@label}>{@label}</span>
     """
   end
 
   def menu(assigns) do
-    assigns = assign(assigns, :choices, Enum.uniq(assigns.models ++ [assigns.model]))
+    %{effort: effort, fast: fast} = SessionConfig.controls(assigns.session_options)
+
+    assigns =
+      assigns
+      |> assign(:choices, Enum.uniq(assigns.models ++ [assigns.model]))
+      |> assign(:effort, effort)
+      |> assign(:effort_value, SessionConfig.in_force(effort, assigns.session_config))
+      |> assign(:fast, fast)
+      |> assign(
+        :fast_on?,
+        SessionConfig.on?(SessionConfig.in_force(fast, assigns.session_config))
+      )
+      |> assign(:label, chip_label(assigns))
 
     ~H"""
     <.chip
       id="model"
-      label={agent_model(@runtime, @model)}
+      label={@label}
       class="composer-model model-trigger"
       menu_class="model-menu"
       menu_label="Model"
@@ -176,8 +204,48 @@ defmodule RavixWeb.Live.ModelMenu do
         phx-click="set-model"
         phx-value-model={if choice == @project_model, do: "", else: choice}
       />
+      <div :if={@effort} id="model-effort" role="group" aria-labelledby="model-effort-label">
+        <p id="model-effort-label" class="model-section-label">{@effort.name}</p>
+        <.option
+          :for={choice <- @effort.choices}
+          model={choice.value}
+          label={choice.name}
+          checked={choice.value == @effort_value}
+          popovertarget="model-menu"
+          popovertargetaction="hide"
+          phx-click="set-session-option"
+          phx-value-id={@effort.id}
+          phx-value-choice={choice.value}
+        />
+      </div>
+      <button
+        :if={@fast}
+        id="model-fast"
+        type="button"
+        class="account-item model-option model-fast"
+        role="menuitemcheckbox"
+        aria-checked={to_string(@fast_on?)}
+        popovertarget="model-menu"
+        popovertargetaction="hide"
+        phx-click="set-session-option"
+        phx-value-id={@fast.id}
+        phx-value-choice={to_string(!@fast_on?)}
+      >
+        <span class="truncate">{@fast.name}</span><span class="spacer"></span><span
+          :if={@fast_on?}
+          class="check"
+          aria-hidden="true"
+        >✓</span>
+      </button>
     </.chip>
     """
+  end
+
+  # `Agent · Model`, then whatever Effort and Fast are set to (RAV-52).
+  defp chip_label(assigns) do
+    [agent_model(assigns.runtime, assigns.model)]
+    |> Enum.concat(SessionConfig.summary(assigns.session_options, assigns.session_config))
+    |> Enum.join(" · ")
   end
 
   @doc "`Agent · Model`, as a chip or the composer shows them."
