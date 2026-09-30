@@ -140,6 +140,34 @@ defmodule RavixWeb.ComponentsTest do
       assert html =~ "bye"
       refute html =~ "dialog-foot"
     end
+
+    # RAV-68: waiting for the server left the scrim over the page, where it
+    # swallowed the next click.
+    test "every way out hides the scrim before telling the server" do
+      html =
+        render_component(&CoreComponents.dialog/1,
+          id: "d",
+          title: "T",
+          on_close: "dismiss",
+          inner_block: [%{inner_block: fn _, _ -> "x" end}]
+        )
+
+      doc = LazyHTML.from_fragment(html)
+
+      for {selector, attr} <- [
+            {"#d-dialog", "phx-window-keydown"},
+            {"#d-dialog", "phx-click-away"},
+            {"button[aria-label=Close]", "phx-click"}
+          ] do
+        [js] = doc |> LazyHTML.query(selector) |> LazyHTML.attribute(attr)
+
+        assert [
+                 ["set_attr", %{"attr" => ["hidden", ""], "to" => "#d"}],
+                 ["push", %{"event" => "dismiss"}],
+                 ["pop_focus", %{}]
+               ] = Jason.decode!(js)
+      end
+    end
   end
 
   describe "invite_link/1" do

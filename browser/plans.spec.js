@@ -121,9 +121,17 @@ test('a project plan assigns coordinated tracks and works at phone width', async
   await expect(panel.getByRole('button', { name: 'Assign selected items' })).toBeInViewport();
   await page.screenshot({ path: 'test-results/plans-assign-phone.png' });
   await panel.getByRole('button', { name: 'Assign selected items' }).click();
-  // A track is named after its reserved branch (#154); the item keeps its title.
-  await expect(panel.getByRole('link', { name: 'Open track: ravix/build-api' })).toBeVisible();
-  await expect(panel.getByRole('link', { name: 'Open track: ravix/build-ui' })).toBeVisible();
+  // Each item links its own track and keeps its title. The track opens under
+  // its reserved branch (#154), but its first prompt may retitle it at any
+  // moment (RAV-48, `Ravix.Tracks.Titling`), so the link is found by item.
+  const item = name => panel.locator('article', { has: page.getByRole('heading', { name, exact: true, level: 4 }) });
+  const apiTrack = item('Build API').getByRole('link', { name: /^Open track: / });
+  const uiTrack = item('Build UI').getByRole('link', { name: /^Open track: / });
+  await expect(apiTrack).toBeVisible();
+  await expect(uiTrack).toBeVisible();
+  const uiHref = await uiTrack.getAttribute('href');
+  expect(uiHref).toMatch(/\/t\/[a-f0-9-]{36}$/);
+  expect(await apiTrack.getAttribute('href')).not.toBe(uiHref);
   await expect(panel.locator('.chip', { hasText: 'in progress' })).toHaveCount(2);
   const result = await new AxeBuilder({ page }).include('#plans-panel').withTags(['wcag2a', 'wcag2aa']).analyze();
   expect(result.violations).toEqual([]);
@@ -131,17 +139,17 @@ test('a project plan assigns coordinated tracks and works at phone width', async
   await page.setViewportSize({ width: 1280, height: 844 });
   const tabs = page.locator('#yard .workspace-project.current .project-tree-tracks');
   await expect(tabs).toHaveAttribute('aria-label', /^Tracks in /);
-  await expect(tabs.getByRole('link', { name: /ravix\/build-ui/ })).toBeVisible();
+  await expect(tabs.locator(`a[href="${uiHref}"]`)).toBeVisible();
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(tabs).not.toBeVisible();
   await page.getByRole('button', { name: 'Menu', exact: true }).click();
-  await expect(tabs.getByRole('link', { name: /ravix\/build-ui/ })).toBeInViewport();
+  await expect(tabs.locator(`a[href="${uiHref}"]`)).toBeInViewport();
   await page.getByRole('button', { name: 'Close menu', exact: true }).click();
 
   await expect(panel).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   await page.screenshot({ path: 'test-results/plans-phone.png', fullPage: true });
-  await panel.getByRole('link', { name: 'Open track: ravix/build-api' }).click();
+  await apiTrack.click();
   await page.getByRole('button', { name: /^Plan: Ship the release · 1 item/ }).click();
   await expect(page.getByRole('link', { name: 'Plan · Ship the release' })).toBeVisible();
 });

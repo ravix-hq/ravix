@@ -8,7 +8,7 @@ defmodule RavixWeb.MarkdownTest do
   """
   use ExUnit.Case, async: true
 
-  import RavixWeb.Markdown, only: [render: 1]
+  import RavixWeb.Markdown, only: [render: 1, render: 2]
 
   test "paragraphs, emphasis and code spans" do
     assert render("A **bold** and `code` line.") ==
@@ -98,6 +98,15 @@ defmodule RavixWeb.MarkdownTest do
 
   test "paragraphs join their lines and a blank line splits them" do
     assert render("one\ntwo\n\nthree") == "<p>one two</p><p>three</p>"
+  end
+
+  test "breaks keeps a typed newline in a paragraph, quote and bullet" do
+    assert render("one\ntwo **b\nc** d\n\nthree", breaks: true) ==
+             "<p>one<br />two **b<br />c** d</p><p>three</p>"
+
+    assert render("> a\n> b", breaks: true) == "<blockquote><p>a<br />b</p></blockquote>"
+    assert render("- a\n  more", breaks: true) == "<ul><li>a<br />more</li></ul>"
+    assert render("<b>\n</b>", breaks: true) == "<p>&lt;b&gt;<br />&lt;/b&gt;</p>"
   end
 
   test "windows line endings are the same reply" do

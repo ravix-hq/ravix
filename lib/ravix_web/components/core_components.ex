@@ -572,7 +572,17 @@ defmodule RavixWeb.CoreComponents do
   slot :footer
 
   def dialog(assigns) do
-    assigns = assign(assigns, :close, JS.pop_focus(command(assigns.on_close)))
+    # Closing hides the scrim on the client first. Waiting for the server's
+    # re-render left it over the page, so the next click landed on it and was
+    # lost (RAV-68). `hidden` is set synchronously, where `JS.hide` waits a
+    # frame, and it is sticky: a patch arriving before the close does cannot
+    # show the dialog again.
+    close =
+      JS.set_attribute({"hidden", ""}, to: "##{assigns.id}")
+      |> JS.concat(command(assigns.on_close))
+      |> JS.pop_focus()
+
+    assigns = assign(assigns, :close, close)
 
     ~H"""
     <div id={@id} class="scrim" {@rest}>

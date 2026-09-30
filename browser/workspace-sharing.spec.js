@@ -3,6 +3,7 @@ import { execFileSync } from 'node:child_process';
 import { test, expect } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
 import { signIn, connectClaude } from './sign-in.js';
+import { expectInlineChoice } from './controls.js';
 
 // ADR 0009 phase 5, with RAVIX_WORKSPACE_ACCESS on (`bun run
 // test:browser:workspace-access`): the track header's Share dialog shares a
@@ -77,6 +78,10 @@ test('the Share dialog shares a private track with one member, and nobody else l
     await expect(share).toBeVisible();
     await expect(share.getByLabel('Only people I add')).toBeChecked();
     await expect(share).not.toContainText('invite link');
+    // RAV-59: each radio sits beside its one-line label.
+    for (const name of ['Everyone in ', 'Only people I add']) {
+      await expectInlineChoice(share.locator('.share-visibility label').filter({ hasText: name }));
+    }
     const axe = await new AxeBuilder({ page }).include('#track-share-dialog-dialog')
       .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa']).analyze();
     expect(axe.violations).toEqual([]);
