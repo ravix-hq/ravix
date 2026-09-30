@@ -258,7 +258,7 @@ defmodule RavixWeb.CreatorBillingLiveTest do
              "Connect Claude or Codex to start a track — you pay for its agent."
            )
 
-    assert has_element?(view, "#new-track-form button.primary[disabled]")
+    assert has_element?(view, "#new-track-create[disabled]")
 
     view
     |> element("button[phx-click=connect-thread-agent][phx-value-runtime=claude]")

@@ -24,7 +24,7 @@ defmodule RavixWeb.ToolingOAuthHTML do
           <button class="landing-button" type="submit" name="decision" value="deny">Deny</button>
         </form>
         <p>
-          You can disconnect this application in <a href="/settings/connections">Connected applications</a>.
+          You can disconnect this application in <a href="/settings/connected-apps">Connected applications</a>.
         </p>
       </main>
     </div>
@@ -33,11 +33,13 @@ defmodule RavixWeb.ToolingOAuthHTML do
 
   def connections(assigns) do
     ~H"""
-    <div id="connections-panel" class="inbox connections-page">
+    <div id="connections-panel" class={["connections-page", !assigns[:framed] && "inbox"]}>
       <header>
-        <h1>Connected applications</h1>
+        <h1 :if={!assigns[:framed]}>Connected applications</h1>
         <p>Review applications with access to your projects and tracks.</p>
-        <p>Activity times update about once a minute. Older activity may not be recorded.</p>
+        <p>
+          Each is named by its client and when it connected, in your time. Last use updates about once a minute; older use may not be recorded.
+        </p>
       </header>
       <div class="connections-list">
         <p :if={@connections == []}>No applications connected.</p>
@@ -47,7 +49,33 @@ defmodule RavixWeb.ToolingOAuthHTML do
           class="connection-card"
         >
           <div class="row connection-heading">
-            <h2>{connection.name}</h2>
+            <h2>
+              <span class="connection-name">{connection.name}</span>
+              <span class="connection-meta" id={"connection-#{connection.id}-meta"}>
+                <span aria-hidden="true">·</span>
+                <span>
+                  connected
+                  <.local_time
+                    id={"connection-#{connection.id}-connected"}
+                    at={connection.connected_at}
+                    title_prefix="Connected "
+                  />
+                </span>
+                <span aria-hidden="true">·</span>
+                <span :if={connection.last_used_at}>
+                  last used
+                  <time
+                    id={"connection-#{connection.id}-used"}
+                    phx-hook="RelativeTime"
+                    data-style="ago"
+                    data-title-prefix="Last used "
+                    datetime={DateTime.to_iso8601(connection.last_used_at)}
+                    title={"Last used " <> RavixWeb.LocalTime.full(connection.last_used_at, nil)}
+                  >{RavixWeb.LocalTime.ago_words(connection.last_used_at)}</time>
+                </span>
+                <span :if={!connection.last_used_at}>not used yet</span>
+              </span>
+            </h2>
             <span class="spacer"></span>
             <form
               :if={connection.active}
@@ -60,14 +88,6 @@ defmodule RavixWeb.ToolingOAuthHTML do
             <span :if={!connection.active} class="dim">Disconnected or expired</span>
           </div>
           <p class="mono connection-resource">{connection.resource}</p>
-          <dl class="connection-dates">
-            <div>
-              <dt>Connected</dt><dd><.activity_time value={connection.connected_at} /></dd>
-            </div>
-            <div>
-              <dt>Last used</dt><dd><.activity_time value={connection.last_used_at} /></dd>
-            </div>
-          </dl>
           <details>
             <summary>Permissions ({length(connection.scopes)})</summary>
             <ul>
@@ -77,17 +97,6 @@ defmodule RavixWeb.ToolingOAuthHTML do
         </section>
       </div>
     </div>
-    """
-  end
-
-  attr :value, :any, required: true
-
-  defp activity_time(assigns) do
-    ~H"""
-    <time :if={@value} datetime={DateTime.to_iso8601(@value)}>
-      {Calendar.strftime(@value, "%b %d, %Y at %H:%M:%S UTC")}
-    </time>
-    <span :if={is_nil(@value)}>Not recorded yet</span>
     """
   end
 

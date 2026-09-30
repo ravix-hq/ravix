@@ -10,7 +10,7 @@ defmodule RavixWeb.WorkspaceLiveTest do
   alias Ravix.GitHub.{ChecksReport, Shapes}
   alias Ravix.Hub.Event
   alias Ravix.People.Store, as: People
-  alias Ravix.Tracks.{Diff, Files, Follower, Setup}
+  alias Ravix.Tracks.{Diff, Files, Follower, Setup, Track}
   alias Ravix.Tracks.Transcript
   alias RavixWeb.Live.Guard
 
@@ -105,6 +105,55 @@ defmodule RavixWeb.WorkspaceLiveTest do
   test "sign in has its own document title", %{conn: conn} do
     {:ok, view, _} = live(conn, "/login")
     assert page_title(view) == "Sign in · Ravix"
+  end
+
+  test "a titled track is named by its title, never its branch, wherever it is listed",
+       %{conn: conn} do
+    user = insert_user()
+    project = insert_project(user: user, name: "Label project")
+    titled = insert_track(project: project, title: "Pull Latest Main", branch: "ravix/crewe")
+    untitled = insert_track(project: project, title: "ravix/fix-login", branch: "ravix/fix-login")
+
+    rows =
+      for row <- [titled, untitled],
+          do: %{Tracks.present(row, project: project) | status: :ready, unread: true}
+
+    stub(Tracks, :list, fn _, _, _opts -> {:ok, rows} end)
+    {:ok, view, _} = live(log_in_user(conn, user), "/inbox")
+    render_async(view)
+
+    card = fn row -> element(view, ~s|.inbox-item[href^="/p/#{project.id}/t/#{row.id}?"]|) end
+    tab = fn row -> element(view, "#project-track-tab-#{row.id}") end
+
+    # The Inbox and the sidebar say the title, and nothing of the branch.
+    assert render(card.(titled)) =~ "<strong>Pull Latest Main</strong>"
+    refute render(card.(titled)) =~ "crewe"
+    assert render(tab.(titled)) =~ ~s|<span class="track-title">Pull Latest Main</span>|
+    refute render(tab.(titled)) =~ "crewe"
+
+    # Until it is titled, a track goes by its branch less the namespace.
+    assert render(card.(untitled)) =~ "<strong>fix-login</strong>"
+    refute render(card.(untitled)) =~ "ravix/fix-login"
+    assert render(tab.(untitled)) =~ ~s|<span class="track-title">fix-login</span>|
+    refute render(tab.(untitled)) =~ "ravix/fix-login"
+
+    # Quick jump reads the same label, and still finds a track by its branch.
+    render_click(view, "dialog", %{name: "search"})
+    view |> form("#search-form", q: "crewe") |> render_change()
+    result = element(view, "#search-track-link-#{titled.id}")
+    assert render(result) =~ ~s|<span class="search-label">Pull Latest Main</span>|
+    refute render(result) =~ "ravix/crewe"
+
+    # The project's recent tracks, and the page title of an open track.
+    render_patch(view, "/p/#{project.id}")
+    recent = view |> element("#project-start") |> render()
+    assert recent =~ "Pull Latest Main"
+    assert recent =~ "fix-login"
+    refute recent =~ "ravix/"
+
+    stub_track(titled)
+    render_patch(view, "/p/#{project.id}/t/#{titled.id}")
+    assert page_title(view) == "Pull Latest Main · Label project · Ravix"
   end
 
   test "inbox opens the unread non-default thread and clears all unread indicators", %{conn: conn} do
@@ -210,7 +259,7 @@ defmodule RavixWeb.WorkspaceLiveTest do
     assert has_element?(view, "#rail-loading")
     render_click(view, "dialog", %{name: "search"})
     assert has_element?(view, "#search-dialog [role=status]", "Loading projects")
-    refute has_element?(view, "#search-dialog", "No projects, tracks or plans match")
+    refute has_element?(view, "#search-dialog", "No tracks match")
     render_click(view, "dismiss-switcher")
     child = find_live_child(view, "track-host")
     assert render_async(child) =~ "Deep-linked work"
@@ -628,7 +677,7 @@ defmodule RavixWeb.WorkspaceLiveTest do
     assert has_element?(view, "#help-dialog", "Connect Claude Code with MCP")
     assert has_element?(view, "#help-dialog code", Ravix.Config.public_url() <> "/mcp")
     assert has_element?(view, "#help-dialog", "SubscribeToTask")
-    assert has_element?(view, "#help-dialog a[href='/settings/connections']")
+    assert has_element?(view, "#help-dialog a[href='/settings/connected-apps']")
     view |> element("#help-dialog button", "What's new") |> render_click()
     assert has_element?(view, "#changes-dialog", "Changes in Ravix since you last checked.")
     refute has_element?(view, "#changes-dialog .chip")
@@ -656,7 +705,7 @@ defmodule RavixWeb.WorkspaceLiveTest do
 
     assert has_element?(
              view,
-             ~s|#account-trigger[aria-label="Account and app settings, #{count} new in What's new"]|
+             ~s|#account-trigger[aria-label="You, #{count} new in What's new"]|
            )
 
     view |> element("#open-changes") |> render_click()
@@ -954,7 +1003,12 @@ defmodule RavixWeb.WorkspaceLiveTest do
       project = insert_project(user: user)
       {:ok, view, _} = live(log_in_user(conn, user), "/p/#{project.id}?new=track")
       render_async(view)
-      assert has_element?(view, "#new-track-form option[value='private']") == unquote(dedicated)
+      # RAV-60: without a second choice the sharing chip is a plain label.
+      assert has_element?(view, "#new-track-sharing-menu input[value=private]") ==
+               unquote(dedicated)
+
+      assert has_element?(view, ".new-track-chips .pick-chip-static", "Everyone") ==
+               not unquote(dedicated)
     end
   end
 
@@ -972,9 +1026,9 @@ defmodule RavixWeb.WorkspaceLiveTest do
     assert has_element?(view, "#new-track-form")
     assert has_element?(view, ".project-tree-tracks .workspace-track")
     view |> form("#new-track-form", new_track: [title: "Keep this name"]) |> render_change()
-    view |> element("button", "Advanced") |> render_click()
+    view |> element("#new-track-options[aria-expanded=false]", "Options") |> render_click()
     refute has_element?(view, "#track-advanced[hidden]")
-    view |> element("button", "Hide advanced") |> render_click()
+    view |> element("#new-track-options[aria-expanded=true]", "Options") |> render_click()
     assert has_element?(view, "#track-advanced[hidden]")
     assert has_element?(view, "#track-title[value='Keep this name']")
     # The close patches from the client, so a link clicked meanwhile keeps
@@ -1071,17 +1125,18 @@ defmodule RavixWeb.WorkspaceLiveTest do
       closing
     ] = tracks
 
-    # The namespace every default title shares is left off the tab; the full
-    # title, its creator and its machine state are its accessible name, the
-    # title its tooltip. The age the `RelativeTime` hook keeps current ends it.
+    # The namespace every default title shares is left off the tab, its
+    # tooltip and its accessible name alike (`Track.label/1`); the name, its
+    # creator and its machine state are the accessible name. The age the
+    # `RelativeTime` hook keeps current ends it.
     assert has_element?(
              view,
-             "#{tab.(idle)}[data-label='ravix/idle, created by @user, Idle'][title='ravix/idle']"
+             "#{tab.(idle)}[data-label='idle, created by @user, Idle'][title='idle']"
            )
 
     assert has_element?(
              view,
-             "#{tab.(idle)}[aria-label^='ravix/idle, created by @user, Idle, active ']"
+             "#{tab.(idle)}[aria-label^='idle, created by @user, Idle, active ']"
            )
 
     assert render(element(view, "#{tab.(idle)} .track-title")) =~ ~r{>idle</span>}
@@ -1115,7 +1170,7 @@ defmodule RavixWeb.WorkspaceLiveTest do
 
       assert has_element?(
                view,
-               "#{tab.(track)}[data-label=\"#{track.title}, created by @user, #{name}\"]"
+               "#{tab.(track)}[data-label=\"#{Track.label(track)}, created by @user, #{name}\"]"
              )
     end
 
@@ -1125,7 +1180,7 @@ defmodule RavixWeb.WorkspaceLiveTest do
 
     assert has_element?(
              view,
-             "#{tab.(broken)}[data-label='ravix/broken, created by @user, Idle']"
+             "#{tab.(broken)}[data-label='broken, created by @user, Idle']"
            )
 
     # Idle and active tracks alike omit decorative numbering.
@@ -1205,13 +1260,13 @@ defmodule RavixWeb.WorkspaceLiveTest do
     {:ok, view, _} = live(log_in_user(conn, user), "/p/#{project.id}?new=track")
     render_async(view)
 
-    view |> element("button", "Advanced") |> render_click()
+    view |> element("#new-track-options", "Options") |> render_click()
     render_click(view, "origin", %{"kind" => "branch"})
     refute render(view) =~ "New worktree from"
 
     # `hidden` does not disable an input: without a reset the ref select would
     # still submit and open the track from a ref the form no longer shows.
-    view |> element("button", "Hide advanced") |> render_click()
+    view |> element("#new-track-options", "Options") |> render_click()
     assert has_element?(view, "#track-advanced[hidden]")
     assert render(view) =~ "New worktree from"
     assert has_element?(view, "button.primary", "Blank")
@@ -1316,7 +1371,11 @@ defmodule RavixWeb.WorkspaceLiveTest do
     end)
 
     view |> element("#{row} button[title='Project settings']") |> render_click()
-    assert has_element?(view, "#settings-dialog")
+    assert_patch(view, "/p/#{mine.id}/settings/general")
+    render_async(view)
+    assert has_element?(view, "#settings-sections")
+    assert has_element?(view, ".settings-crumbs [aria-current=page]", "General")
+    assert page_title(view) == "General · Mine · Ravix"
 
     # A member who does not own the project has its people but not its settings.
     {:ok, view, _} = live(log_in_user(conn, user), "/p/#{shared.id}")
@@ -1325,9 +1384,13 @@ defmodule RavixWeb.WorkspaceLiveTest do
     assert has_element?(view, "#{row} button[aria-label='People in sharer / Shared']")
     refute has_element?(view, "#{row} button[aria-label^='Project settings']")
     render_hook(view, "project-settings", %{project: shared.id})
-    refute has_element?(view, "#settings-dialog")
+    refute has_element?(view, "#settings-sections")
     render_patch(view, "/p/#{shared.id}?settings=true")
-    refute has_element?(view, "#settings-dialog")
+    refute has_element?(view, "#settings-sections")
+    render_patch(view, "/p/#{shared.id}/settings/general")
+    assert_patch(view, "/p/#{shared.id}")
+    assert has_element?(view, "#flash-info", "Only the project's owner can change its settings.")
+    refute has_element?(view, "#settings-sections")
   end
 
   test "top New track defaults to the current project and switches scoped projects", %{conn: conn} do
@@ -1358,7 +1421,7 @@ defmodule RavixWeb.WorkspaceLiveTest do
     render_hook(view, "new-track-project", %{project: foreign.id})
     assert has_element?(view, "#new-track-project option[value='#{second.id}'][selected]")
     render_hook(view, "project-settings", %{project: foreign.id})
-    refute has_element?(view, "#settings-dialog")
+    refute has_element?(view, "#settings-sections")
 
     expect(Tracks, :open, fn viewer, id, attrs ->
       assert viewer.id == user.id
@@ -1388,9 +1451,11 @@ defmodule RavixWeb.WorkspaceLiveTest do
        }}
     end)
 
+    # The dialog's old link opens its first section.
     render_patch(view, "/p/#{first.id}?settings=true")
+    assert_patch(view, "/p/#{first.id}/settings/general")
     render_async(view)
-    assert has_element?(view, "#settings-dialog")
+    assert has_element?(view, "#settings-sections")
   end
 
   for has_project <- [false, true] do
@@ -1496,24 +1561,31 @@ defmodule RavixWeb.WorkspaceLiveTest do
 
     assert has_element?(
              view,
-             "#yard .yard-footer #account-trigger[aria-label='Account and app settings']"
+             "#yard .yard-footer #account-trigger[aria-label='You']",
+             "You"
            )
+
+    assert has_element?(view, "#account-menu[aria-label='You']")
 
     menu = "#yard #account-menu[popover]"
 
+    # Quick toggles, then a short menu (RAV-77): Account and Repository
+    # access are Settings' pages now.
     for item <- [
           "#theme-picker",
           "#notify",
-          "a[href='/api/auth/install']",
+          "button#open-personal-settings",
           "a[href='/auth/signout']"
         ] do
       assert has_element?(view, "#{menu} #{item}")
     end
 
+    refute has_element?(view, "#{menu} #open-account")
+    refute has_element?(view, "#{menu} a[href='/api/auth/install']")
+
     # Each item that opens a dialog also hides the menu, and returns focus to
     # the trigger when the dialog closes, since the item itself is hidden.
     for {id, dialog} <- [
-          {"open-account", "#account-dialog"},
           {"open-help", "#help-dialog"},
           {"open-changes", "#changes-dialog"}
         ] do

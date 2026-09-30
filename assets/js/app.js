@@ -23,9 +23,13 @@
 //   Terminal        the Commands panel: history, Ctrl+L, output that follows itself
 //   Shell           an interactive terminal tab: xterm.js over the page's socket
 //   Notify          desktop notifications when a track needs you and you are not looking
-//   SettingsSections section navigation and unsaved input warnings
+//   NotifyToggle    the switch for them, on the Notifications settings page
+//   SettingsSections a project settings section's own Save, Discard and agent choice
+//   UnsavedChanges  a settings page's unsaved-changes bar and leave confirmation
+//   SettingsFrame   a settings page opens each section at its top
 //   ProjectTree     viewer-local collapse preferences for project and section rows
-//   QuickJump       Cmd/Ctrl-K and keyboard selection in navigation search
+//   QuickJump       Cmd/Ctrl-K, Cmd/Ctrl-N and keyboard selection in navigation search
+//   QuickJumpQuery  search's query: focused as it mounts, with the keys typed on the way
 //   ProjectSections drag a sidebar project onto one of your sections
 //   ProjectFormFocus synchronous dialog focus that never steals later typing
 //   CopyCode        copy a Help example exactly, with success or failure feedback
@@ -34,6 +38,7 @@
 //   LocalTime       a timestamp in the viewer's own zone and locale
 //   SubmitOnEnter   the create dialog's first prompt: Enter creates, Shift+Enter is a new line
 //   HeaderFit       a track header's status chips: whole words or just their icons
+//   ChipMenu        a chip's popover: aria-expanded, Escape and focus return inside a dialog
 //
 // Adding a hook is a product decision, not a convenience. Say why in its
 // file's header, and list it here.
@@ -43,6 +48,7 @@ import {clearTransportFallback, LONG_POLL_FALLBACK_MS} from "./transport"
 import {trackPageLoading} from "./page_loading"
 import {watchDialogs} from "./dialog_escape"
 import {browserTimeZone} from "./timezone"
+import {macPlatform} from "./platform"
 import {Socket} from "phoenix"
 import {LiveSocket} from "phoenix_live_view"
 import {ThreadTabs} from "./hooks/thread_tabs"
@@ -53,11 +59,13 @@ import {TranscriptTail} from "./hooks/transcript_tail"
 import {Composer} from "./hooks/composer"
 import {Terminal} from "./hooks/terminal"
 import {Shell} from "./hooks/shell"
-import {Notify} from "./hooks/notify"
+import {Notify, NotifyToggle} from "./hooks/notify"
 import {ProjectTree} from "./hooks/project_tree"
-import {QuickJump} from "./hooks/quick_jump"
+import {QuickJump, QuickJumpQuery} from "./hooks/quick_jump"
 import {AgentConfirmation} from "./hooks/agent_confirmation"
 import {SettingsSections} from "./hooks/settings_sections"
+import {UnsavedChanges} from "./hooks/unsaved_changes"
+import {SettingsFrame} from "./hooks/settings_frame"
 import {ProjectSections} from "./hooks/project_sections"
 import {ProjectFormFocus} from "./hooks/project_form_focus"
 import {CopyCode} from "./hooks/copy_code"
@@ -67,17 +75,18 @@ import {RelativeTime} from "./hooks/relative_time"
 import {LocalTime} from "./hooks/local_time"
 import {SubmitOnEnter} from "./hooks/submit_on_enter"
 import {HeaderFit} from "./hooks/header_fit"
+import {ChipMenu} from "./hooks/chip_menu"
 
 
 
-const hooks = {ThreadTabs, AgentConfirmation, Theme, PanelResize, PanelToggle, TranscriptTail, Composer, Terminal, Notify, SettingsSections, ProjectTree, QuickJump, ProjectSections, CopyCode, ProjectFormFocus, ShareMention, TurnTimer, RelativeTime, SubmitOnEnter, Shell, HeaderFit, LocalTime}
+const hooks = {ThreadTabs, AgentConfirmation, Theme, PanelResize, PanelToggle, TranscriptTail, Composer, Terminal, Notify, NotifyToggle, SettingsSections, UnsavedChanges, SettingsFrame, ProjectTree, QuickJump, QuickJumpQuery, ProjectSections, CopyCode, ProjectFormFocus, ShareMention, TurnTimer, RelativeTime, SubmitOnEnter, Shell, HeaderFit, LocalTime, ChipMenu}
 
 const csrfToken = document.querySelector("meta[name='csrf-token']").getAttribute("content")
 clearTransportFallback(window)
 const dialogs = watchDialogs(window)
 const liveSocket = new LiveSocket("/live", Socket, {
   longPollFallbackMs: LONG_POLL_FALLBACK_MS,
-  params: {_csrf_token: csrfToken, timezone: browserTimeZone()},
+  params: {_csrf_token: csrfToken, timezone: browserTimeZone(), platform: macPlatform() ? "mac" : "other"},
   hooks,
   metadata: {keydown: dialogs.keydown},
 })

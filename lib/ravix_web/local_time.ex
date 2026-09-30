@@ -46,6 +46,42 @@ defmodule RavixWeb.LocalTime do
     Calendar.strftime(local, "%a, %b %-d, %Y, %-I:%M %p ") <> zone_name(local)
   end
 
+  @ages [
+    {365 * 86_400, "y", "year"},
+    {30 * 86_400, "mo", "month"},
+    {86_400, "d", "day"},
+    {3_600, "h", "hour"},
+    {60, "m", "minute"}
+  ]
+
+  @doc """
+  How long ago, as `{short, words}` ("2h", "2 hours ago"), the way
+  `assets/js/hooks/relative_time.js`'s `age` answers it: the server's text
+  before the `RelativeTime` hook keeps it current.
+  """
+  @spec ago(DateTime.t(), DateTime.t()) :: {String.t(), String.t()}
+  def ago(%DateTime{} = at, %DateTime{} = now \\ DateTime.utc_now()) do
+    seconds = max(DateTime.diff(now, at), 0)
+
+    case Enum.find(@ages, fn {size, _, _} -> seconds >= size end) do
+      nil ->
+        {"now", "just now"}
+
+      {size, short, word} ->
+        n = div(seconds, size)
+        {"#{n}#{short}", "#{n} #{word}#{if n == 1, do: "", else: "s"} ago"}
+    end
+  end
+
+  @doc ~S'The `data-style="ago"` text: "2h ago", or "just now".'
+  @spec ago_words(DateTime.t(), DateTime.t()) :: String.t()
+  def ago_words(%DateTime{} = at, %DateTime{} = now \\ DateTime.utc_now()) do
+    case ago(at, now) do
+      {"now", _words} -> "just now"
+      {short, _words} -> short <> " ago"
+    end
+  end
+
   defp zone_name(%DateTime{time_zone: @utc}), do: "Coordinated Universal Time"
   defp zone_name(%DateTime{zone_abbr: abbr}), do: abbr
 end

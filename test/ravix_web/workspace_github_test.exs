@@ -76,7 +76,7 @@ defmodule RavixWeb.WorkspaceGitHubTest do
           "/api/auth/callback?installation_id=77&setup_action=install&code=owner-code&state=#{state}"
         )
 
-      assert redirected_to(back) == "/w/#{ctx.team.id}?github=connected"
+      assert redirected_to(back) == "/w/#{ctx.team.id}/settings/repositories?github=connected"
       assert [%Installation{installation_id: 77}] = Store.installations(ctx.team.id)
 
       # The same callback again is a replay.
@@ -86,7 +86,8 @@ defmodule RavixWeb.WorkspaceGitHubTest do
           "/api/auth/callback?installation_id=77&setup_action=install&code=owner-code&state=#{state}"
         )
 
-      assert redirected_to(again) == "/w/#{ctx.team.id}?github_error=stale_connect"
+      assert redirected_to(again) ==
+               "/w/#{ctx.team.id}/settings/repositories?github_error=stale_connect"
     end
 
     test "another browser session, or nobody signed in, cannot finish it", ctx do
@@ -97,11 +98,12 @@ defmodule RavixWeb.WorkspaceGitHubTest do
 
       assert other
              |> get("/api/auth/callback?installation_id=77&code=owner-code&state=#{state}")
-             |> redirected_to() == "/w/#{ctx.team.id}?github_error=stale_connect"
+             |> redirected_to() ==
+               "/w/#{ctx.team.id}/settings/repositories?github_error=stale_connect"
 
       assert build_conn()
              |> get("/api/auth/callback?installation_id=77&code=owner-code&state=#{state}")
-             |> redirected_to() =~ "/w/#{ctx.team.id}?github_error="
+             |> redirected_to() =~ "/w/#{ctx.team.id}/settings/repositories?github_error="
 
       assert Store.installations(ctx.team.id) == []
     end
@@ -128,7 +130,8 @@ defmodule RavixWeb.WorkspaceGitHubTest do
 
       assert ctx.conn
              |> get("/api/auth/callback?installation_id=55&code=owner-code&state=#{state}")
-             |> redirected_to() == "/w/#{ctx.team.id}?github_error=not_your_installation"
+             |> redirected_to() ==
+               "/w/#{ctx.team.id}/settings/repositories?github_error=not_your_installation"
 
       assert Store.installations(ctx.team.id) == []
     end
@@ -139,7 +142,8 @@ defmodule RavixWeb.WorkspaceGitHubTest do
 
       assert ctx.conn
              |> get("/api/auth/callback?installation_id=77&setup_action=install&state=#{state}")
-             |> redirected_to() == "/w/#{ctx.team.id}?github_error=no_authorization"
+             |> redirected_to() ==
+               "/w/#{ctx.team.id}/settings/repositories?github_error=no_authorization"
 
       assert Store.installations(ctx.team.id) == []
     end
@@ -156,7 +160,7 @@ defmodule RavixWeb.WorkspaceGitHubTest do
       {:ok, _} = Store.bind_installation(ctx.team.id, 77, "acme", ctx.owner.id)
       {:ok, _} = Repositories.refresh(ctx.owner, ctx.team.id)
 
-      {:ok, view, _html} = live(ctx.conn, "/w/#{ctx.team.id}")
+      {:ok, view, _html} = live(ctx.conn, "/w/#{ctx.team.id}/settings/repositories")
       assert has_element?(view, ~s(#connect-github[href="/w/#{ctx.team.id}/github/connect"]))
 
       assert has_element?(
@@ -168,22 +172,21 @@ defmodule RavixWeb.WorkspaceGitHubTest do
       assert has_element?(view, "li[data-repo='acme/web']", "acme/web")
 
       provisioning(1)
-      view |> element("li[data-repo='acme/web'] button", "Add") |> render_click()
+      view |> element("li[data-repo='acme/web'] button", "Add project") |> render_click()
       {path, _flash} = assert_redirect(view)
       assert "/p/" <> project_id = path
 
-      {:ok, view, _html} = live(ctx.conn, "/w/#{ctx.team.id}")
+      {:ok, view, _html} = live(ctx.conn, "/w/#{ctx.team.id}/settings/repositories")
 
       assert has_element?(
                view,
-               ~s(li[data-repo="acme/web"] a[href="/p/#{project_id}"]),
-               "Open project"
+               ~s(li[data-repo="acme/web"] a[href="/p/#{project_id}"][aria-label^="Open project"])
              )
     end
 
     test "a stale catalog is refreshed in the background once the page connects", ctx do
       {:ok, _} = Store.bind_installation(ctx.team.id, 77, "acme", ctx.owner.id)
-      {:ok, view, _html} = live(ctx.conn, "/w/#{ctx.team.id}")
+      {:ok, view, _html} = live(ctx.conn, "/w/#{ctx.team.id}/settings/repositories")
       render_async(view)
       assert has_element?(view, "li[data-repo='acme/api']", "acme/api")
     end
@@ -193,7 +196,7 @@ defmodule RavixWeb.WorkspaceGitHubTest do
       {:ok, _} = Repositories.refresh(ctx.owner, ctx.team.id)
       github(%{77 => %{account: "acme", gone: true}})
 
-      {:ok, view, _html} = live(ctx.conn, "/w/#{ctx.team.id}")
+      {:ok, view, _html} = live(ctx.conn, "/w/#{ctx.team.id}/settings/repositories")
       view |> element("#refresh-catalog") |> render_click()
       render_async(view)
 
@@ -212,15 +215,19 @@ defmodule RavixWeb.WorkspaceGitHubTest do
       member = insert_user()
       :ok = Store.add_member(ctx.team.id, member.id, :member, ctx.owner.id)
 
-      {:ok, view, _html} = live(log_in_user(build_conn(), member), "/w/#{ctx.team.id}")
+      {:ok, view, _html} =
+        live(log_in_user(build_conn(), member), "/w/#{ctx.team.id}/settings/repositories")
+
       refute has_element?(view, "#connect-github")
-      assert has_element?(view, "li[data-repo='acme/web']", "Not added yet")
+      assert has_element?(view, "li[data-repo='acme/web']", "No project yet")
       refute has_element?(view, "li[data-repo='acme/web'] button")
 
       # A forged add is refused by the context all the same.
-      render_hook(view, "add-repo", %{"repo" => "acme/web"})
-      html = render_async(view)
-      assert html =~ "Your role in this workspace cannot do that."
+      view
+      |> with_target("#workspace-settings-content")
+      |> render_hook("add-repo", %{"repo" => "acme/web"})
+
+      assert flashed(view) =~ "Your role in this workspace cannot do that."
     end
 
     test "adding a repository whose project is archived says so and does not crash", ctx do
@@ -237,19 +244,22 @@ defmodule RavixWeb.WorkspaceGitHubTest do
       Store.move_project(archived.id, ctx.team.id)
       client = provisioning(0)
 
-      {:ok, view, _html} = live(ctx.conn, "/w/#{ctx.team.id}")
-      view |> element("li[data-repo='acme/web'] button", "Add") |> render_click()
-      html = render_async(view)
-      assert html =~ "archived or being deleted"
+      {:ok, view, _html} = live(ctx.conn, "/w/#{ctx.team.id}/settings/repositories")
+      view |> element("li[data-repo='acme/web'] button", "Add project") |> render_click()
+      assert flashed(view) =~ "archived or being deleted"
       assert Process.alive?(view.pid)
       assert FakeTransport.calls(client) == []
     end
 
     test "landing from GitHub says what happened", ctx do
-      {:ok, _view, html} = live(ctx.conn, "/w/#{ctx.team.id}?github=connected")
+      {:ok, _view, html} =
+        live(ctx.conn, "/w/#{ctx.team.id}/settings/repositories?github=connected")
+
       assert html =~ "GitHub connected."
 
-      {:ok, _view, html} = live(ctx.conn, "/w/#{ctx.team.id}?github_error=stale_connect")
+      {:ok, _view, html} =
+        live(ctx.conn, "/w/#{ctx.team.id}/settings/repositories?github_error=stale_connect")
+
       assert html =~ "expired or was already used"
     end
   end
@@ -281,12 +291,12 @@ defmodule RavixWeb.WorkspaceGitHubTest do
       :ok = Store.add_member(ctx.team.id, admin.id, :admin, ctx.owner.id)
       admin_conn = log_in_user(build_conn(), admin)
 
-      {:ok, view, _html} = live(admin_conn, "/w/#{ctx.team.id}")
+      {:ok, view, _html} = live(admin_conn, "/w/#{ctx.team.id}/settings/repositories")
       assert has_element?(view, "#github-empty", "No GitHub account is connected yet.")
 
       Backfill.run()
 
-      {:ok, view, _html} = live(admin_conn, "/w/#{ctx.team.id}")
+      {:ok, view, _html} = live(admin_conn, "/w/#{ctx.team.id}/settings/repositories")
       refute has_element?(view, "#github-empty")
 
       assert has_element?(
@@ -297,12 +307,12 @@ defmodule RavixWeb.WorkspaceGitHubTest do
 
       # The never-read connection is read once the page connects.
       render_async(view)
-      assert has_element?(view, "li[data-repo='acme/api']", "Open project")
-      assert has_element?(view, "li[data-repo='acme/web'] button", "Add")
+      assert has_element?(view, "li[data-repo='acme/api'] a[aria-label^='Open project']")
+      assert has_element?(view, "li[data-repo='acme/web'] button", "Add project")
     end
 
     test "the empty state offers the owner's own accounts, and Add connects one", ctx do
-      {:ok, view, _html} = live(ctx.conn, "/w/#{ctx.team.id}")
+      {:ok, view, _html} = live(ctx.conn, "/w/#{ctx.team.id}/settings/repositories")
       render_async(view)
 
       assert has_element?(view, "#github-empty", "Add one of yours")
@@ -314,8 +324,7 @@ defmodule RavixWeb.WorkspaceGitHubTest do
       assert has_element?(view, "#connect-github.ghost")
 
       view |> element("#available-77 button") |> render_click()
-      html = render_async(view)
-      assert html =~ "Added @acme to this workspace."
+      assert flashed(view) =~ "Added @acme to this workspace."
 
       assert [%Installation{installation_id: 77, account_login: "acme"} = connection] =
                Store.installations(ctx.team.id)
@@ -332,30 +341,38 @@ defmodule RavixWeb.WorkspaceGitHubTest do
         person = insert_user(token_enc: Ravix.Crypto.encrypt("user-owner-code"))
         :ok = Store.add_member(ctx.team.id, person.id, role, ctx.owner.id)
 
-        {:ok, view, _html} = live(log_in_user(build_conn(), person), "/w/#{ctx.team.id}")
+        {:ok, view, _html} =
+          live(log_in_user(build_conn(), person), "/w/#{ctx.team.id}/settings/repositories")
+
         render_async(view)
         refute has_element?(view, "#available-installations")
 
-        render_hook(view, "add-installation", %{"installation" => "77"})
-        assert render_async(view) =~ "Your role in this workspace cannot do that."
+        view
+        |> with_target("#workspace-settings-content")
+        |> render_hook("add-installation", %{"installation" => "77"})
+
+        assert flashed(view) =~ "Your role in this workspace cannot do that."
       end
 
       assert Store.installations(ctx.team.id) == []
     end
 
     test "Add is refused for an installation the owner cannot see on GitHub", ctx do
-      {:ok, view, _html} = live(ctx.conn, "/w/#{ctx.team.id}")
+      {:ok, view, _html} = live(ctx.conn, "/w/#{ctx.team.id}/settings/repositories")
       render_async(view)
 
-      render_hook(view, "add-installation", %{"installation" => "55"})
-      assert render_async(view) =~ "not one you can see"
+      view
+      |> with_target("#workspace-settings-content")
+      |> render_hook("add-installation", %{"installation" => "55"})
+
+      assert flashed(view) =~ "not one you can see"
       assert Store.installations(ctx.team.id) == []
     end
 
     test "a revoked session cannot add", ctx do
       {token, session} = insert_session(ctx.owner)
       conn = Plug.Test.init_test_session(build_conn(), session_token: token)
-      {:ok, view, _html} = live(conn, "/w/#{ctx.team.id}")
+      {:ok, view, _html} = live(conn, "/w/#{ctx.team.id}/settings/repositories")
       render_async(view)
       Repo.delete!(session)
       :sys.replace_state(view.pid, &age_session_guard/1)
@@ -392,9 +409,18 @@ defmodule RavixWeb.WorkspaceGitHubTest do
 
       assert has_element?(
                view,
-               ~s(#github-workspace-out a[href="/w/#{ctx.team.id}#workspace-github"]),
+               ~s(#github-workspace-out a[href="/w/#{ctx.team.id}/settings/repositories"]),
                "Add to workspace"
              )
     end
+  end
+
+  # The settings component's flash reaches the page as a message sent while
+  # it handles the async result: one render flushes the result, and the next
+  # is queued behind the flash.
+  defp flashed(view) do
+    render_async(view)
+    render(view)
+    render(view)
   end
 end

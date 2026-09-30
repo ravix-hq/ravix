@@ -6,6 +6,11 @@ defmodule Ravix.Sprites.PtyTest do
   alias Ravix.Sprites.Pty
   alias Ravix.SpritesFake, as: Fake
 
+  # What the client writes reaches the fake over the socket and is reported
+  # from the fake's process, unordered with anything the test reads, so a
+  # busy suite needs `read_until/4`'s bound rather than `assert_receive`'s.
+  @fake_ms 2_000
+
   @spawn {:spawn,
           %{
             argv: ["bash", "-l"],
@@ -66,7 +71,7 @@ defmodule Ravix.Sprites.PtyTest do
     assert {:session, "s1"} in events
 
     # Sprites pinged on the way in; the client answered, and said nothing of it.
-    assert_receive {Fake, :exec, {:pong, "s1"}}
+    assert_receive {Fake, :exec, {:pong, "s1"}}, @fake_ms
     refute Enum.any?(events, &match?({:ping, _}, &1))
   end
 
@@ -96,7 +101,7 @@ defmodule Ravix.Sprites.PtyTest do
     assert output(events) =~ "ran: ls"
 
     assert {:ok, pty} = Pty.resize(pty, 100, 30)
-    assert_receive {Fake, :exec, {:resize, "s1", 100, 30}}
+    assert_receive {Fake, :exec, {:resize, "s1", 100, 30}}, @fake_ms
 
     {:ok, pty} = Pty.input(pty, "exit\r")
     {_pty, events} = read_until(pty, &match?({:exit, _}, &1))
@@ -112,7 +117,7 @@ defmodule Ravix.Sprites.PtyTest do
 
     received =
       Stream.repeatedly(fn ->
-        assert_receive {Fake, :exec, {:input, "s1", chunk}}
+        assert_receive {Fake, :exec, {:input, "s1", chunk}}, @fake_ms
         chunk
       end)
       |> Enum.reduce_while("", fn chunk, acc ->

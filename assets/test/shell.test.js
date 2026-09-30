@@ -13,6 +13,7 @@ class FakeTerminal {
     this.resets = 0
     this.focused = 0
     this.disposed = false
+    this.buffer = {active: {viewportY: 0, baseY: 0}}
     FakeTerminal.made.push(this)
   }
   loadAddon(addon) {
@@ -28,8 +29,18 @@ class FakeTerminal {
   onResize(fn) {
     this.resized = fn
   }
-  write(bytes) {
-    this.written.push(new TextDecoder().decode(bytes))
+  write(bytes, done) {
+    if (typeof bytes === "string") bytes = new TextEncoder().encode(bytes)
+    if (bytes.length) this.written.push(new TextDecoder().decode(bytes))
+    done?.()
+  }
+  scrollToBottom() {
+    this.scrolled = "bottom"
+    this.buffer.active.viewportY = this.buffer.active.baseY
+  }
+  scrollToLine(line) {
+    this.scrolled = line
+    this.buffer.active.viewportY = line
   }
   reset() {
     this.resets++
@@ -76,6 +87,7 @@ afterEach(() => {
 })
 
 const tick = (ms = 0) => new Promise(resolve => setTimeout(resolve, ms))
+const frame = () => new Promise(resolve => requestAnimationFrame(() => resolve()))
 const b64 = text => btoa(String.fromCharCode(...new TextEncoder().encode(text)))
 
 test("a pane draws a terminal, measures it and asks to be attached at that size", async () => {
@@ -189,6 +201,48 @@ test("a hidden pane keeps its size until shown, then measures and takes the keyb
   observers[0].fn()
   expect(hook.fit.fits).toBe(1)
   expect(term.focused).toBe(1)
+})
+
+test("a pane shown after output arrived behind another tab opens at the end, not the top", async () => {
+  const {hook} = mountHook(Shell, "#shell-b")
+  await tick()
+  const term = FakeTerminal.made[0]
+  // A reload's replay lands while the pane is hidden: the buffer has
+  // scrolled, but the browser would show the hidden viewport from the top.
+  term.buffer.active.baseY = 30
+  term.buffer.active.viewportY = 0
+
+  document.getElementById("pane-b").hidden = false
+  observers[0].fn()
+  await frame()
+  expect(term.scrolled).toBe("bottom")
+  expect(term.buffer.active.viewportY).toBe(30)
+})
+
+test("a pane hidden while scrolled back comes back on the same line", async () => {
+  const {hook} = mountHook(Shell, "#shell-a")
+  await tick()
+  const term = FakeTerminal.made[0]
+  term.buffer.active.baseY = 40
+  term.buffer.active.viewportY = 12
+
+  document.getElementById("pane-a").hidden = true
+  observers[0].fn()
+  term.buffer.active.viewportY = 0
+  document.getElementById("pane-a").hidden = false
+  observers[0].fn()
+  await frame()
+  expect(term.scrolled).toBe(12)
+
+  // Following the output when hidden: it follows it again when shown.
+  term.buffer.active.viewportY = 40
+  document.getElementById("pane-a").hidden = true
+  observers[0].fn()
+  document.getElementById("pane-a").hidden = false
+  observers[0].fn()
+  await frame()
+  expect(term.scrolled).toBe("bottom")
+  expect(hook.hiddenAt).toBeNull()
 })
 
 test("a reconnect or the Reconnect button attaches again", async () => {

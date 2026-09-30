@@ -12,7 +12,7 @@ defmodule RavixWeb.SettingsAccessTest do
     insert_project_member(project, member)
 
     {:ok, view, _} = live(log_in_user(conn, member), "/p/#{project.id}")
-    render_click(view, "dialog", %{name: "settings"})
+    render_patch(view, "/p/#{project.id}/settings/general")
     refute has_element?(view, "#settings-form")
 
     {:ok, stranger, _} = live(log_in_user(conn, insert_user()), "/p/#{project.id}")
@@ -57,7 +57,7 @@ defmodule RavixWeb.SettingsAccessTest do
       assert {:ok, _} = Ravix.People.remove_project(owner, project.id, creator.login)
       {:ok, view, _} = live(log_in_user(conn, owner), "/p/#{project.id}")
       render_async(view)
-      render_click(view, "dialog", %{name: "settings"})
+      render_patch(view, "/p/#{project.id}/settings/general")
       render_async(view)
 
       assert has_element?(

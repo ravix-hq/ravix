@@ -66,7 +66,7 @@ defmodule RavixWeb.ProjectMoveLiveTest do
 
     {:ok, view, _html} = live(log_in_user(build_conn(), ctx.owner), "/p/#{ctx.project.id}")
     render_async(view)
-    render_click(view, "dialog", %{name: "settings"})
+    render_patch(view, "/p/#{ctx.project.id}/settings/workspace")
     render_async(view)
     view
   end
@@ -76,7 +76,7 @@ defmodule RavixWeb.ProjectMoveLiveTest do
   test "the owner confirms who gains visibility, then moves the project", ctx do
     view = open_settings(ctx)
 
-    assert has_element?(view, "[data-settings-section=workspace]", "Workspace")
+    assert has_element?(view, "#settings-nav-workspace", "Workspace")
     assert has_element?(view, "#settings-section-workspace", "This project is in Acme.")
     assert has_element?(view, "#move-to-#{ctx.beta.id}", "Move to Beta…")
     refute has_element?(view, "#move-to-#{ctx.gamma.id}")
@@ -170,7 +170,7 @@ defmodule RavixWeb.ProjectMoveLiveTest do
     view = open_settings(ctx)
     assert has_element?(view, "#settings-form")
     refute has_element?(view, "#settings-section-workspace")
-    refute has_element?(view, "[data-settings-section=workspace]")
+    refute has_element?(view, "#settings-nav-workspace")
   end
 
   test "a legacy duplicate offers no move and points to its canonical project", ctx do

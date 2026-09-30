@@ -58,7 +58,7 @@ defmodule RavixWeb.InboxCardsLiveTest do
     view
   end
 
-  test "a card says what the agent replied, escaped and bounded, how long ago, and names its branch once",
+  test "a card says what the agent replied, escaped and bounded, how long ago, and names the track by its title alone",
        %{conn: conn} do
     user = insert_user()
     project = insert_project(user: user)
@@ -86,10 +86,14 @@ defmodule RavixWeb.InboxCardsLiveTest do
     assert String.ends_with?(long, "…")
     refute html =~ "The agent finished. Open the conversation to read its reply."
 
-    # A title that is its branch is said once; a branch of its own is shown.
+    # A card names its track by `Track.label/1` and prints no branch slug
+    # beside it, titled or not (RAV-83).
     card = &"a.inbox-item[href^='/p/#{project.id}/t/#{&1.id}?']"
+    assert has_element?(view, "#{card.(named)} strong", "fix-login")
     refute has_element?(view, "#{card.(named)} code")
-    assert has_element?(view, "#{card.(branched)} code", "ada/tidy-docs-1")
+    assert has_element?(view, "#{card.(branched)} strong", "Tidy the docs")
+    refute has_element?(view, "#{card.(branched)} code")
+    refute html =~ "ada/tidy-docs-1"
 
     # The time is relative and machine-readable, and nothing says "UTC".
     assert has_element?(

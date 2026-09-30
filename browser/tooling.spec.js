@@ -99,8 +99,11 @@ test('browser consent connects MCP and A2A, work survives reconnect, and disconn
   }, { timeout: 60_000, intervals: [1000] }).toBe('TASK_STATE_COMPLETED');
   const finished = await rpc(request, reconnected, 'a2a', 'GetTask', { id: submitted.task.id });
   expect(finished.artifacts[0].parts[0].text.length).toBeGreaterThan(0);
+  // The old address still lands on the page (RAV-72).
   await page.goto('/settings/connections');
-  const connection = page.locator('section').filter({ has: page.getByRole('heading', { name: 'A2A browser test', exact: true }) });
+  await expect(page).toHaveURL(/\/settings\/connected-apps$/);
+  // A heading is the client's name and when it connected (RAV-77).
+  const connection = page.locator('.connection-card').filter({ has: page.locator('.connection-name').getByText('A2A browser test', { exact: true }) });
   await connection.getByRole('button', { name: 'Disconnect', exact: true }).click();
   await expect(connection.getByText('Disconnected or expired')).toBeVisible();
   const revoked = await request.post('/a2a', { headers: { Authorization: `Bearer ${reconnected.access_token}` }, data: { jsonrpc: '2.0', id: 1, method: 'GetTask', params: { id: submitted.task.id } } });
@@ -115,17 +118,22 @@ test('same-name connections show activity in a wide workspace with collapsed per
     protocolVersion: '2025-11-25', capabilities: {}, clientInfo: { name: 'activity-test', version: '1' },
   });
   await page.setViewportSize({ width: 1480, height: 1000 });
-  await page.goto('/settings/connections');
+  await page.goto('/settings/connected-apps');
   await expect(page.locator('[data-phx-main]')).toHaveClass(/phx-connected/);
   await expect(page.getByRole('complementary', { name: 'Projects', exact: true })).toBeVisible();
-  await expect(page).toHaveTitle('Connected applications · Ravix');
-  const heading = page.getByRole('heading', { name: 'Connected applications', exact: true });
+  await expect(page).toHaveTitle('Connected apps · You · Ravix');
+  const heading = page.getByRole('heading', { name: 'Connected apps', exact: true });
   expect((await heading.boundingBox()).height).toBeLessThan(40);
   expect((await page.locator('.connections-list').boundingBox()).width).toBeGreaterThan(700);
-  const cards = page.locator('.connection-card').filter({ has: page.getByRole('heading', { name: 'Claude', exact: true }) });
+  // Two clients named Claude are told apart by their headings: the name,
+  // when each connected in this browser's time, and when each was last used.
+  const cards = page.locator('.connection-card').filter({ has: page.locator('.connection-name').getByText('Claude', { exact: true }) });
   await expect(cards).toHaveCount(2);
-  await expect(cards.filter({ hasText: 'Not recorded yet' })).toHaveCount(1);
+  await expect(cards.filter({ hasText: 'not used yet' })).toHaveCount(1);
   await expect(cards.locator('time')).toHaveCount(3);
+  await expect(cards.locator('h2').first()).toHaveAccessibleName(/^Claude\s+connected\s+\S/);
+  await expect(cards.locator('h2 time[phx-hook="RelativeTime"]')).toHaveText(/^(just now|\d+m ago)$/);
+  expect(await cards.locator('h2 time[phx-hook="LocalTime"]').first().textContent()).not.toContain('UTC');
   await expect(cards.locator('details[open]')).toHaveCount(0);
   await cards.first().locator('summary').click();
   await expect(cards.first().locator('details ul')).toBeVisible();

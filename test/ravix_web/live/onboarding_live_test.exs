@@ -180,18 +180,18 @@ defmodule RavixWeb.OnboardingLiveTest do
 
       html = view |> element("#agent-claude") |> render_click()
       assert html =~ "claude setup-token"
-      assert has_element?(view, "#kind-subscription[aria-pressed=true]")
-      assert has_element?(view, "#kind-api_key")
+      # The other way to pay is the card's ⋯ menu, not a switch beside the steps.
+      refute has_element?(view, "#kind-api_key")
+      assert has_element?(view, "#agent-menu-claude-menu #connect-claude-api_key", "API key")
 
-      html = view |> element("#kind-api_key") |> render_click()
+      html = view |> element("#connect-claude-api_key") |> render_click()
       assert html =~ "Anthropic Console"
 
-      html = view |> element("#agent-codex") |> render_click()
+      html = view |> element("#connect-codex-api_key") |> render_click()
       assert html =~ "OpenAI platform"
-      assert has_element?(view, "#kind-api_key[aria-pressed=true]")
       assert has_element?(view, "#credential-form")
 
-      html = view |> element("#kind-subscription") |> render_click()
+      html = view |> element("#connect-codex-subscription") |> render_click()
       assert html =~ "Connect ChatGPT"
       assert has_element?(view, "#chatgpt-connect")
       refute has_element?(view, "#credential-form")
@@ -256,29 +256,64 @@ defmodule RavixWeb.OnboardingLiveTest do
       refute render(view) =~ "sk-ant-oat01-private"
     end
 
-    test "Manage reveals the default, what is held with its Remove, and API keys", %{conn: conn} do
+    test "a card makes itself the default, and its ⋯ menu holds the other way to pay and Remove",
+         %{conn: conn} do
+      user = connected()
+
       stub(Inference, :held, fn _ -> {:ok, [{:claude, :subscription}, {:codex, :api_key}]} end)
       stub(Inference, :subscription, fn _ -> {:ok, nil} end)
-      {:ok, view, _} = live(log_in_user(conn, connected()), "/welcome/agent")
+
+      expect(Inference, :make_default, fn caller, :codex ->
+        assert caller.id == user.id
+        Accounts.save_setup(caller, %{agent: :codex, credential_kind: :api_key})
+      end)
+
+      {:ok, view, _} = live(log_in_user(conn, user), "/welcome/agent")
       render_async(view)
 
-      assert has_element?(view, "#agent-manage-toggle[aria-expanded=false]")
-      assert has_element?(view, "#agent-manage[hidden]")
-      assert has_element?(view, "#agent-manage #remove-claude-subscription")
-      assert has_element?(view, "#agent-manage #make-default-codex")
-      assert has_element?(view, "#agent-manage #kind-api_key")
+      # The default is the card that says so; the other offers to be it.
+      assert has_element?(view, "#agent-card-claude.default", "Default for new projects")
+      refute has_element?(view, "#make-default-claude")
+      assert has_element?(view, "#agent-card-codex #make-default-codex", "Make default")
 
-      view |> element("#agent-manage-toggle") |> render_click()
-      assert has_element?(view, "#agent-manage-toggle[aria-expanded=true]")
-      refute has_element?(view, "#agent-manage[hidden]")
+      claude = "#agent-menu-claude-menu"
 
-      # The API key is there to choose, and choosing it shows its steps.
-      view |> element("#kind-api_key") |> render_click()
+      assert has_element?(
+               view,
+               "#{claude} #connect-claude-subscription",
+               "Replace your subscription"
+             )
+
+      assert has_element?(view, "#{claude} #connect-claude-api_key", "Connect with an API key")
+      assert has_element?(view, "#{claude} #remove-claude-subscription", "Remove")
+      refute has_element?(view, "#{claude} #remove-claude-api_key")
+      assert has_element?(view, "#agent-menu-codex-menu #remove-codex-api_key")
+
+      # Nothing warns about open tracks until something is about to end them.
+      refute render(view) =~ "open tracks"
+      view |> element("#remove-codex-api_key") |> render_click()
+      assert has_element?(view, "#agent-disconnect-confirmation", "open tracks")
+      view |> element("#agent-disconnect-confirmation button", "Cancel") |> render_click()
+
+      # An API key, chosen from the menu, shows its steps.
+      view |> element("#connect-claude-api_key") |> render_click()
       assert render(view) =~ "Anthropic Console"
       assert has_element?(view, "#credential-form label", "API key")
 
-      view |> element("#agent-manage-toggle") |> render_click()
-      assert has_element?(view, "#agent-manage[hidden]")
+      view |> element("#make-default-codex") |> render_click()
+      render_async(view)
+      assert has_element?(view, "#agent-card-codex.default")
+      assert has_element?(view, "#make-default-claude")
+      assert Repo.get!(User, user.id).agent == :codex
+    end
+
+    test "a card's menu takes only the agents and ways to pay it offers", %{conn: conn} do
+      {:ok, view, _} = live(log_in_user(conn, fresh()), "/welcome/agent")
+      panel = with_target(view, "#agent-panel")
+      render_click(panel, "connect-with", %{agent: "gemini", kind: "api_key"})
+      render_click(panel, "connect-with", %{agent: "claude", kind: "gift_card"})
+      render_click(panel, "connect-with", %{})
+      refute has_element?(view, "#credential-form")
     end
 
     test "a refusal lands on the field, the value is not given back, and the button works again",
@@ -312,8 +347,14 @@ defmodule RavixWeb.OnboardingLiveTest do
       {:ok, view, _} = live(log_in_user(conn, connected()), "/welcome/agent")
       render_async(view)
       assert has_element?(view, "#agent-claude-status", "Connected")
-      # Replacing it is under Manage, as the kind it is paid with.
-      view |> element("#kind-subscription") |> render_click()
+      # The card says nothing about open tracks; replacing it, from the
+      # card's menu, is when that is said.
+      refute render(view) =~ "open tracks"
+
+      view
+      |> element("#connect-claude-subscription", "Replace your subscription")
+      |> render_click()
+
       html = render_async(view)
       assert html =~ "Claude Code is connected with your subscription"
       assert html =~ "open tracks"
@@ -379,8 +420,7 @@ defmodule RavixWeb.OnboardingLiveTest do
       end)
 
       {:ok, view, _} = live(log_in_user(conn, user), "/welcome/agent")
-      view |> element("#agent-codex") |> render_click()
-      view |> element("#kind-subscription") |> render_click()
+      view |> element("#connect-codex-subscription") |> render_click()
 
       html = view |> element("#chatgpt-connect") |> render_click()
       assert html =~ "Asking ChatGPT"
@@ -428,8 +468,7 @@ defmodule RavixWeb.OnboardingLiveTest do
       end)
 
       {:ok, view, _} = live(log_in_user(conn, fresh()), "/welcome/agent")
-      view |> element("#agent-codex") |> render_click()
-      view |> element("#kind-subscription") |> render_click()
+      view |> element("#connect-codex-subscription") |> render_click()
       view |> element("#chatgpt-connect") |> render_click()
       render_async(view)
 
@@ -454,8 +493,7 @@ defmodule RavixWeb.OnboardingLiveTest do
       end)
 
       {:ok, view, _} = live(log_in_user(conn, fresh()), "/welcome/agent")
-      view |> element("#agent-codex") |> render_click()
-      view |> element("#kind-subscription") |> render_click()
+      view |> element("#connect-codex-subscription") |> render_click()
       view |> element("#chatgpt-connect") |> render_click()
       html = render_async(view)
       assert html =~ "Too many ChatGPT sign-ins were started."
@@ -497,8 +535,7 @@ defmodule RavixWeb.OnboardingLiveTest do
       reject(&Inference.poll_link/2)
 
       {:ok, view, _} = live(log_in_user(conn, fresh()), "/welcome/agent")
-      view |> element("#agent-codex") |> render_click()
-      view |> element("#kind-subscription") |> render_click()
+      view |> element("#connect-codex-subscription") |> render_click()
       view |> element("#chatgpt-connect") |> render_click()
       assert render_async(view) =~ "ABCD-EFGH"
 
@@ -513,12 +550,11 @@ defmodule RavixWeb.OnboardingLiveTest do
     test "a Fountain where nobody may link says so instead of offering the button", %{conn: conn} do
       linking(false)
       {:ok, view, _} = live(log_in_user(conn, fresh()), "/welcome/agent")
-      view |> element("#agent-codex") |> render_click()
-      view |> element("#kind-subscription") |> render_click()
+      view |> element("#connect-codex-subscription") |> render_click()
       html = render_async(view)
       assert html =~ "not switched on"
       refute has_element?(view, "#chatgpt-connect")
-      assert has_element?(view, "#kind-api_key")
+      assert has_element?(view, "#connect-codex-api_key", "Connect with an API key")
     end
 
     test "somebody connected this way is told, and that reconnecting ends open tracks", %{
@@ -532,7 +568,11 @@ defmodule RavixWeb.OnboardingLiveTest do
         live(log_in_user(conn, connected(agent: :codex)), "/welcome/agent")
 
       render_async(view)
-      view |> element("#kind-subscription") |> render_click()
+
+      view
+      |> element("#connect-codex-subscription", "Reconnect your ChatGPT subscription")
+      |> render_click()
+
       html = render_async(view)
       assert html =~ "Codex is connected with your ChatGPT subscription"
       assert html =~ "Sign in again to reconnect it"
@@ -546,8 +586,7 @@ defmodule RavixWeb.OnboardingLiveTest do
       {token, session} = insert_session(fresh())
       conn = Plug.Test.init_test_session(conn, session_token: token)
       {:ok, view, _} = live(conn, "/welcome/agent")
-      view |> element("#agent-codex") |> render_click()
-      view |> element("#kind-subscription") |> render_click()
+      view |> element("#connect-codex-subscription") |> render_click()
       view |> element("#chatgpt-connect") |> render_click()
       assert render_async(view) =~ "ABCD-EFGH"
 

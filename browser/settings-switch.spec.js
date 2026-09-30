@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { signIn, connectClaude } from './sign-in.js';
+import { openProjectSettings, connectApiKey } from './settings.js';
 
 const mock = `http://localhost:${process.env.MOCK_PORT || 8893}`;
 
@@ -27,17 +28,7 @@ test('settings explicitly rebuilds when switching agents and the next track work
   test.setTimeout(120_000);
   await signIn(page, 'dana');
   // Connect through the real account form; mock values never leave this fixture.
-  for (const agent of ['Claude Code', 'Codex']) {
-    await page.locator('#account-trigger').click();
-    await page.locator('#open-account').click();
-    const account = page.getByRole('dialog', { name: 'Your account', exact: true });
-    await account.getByRole('button', { name: new RegExp(`^${agent}`) }).click();
-    await account.getByRole('button', { name: 'API key', exact: true }).click();
-    await account.getByLabel('API key', { exact: true }).fill('mock-settings-switch-key');
-    await account.getByRole('button', { name: `Connect ${agent}`, exact: true }).click();
-    await expect(account.locator(`#held-${agent === 'Codex' ? 'codex' : 'claude'}-api_key`)).toBeVisible();
-    await account.getByRole('button', { name: 'Close', exact: true }).click();
-  }
+  for (const agent of ['Claude Code', 'Codex']) await connectApiKey(page, agent, 'mock-settings-switch-key');
   await page.getByRole('button', { name: 'Add a project', exact: true }).first().click();
   const create = page.getByRole('dialog', { name: 'New project' });
   await create.getByLabel('Project name', { exact: true }).fill('Agent switch browser');
@@ -60,14 +51,17 @@ test('settings explicitly rebuilds when switching agents and the next track work
     if (previousAgent) expect(agent.id).not.toBe(previousAgent);
     previousAgent = agent.id;
     // #243 named the track header's gear for what it opens.
-    await page.locator('#yard .workspace-project.current button[title="Project settings"]').click();
-    const settings = page.getByRole('dialog', { name: 'Project settings', exact: true });
+    const settings = await openProjectSettings(page, 'agent');
     await expect(settings.locator('[data-confirm]')).toHaveCount(0);
-    await settings.getByRole('button', { name: 'Agent', exact: true }).click();
     await settings.locator(`#settings-agent-${target}`).click();
     await expect(settings.getByRole('button', { name: 'Save agent', exact: true })).toBeHidden();
-    await settings.getByRole('button', { name: 'General', exact: true }).click();
-    await expect(settings.getByRole('button', { name: 'Switch and rebuild', exact: true })).toBeFocused();
+    // Leaving the section with the switch unsaved asks first (RAV-72).
+    await settings.locator('#settings-nav-general').click();
+    const leave = page.getByRole('alertdialog', { name: 'Leave without saving?' });
+    await expect(leave).toBeVisible();
+    await leave.getByRole('button', { name: 'Keep editing', exact: true }).click();
+    await expect(leave).toBeHidden();
+    await expect(page).toHaveURL(/\/settings\/agent$/);
     await settings.getByRole('button', { name: 'Switch and rebuild', exact: true }).click();
     const confirmation = settings.getByRole('group', { name: 'Confirm agent switch' });
     await expect(confirmation).toContainText("This closes 1 open track visible to you, plus any private tracks you cannot see, and discards the machine's disk");
@@ -89,7 +83,7 @@ test('settings explicitly rebuilds when switching agents and the next track work
 });
 
 
-test('settings connects an unavailable agent inline, retains the draft, and can discard before closing', async ({ page }) => {
+test('settings connects an unavailable agent inline, retains the draft, and can discard before leaving', async ({ page }) => {
   await signIn(page, 'eli', '/home');
   await connectClaude(page);
   await page.getByRole('button', { name: /^New project/ }).click();
@@ -98,9 +92,7 @@ test('settings connects an unavailable agent inline, retains the draft, and can 
   await create.locator('#project-agent-claude').click();
   await create.getByRole('button', { name: 'Create project', exact: true }).click();
   await expect(create).not.toBeVisible();
-  await page.locator('#yard .workspace-project.current button[title="Project settings"]').click();
-  const settings = page.getByRole('dialog', { name: 'Project settings', exact: true });
-  await settings.getByRole('button', { name: 'Agent', exact: true }).click();
+  const settings = await openProjectSettings(page, 'agent');
   await settings.locator('#settings-agent-codex').click();
   await expect(settings.locator('#settings-agent-codex')).toContainText('Not connected');
   await expect(settings.getByRole('button', { name: 'Switch and rebuild', exact: true })).toBeDisabled();
@@ -117,6 +109,8 @@ test('settings connects an unavailable agent inline, retains the draft, and can 
   await settings.getByRole('button', { name: 'Discard changes', exact: true }).click();
   await expect(settings.locator('#settings-agent-claude')).toHaveAttribute('aria-pressed', 'true');
   await expect(settings.getByRole('button', { name: 'Save agent', exact: true })).toBeVisible();
-  await settings.getByRole('button', { name: 'Close', exact: true }).click();
-  await expect(settings).not.toBeVisible();
+  // Discarded, nothing is left to ask about.
+  await settings.locator('#settings-nav-general').click();
+  await expect(page).toHaveURL(/\/settings\/general$/);
+  await expect(page.getByRole('alertdialog', { name: 'Leave without saving?' })).toBeHidden();
 });

@@ -46,9 +46,9 @@ defmodule RavixWeb.Live.SettingsAgentTest do
     # Await the actual tasks; a 100ms default races loaded coverage/browser runs.
     {:ok, view, _} = live(conn, "/p/#{project.id}")
     render_async(view, 2_000)
-    render_click(view, "dialog", %{name: "settings"})
+    render_patch(view, "/p/#{project.id}/settings/agent")
     render_async(view, 2_000)
-    assert has_element?(view, "#settings-dialog")
+    assert has_element?(view, "#settings-sections")
     {view, user}
   end
 
@@ -56,10 +56,10 @@ defmodule RavixWeb.Live.SettingsAgentTest do
        ctx do
     {view, _} = open(log_in_user(ctx.conn, ctx.user), ctx.user, ctx.project)
     assert has_element?(view, "#settings-agent-claude[aria-pressed=true]", "Connected")
-    assert has_element?(view, "#settings-dialog", "subscription or API key")
+    assert has_element?(view, "#settings-sections", "subscription or API key")
     assert has_element?(view, "#settings-agent-codex", "Not connected — connect to use")
     view |> element("#settings-agent-codex") |> render_click()
-    render_async(view)
+    render_async(view, 2_000)
     assert has_element?(view, "#settings-connect-codex #chatgpt-connect")
     refute has_element?(view, "#settings-connect-codex #agent-claude")
     assert has_element?(view, "[data-switch-agent][disabled]")
@@ -77,7 +77,7 @@ defmodule RavixWeb.Live.SettingsAgentTest do
     end)
 
     view |> form("#credential-form", credential: [value: "sk-test"]) |> render_submit()
-    render_async(view)
+    render_async(view, 2_000)
     assert has_element?(view, "#settings-agent-codex[aria-pressed=true]", "Connected")
     assert has_element?(view, "#settings-runtime[value=codex]")
     assert has_element?(view, "#settings-instructions", "Keep this draft")
@@ -85,7 +85,7 @@ defmodule RavixWeb.Live.SettingsAgentTest do
     refute has_element?(view, "[data-switch-agent][disabled]")
     refute render(view) =~ "sk-test"
     view |> form("#agent-settings-form") |> render_submit()
-    render_async(view)
+    render_async(view, 2_000)
     assert has_element?(view, "#agent-switch-confirmation", "This closes 0 open tracks")
 
     expect(Projects, :update_settings, fn caller, id, attrs ->
@@ -98,7 +98,7 @@ defmodule RavixWeb.Live.SettingsAgentTest do
     end)
 
     view |> element("#confirm-agent-switch") |> render_click()
-    render_async(view)
+    render_async(view, 2_000)
     assert has_element?(view, "#agent-settings-form .error", "Connect this agent first.")
   end
 
@@ -109,16 +109,16 @@ defmodule RavixWeb.Live.SettingsAgentTest do
     view |> element("#settings-agent-codex") |> render_click()
     refute has_element?(view, "#settings-connect-codex")
     assert has_element?(view, "#settings-agent-codex", "Connected")
-    render_click(view, "dismiss")
+    # A fresh page: patching away and straight back can find the component
+    # LiveView has not destroyed yet (it waits for the client to confirm).
     stub(Inference, :usable_agents, fn _ -> {:error, {:unavailable, "Provider unavailable"}} end)
-    render_click(view, "dialog", %{name: "settings"})
-    render_async(view)
+    {view, _} = open(log_in_user(ctx.conn, ctx.user), ctx.user, ctx.project)
     assert has_element?(view, "#settings-agent-claude", "Connection status unavailable")
     refute render(view) =~ "Not connected — connect to use"
     view |> element("#settings-agent-codex") |> render_click()
     stub(Inference, :usable_agents, fn _ -> {:ok, [:codex]} end)
     view |> element("[phx-click=refresh-settings-agents]") |> render_click()
-    render_async(view)
+    render_async(view, 2_000)
     assert has_element?(view, "#settings-agent-codex[aria-pressed=true]", "Connected")
   end
 
@@ -136,9 +136,9 @@ defmodule RavixWeb.Live.SettingsAgentTest do
     reject(&Inference.poll_link/2)
     {view, _} = open(log_in_user(ctx.conn, ctx.user), ctx.user, ctx.project)
     view |> element("#settings-agent-codex") |> render_click()
-    render_async(view)
+    render_async(view, 2_000)
     view |> element("#chatgpt-connect") |> render_click()
-    render_async(view)
+    render_async(view, 2_000)
     assert has_element?(view, "#chatgpt-code")
     {components, _, _} = :sys.get_state(view.pid).components
 
@@ -150,22 +150,22 @@ defmodule RavixWeb.Live.SettingsAgentTest do
     tick = {:agent_panel, id, {:poll_link, assigns.poll_token}}
     view |> element("#settings-agent-claude") |> render_click()
     send(view.pid, tick)
-    render_async(view)
+    render_async(view, 2_000)
     view |> element("#settings-agent-codex") |> render_click()
-    render_async(view)
+    render_async(view, 2_000)
     send(view.pid, tick)
-    render_async(view)
+    render_async(view, 2_000)
     refute has_element?(view, "#chatgpt-code")
-    render_click(view, "dismiss")
+    render_patch(view, "/p/#{ctx.project.id}")
     send(view.pid, tick)
     render(view)
     refute has_element?(view, "#chatgpt-code")
-    render_click(view, "dialog", %{name: "settings"})
-    render_async(view)
+    render_patch(view, "/p/#{ctx.project.id}/settings/agent")
+    render_async(view, 2_000)
     view |> element("#settings-agent-codex") |> render_click()
-    render_async(view)
+    render_async(view, 2_000)
     send(view.pid, tick)
-    render_async(view)
+    render_async(view, 2_000)
     refute has_element?(view, "#chatgpt-code")
   end
 
@@ -188,10 +188,10 @@ defmodule RavixWeb.Live.SettingsAgentTest do
 
     {view, _} = open(log_in_user(ctx.conn, ctx.user), ctx.user, ctx.project)
     view |> element("#settings-agent-codex") |> render_click()
-    render_async(view)
+    render_async(view, 2_000)
     view |> element("#chatgpt-connect") |> render_click()
-    render_async(view)
-    render_async(view)
+    render_async(view, 2_000)
+    render_async(view, 2_000)
     assert has_element?(view, "#settings-agent-codex[aria-pressed=true]", "Connected")
   end
 
@@ -207,8 +207,8 @@ defmodule RavixWeb.Live.SettingsAgentTest do
     end)
 
     {:ok, view, _} = live(log_in_user(ctx.conn, ctx.user), "/p/#{ctx.project.id}")
-    render_async(view)
-    render_click(view, "dialog", %{name: "settings"})
+    render_async(view, 2_000)
+    render_patch(view, "/p/#{ctx.project.id}/settings/agent")
     assert_receive {:reading_agents, reader}
     monitor = Process.monitor(reader)
     view |> element("#settings-agent-codex") |> render_click()
@@ -216,7 +216,7 @@ defmodule RavixWeb.Live.SettingsAgentTest do
     expect(Inference, :connect, fn _, _ -> {:ok, ctx.user} end)
     view |> form("#credential-form", credential: [value: "sk-test"]) |> render_submit()
     assert_receive {:DOWN, ^monitor, :process, ^reader, _}, 1000
-    render_async(view)
+    render_async(view, 2_000)
     assert has_element?(view, "#settings-agent-codex[aria-pressed=true]", "Connected")
   end
 
@@ -246,7 +246,7 @@ defmodule RavixWeb.Live.SettingsAgentTest do
       member = insert_user()
       insert_project_member(ctx.project, member)
       {:ok, view, _} = live(log_in_user(ctx.conn, member), "/p/#{ctx.project.id}")
-      render_async(view)
+      render_async(view, 2_000)
 
       assert has_element?(
                view,
@@ -254,15 +254,15 @@ defmodule RavixWeb.Live.SettingsAgentTest do
                "This project runs on #{ctx.user.login}'s Claude Code; every turn uses their subscription or API key."
              )
 
-      render_click(view, "dialog", %{name: "settings"})
-      refute has_element?(view, "#settings-dialog")
+      render_patch(view, "/p/#{ctx.project.id}/settings/agent")
+      refute has_element?(view, "#settings-sections")
       refute has_element?(view, "#credential-form")
       refute has_element?(view, "#chatgpt-connect")
       {:ok, stranger, _} = live(log_in_user(ctx.conn, insert_user()), "/p/#{ctx.project.id}")
       render_async(stranger)
       assert_patch(stranger, "/home")
       refute has_element?(stranger, "#project-agent-owner")
-      render_click(stranger, "dialog", %{name: "settings"})
+      render_patch(stranger, "/p/#{ctx.project.id}/settings/agent")
       refute has_element?(stranger, "#credential-form")
     end
 
@@ -284,7 +284,7 @@ defmodule RavixWeb.Live.SettingsAgentTest do
     conn = Plug.Test.init_test_session(ctx.conn, session_token: token)
     {view, _} = open(conn, ctx.user, ctx.project)
     view |> element("#settings-agent-codex") |> render_click()
-    render_async(view)
+    render_async(view, 2_000)
     view |> element("#kind-api_key") |> render_click()
     Repo.delete!(session)
     reject(&Inference.connect/2)

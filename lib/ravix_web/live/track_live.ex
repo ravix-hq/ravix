@@ -63,7 +63,7 @@ defmodule RavixWeb.TrackLive do
   alias Ravix.GitHub.ChecksReport
   alias Ravix.{Hub, Previews, PromptQueue, SessionConfig, Terminal, Tracks}
   alias Ravix.Hub.Event
-  alias Ravix.Tracks.{AgentFailure, Diff, Files, Follower, MachineState}
+  alias Ravix.Tracks.{AgentFailure, Diff, Files, Follower, MachineState, Track}
   alias Ravix.Tracks.Transcript
   alias Ravix.Tracks.Transcript.Block, as: TranscriptBlock
   alias Ravix.Tracks.Transcript.Commands
@@ -72,12 +72,12 @@ defmodule RavixWeb.TrackLive do
   alias RavixWeb.Live.Form
   alias RavixWeb.Live.Guard
   alias RavixWeb.Live.MachineDock
+  alias RavixWeb.Live.ModelMenu
   alias RavixWeb.Live.Panel
   alias RavixWeb.Live.Params
   alias RavixWeb.Live.ThreadConnect
   alias RavixWeb.Live.ToolCall
   alias RavixWeb.Markdown
-  alias RavixWeb.ModelName
 
   @impl true
   def mount(_params, session, socket) do
@@ -2202,146 +2202,11 @@ defmodule RavixWeb.TrackLive do
     |> workspace_async(:preview_action, fn -> call.(user, id, hash) end)
   end
 
-  attr :runtime, :string, default: nil
-  attr :model, :string, required: true, doc: "what the shown conversation runs"
-
-  attr :session_options, :list,
-    default: nil,
-    doc: "the runtime's advertised ACP options (`Ravix.SessionConfig`), nil when unknown"
-
-  attr :session_config, :map, default: %{}, doc: "the thread's chosen option values"
-  attr :project_model, :string, required: true
-  attr :models, :list, required: true, doc: "the catalog's models for the project's runtime"
-  attr :disabled, :boolean, default: false
-
-  @doc """
-  The model under the composer, and the menu that changes it for the shown
-  conversation from its next turn.
-
-  A native popover, like the account menu: light dismiss, Escape and focus
-  return come with it, and choosing an item hides it. The project's model
-  is marked as the default, and choosing it puts the conversation back on
-  whatever the project runs. With no catalog to offer, or while a turn
-  runs, it is the plain label it used to be, or a disabled trigger.
-
-  Effort and Fast (RAV-52) come from what the runtime advertised on the
-  conversation's latest turn (Fountain ADR 0062): the `thought_level`
-  select, with the adapter's own values and names, and a Fast toggle. Which
-  models offer them is the adapter's to say, so nothing here lists models.
-  Before any turn has reported, or on a Fountain without the field, neither
-  is shown and the label is the model alone.
-  """
-  def model_menu(%{models: []} = assigns) do
-    assigns = assign(assigns, :label, chip_label(assigns))
-
-    ~H"""
-    <span class="composer-model" title={@label}>{@label}</span>
-    """
-  end
-
-  def model_menu(assigns) do
-    %{effort: effort, fast: fast} = SessionConfig.controls(assigns.session_options)
-
-    assigns =
-      assigns
-      |> assign(:choices, Enum.uniq(assigns.models ++ [assigns.model]))
-      |> assign(:effort, effort)
-      |> assign(:effort_value, SessionConfig.in_force(effort, assigns.session_config))
-      |> assign(:fast, fast)
-      |> assign(
-        :fast_on?,
-        SessionConfig.on?(SessionConfig.in_force(fast, assigns.session_config))
-      )
-      |> assign(:label, chip_label(assigns))
-
-    ~H"""
-    <button
-      type="button"
-      id="model-trigger"
-      class="composer-model model-trigger"
-      popovertarget="model-menu"
-      aria-label={@label}
-      title={@label}
-      disabled={@disabled}
-    ><span class="truncate">{@label}</span><span class="sr-only">, change model</span><.icon
-      name="chevron"
-      size={10}
-      open={true}
-    /></button>
-    <div id="model-menu" class="model-menu" popover role="menu" aria-label="Model">
-      <p class="model-default-hint">Also your default for new threads</p>
-      <button
-        :for={choice <- @choices}
-        type="button"
-        class="account-item model-option"
-        role="menuitemradio"
-        aria-checked={to_string(choice == @model)}
-        popovertarget="model-menu"
-        popovertargetaction="hide"
-        phx-click="set-model"
-        phx-value-model={if choice == @project_model, do: "", else: choice}
-        title={ModelName.friendly(choice)}
-      >
-        <span class="truncate">{ModelName.friendly(choice)}</span><small :if={
-          choice == @project_model
-        }>Project default</small><span class="spacer"></span><span
-          :if={choice == @model}
-          class="check"
-          aria-hidden="true"
-        >✓</span>
-      </button>
-      <div :if={@effort} id="model-effort" role="group" aria-labelledby="model-effort-label">
-        <p id="model-effort-label" class="model-section-label">{@effort.name}</p>
-        <button
-          :for={choice <- @effort.choices}
-          type="button"
-          class="account-item model-option"
-          role="menuitemradio"
-          aria-checked={to_string(choice.value == @effort_value)}
-          popovertarget="model-menu"
-          popovertargetaction="hide"
-          phx-click="set-session-option"
-          phx-value-id={@effort.id}
-          phx-value-choice={choice.value}
-        >
-          <span class="truncate">{choice.name}</span><span class="spacer"></span><span
-            :if={choice.value == @effort_value}
-            class="check"
-            aria-hidden="true"
-          >✓</span>
-        </button>
-      </div>
-      <button
-        :if={@fast}
-        id="model-fast"
-        type="button"
-        class="account-item model-option model-fast"
-        role="menuitemcheckbox"
-        aria-checked={to_string(@fast_on?)}
-        popovertarget="model-menu"
-        popovertargetaction="hide"
-        phx-click="set-session-option"
-        phx-value-id={@fast.id}
-        phx-value-choice={to_string(!@fast_on?)}
-      >
-        <span class="truncate">{@fast.name}</span><span class="spacer"></span><span
-          :if={@fast_on?}
-          class="check"
-          aria-hidden="true"
-        >✓</span>
-      </button>
-    </div>
-    """
-  end
+  @doc "The model under the composer: `RavixWeb.Live.ModelMenu.menu/1`."
+  defdelegate model_menu(assigns), to: ModelMenu, as: :menu
 
   # "<model> · <effort>", and the Fast option's name when it is on: what the
   # runtime advertised, so before it has, the label is the model alone.
-  defp chip_label(assigns) do
-    [agent_model(assigns.runtime, assigns.model)]
-    |> Enum.concat(SessionConfig.summary(assigns.session_options, assigns.session_config))
-    |> Enum.join(" · ")
-  end
-
   defp thread_failure(socket, reason) do
     draft = socket.assigns.thread_draft || %{runtime: nil, options: nil}
     runtime = draft.runtime || socket.assigns.track.runtime || socket.assigns.project.runtime
@@ -2376,14 +2241,7 @@ defmodule RavixWeb.TrackLive do
       else: item.wait_reason
   end
 
-  defp agent_model(nil, model) when is_binary(model) and model != "",
-    do: ModelName.friendly(model)
-
-  defp agent_model(runtime, model) do
-    [RavixWeb.AgentName.label(runtime) || "Agent", ModelName.friendly(model)]
-    |> Enum.reject(&(&1 == ""))
-    |> Enum.join(" · ")
-  end
+  defp agent_model(runtime, model), do: ModelMenu.agent_model(runtime, model)
 
   attr :threads, :list, required: true
   attr :thread_id, :string, required: true

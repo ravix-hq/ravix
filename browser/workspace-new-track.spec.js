@@ -1,6 +1,8 @@
 import { test, expect } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
 import { signIn, connectClaude } from './sign-in.js';
+import { createWorkspace } from './settings.js';
+import { openRepositories } from './new-track.js';
 
 // ADR 0009 phase 4c, RAV-10: New track's one repository list for the current
 // workspace -- preselection, type-ahead with quick-jump's keys, "Add a
@@ -26,13 +28,13 @@ test('New track lists the workspace repositories, adds one, and keeps scratch ap
 
   // A team workspace, connected to GitHub, with one repository admitted.
   await page.locator('#workspace-switcher-trigger').click();
-  await page.locator('#workspace-menu').getByLabel('New workspace', { exact: true }).fill('Picker Team');
-  await page.getByRole('button', { name: 'Create workspace', exact: true }).click();
-  await expect(page).toHaveURL(/\/w\/[^/?]+$/);
+  await createWorkspace(page, 'Picker Team');
+  await page.locator('#settings-nav-repositories').click();
+  await expect(page).toHaveURL(/\/settings\/repositories$/);
   await page.getByRole('link', { name: 'Connect GitHub', exact: true }).click();
   await expect(page.locator('#workspace-catalog')).toContainText('mockuser/atlas-api');
   await page.locator('#workspace-catalog li', { hasText: 'mockuser/atlas-api' })
-    .getByRole('button', { name: 'Add', exact: true }).click();
+    .getByRole('button', { name: 'Add project', exact: true }).click();
   await expect(page).toHaveURL(/\/p\/[^/]+$/);
   const projectPath = new URL(page.url()).pathname;
   await expect(page.locator('[data-phx-main]')).toHaveClass(/phx-connected/);
@@ -40,6 +42,9 @@ test('New track lists the workspace repositories, adds one, and keeps scratch ap
   // The top button: this project's workspace, this project preselected.
   await page.locator('#top-new-track').click();
   const dialog = page.locator('#new-track-dialog');
+  // RAV-60: the list is the repository chip's popover.
+  await expect(dialog.locator('#new-track-repo-trigger')).toContainText('mockuser/atlas-api');
+  await openRepositories(dialog);
   await expect(dialog.locator('#repo-picker')).toBeVisible();
   await expect(dialog.locator('#repo-picker label')).toContainText('Picker Team');
   await expect(dialog.locator('#repo-picker-selected')).toContainText('mockuser/atlas-api');
@@ -51,7 +56,7 @@ test('New track lists the workspace repositories, adds one, and keeps scratch ap
   await axeClean(page);
 
   // Type-ahead, and quick-jump's keys: nothing matches, then the add step.
-  const query = dialog.getByLabel(/Repository/);
+  const query = dialog.getByRole('searchbox', { name: /Repository/ });
   await query.fill('ledger');
   await expect(list).toContainText('No repository here matches.');
   await query.press('ArrowDown');
@@ -73,12 +78,17 @@ test('New track lists the workspace repositories, adds one, and keeps scratch ap
   await expect(list.locator('button[phx-click="picker-pick"]')).toHaveCount(1);
   await query.press('Enter');
   await expect(dialog.locator('#repo-picker-selected')).toContainText('mockuser/atlas-api');
+  // Picking closes the popover and returns focus to the chip.
+  await expect(dialog.locator('#new-track-repo-menu')).toBeHidden();
+  await expect(dialog.locator('#new-track-repo-trigger')).toBeFocused();
+  await expect(dialog.locator('#new-track-repo-trigger')).toContainText('mockuser/atlas-api');
 
   // A phone: the project row's New track, the same list, still clean.
   await page.keyboard.press('Escape');
   await page.setViewportSize({ width: 500, height: 900 });
   await page.goto(`${projectPath}?new=track`);
   await expect(page.locator('[data-phx-main]')).toHaveClass(/phx-connected/);
+  await openRepositories(page.locator('#new-track-dialog'));
   await expect(page.locator('#new-track-dialog #repo-picker')).toBeVisible();
   await expect(page.locator('#repo-picker-selected')).toContainText('mockuser/atlas-api');
   await axeClean(page);

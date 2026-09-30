@@ -78,19 +78,19 @@ defmodule RavixWeb.ToolingOAuthControllerTest do
     user = insert_user()
     {p, tokens, params} = principal(user)
     conn = log_in_user(conn, user)
-    page = get(conn, "/settings/connections")
-    assert html_response(page, 200) =~ "Connected applications · Ravix"
+    page = get(conn, "/settings/connected-apps")
+    assert html_response(page, 200) =~ "Connected apps · You · Ravix"
     assert html_response(page, 200) =~ "Desktop test"
     assert html_response(page, 200) =~ "Disconnect"
 
     assert redirected_to(post(conn, "/settings/connections/#{p.grant.id}/revoke")) ==
-             "/settings/connections"
+             "/settings/connected-apps"
 
     assert {:error, :unauthenticated} =
              OAuth.authenticate(tokens.access_token, params["resource"])
 
     assert json_response(post(conn, "/settings/connections/unknown/revoke"), 404)
-    assert redirected_to(get(build_conn(), "/settings/connections")) == "/login"
+    assert redirected_to(get(build_conn(), "/settings/connected-apps")) == "/login"
 
     assert response(
              post(build_conn(), "/oauth/revoke", %{"token" => "unknown", "client_id" => "unknown"}),

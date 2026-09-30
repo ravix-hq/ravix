@@ -1,5 +1,5 @@
 import {afterEach, beforeEach, expect, test} from "bun:test"
-import {NOTIFY_KEY, Notify} from "../js/hooks/notify.js"
+import {NOTIFY_KEY, Notify, NotifyToggle} from "../js/hooks/notify.js"
 import {dimensions, mountHook} from "./setup.js"
 
 // The browser's Notification API, as far as the hook touches it: a static
@@ -177,4 +177,45 @@ test("a mention says who named you, rather than that the agent finished", () => 
   const {receive} = mount()
   receive("notify", {tracks: [{...finished, mention: "alice"}]})
   expect(FakeNotification.shown[0].options.body).toBe("@alice mentioned you in Ravix.")
+})
+
+test("the settings page's switch and the menu's toggle keep each other current (RAV-77)", async () => {
+  const inner = markup.replace('<div class="notify">', "").replace(/<\/div>$/, "")
+  document.body.innerHTML = `<div id="notify" class="notify">${inner}</div>
+    <div id="notify-setting" class="notify">${inner}</div>`
+  const shell = mountHook(Notify, "#notify")
+  const {hook: page} = mountHook(NotifyToggle, "#notify-setting")
+  expect(label(page)).toBe("Off")
+
+  // Off: nothing is shown.
+  shell.receive("notify", {tracks: [finished]})
+  expect(FakeNotification.shown).toHaveLength(0)
+
+  button(page).click()
+  await Promise.resolve()
+  await Promise.resolve()
+  expect(label(page)).toBe("On")
+  expect(page.el.classList.contains("on")).toBe(true)
+  expect(localStorage.getItem(NOTIFY_KEY)).toBe("on")
+  // The menu's toggle says so too, with no message between the two.
+  expect(label(shell.hook)).toBe("On")
+  expect(button(shell.hook).getAttribute("aria-pressed")).toBe("true")
+
+  shell.receive("notify", {tracks: [finished]})
+  expect(FakeNotification.shown.map(n => n.title)).toEqual(["Fix the build"])
+
+  // Off from the menu is off on the page.
+  await shell.hook.toggle()
+  expect(label(page)).toBe("Off")
+  shell.receive("notify", {tracks: [failed]})
+  expect(FakeNotification.shown).toHaveLength(1)
+
+  // A page that has gone stops listening, and its clicks go nowhere.
+  page.destroyed()
+  button(page).click()
+  await Promise.resolve()
+  expect(FakeNotification.asked).toBe(1)
+  await shell.hook.toggle()
+  expect(label(shell.hook)).toBe("On")
+  expect(label(page)).toBe("Off")
 })

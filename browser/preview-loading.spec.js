@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test';
 import { readFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
-import { signIn } from './sign-in.js';
+import { signIn, connectClaude } from './sign-in.js';
 import AxeBuilder from '@axe-core/playwright';
 
 // Exercise the production gateway template and its poll script without a
@@ -43,6 +43,9 @@ test('standalone preview loads quietly, reveals diagnostics, fails visibly and r
 
 test('track logs stay open through status patches and failure still opens diagnostics', async ({ page }) => {
   await signIn(page, 'eli', '/home');
+  // Its own agent: New project needs one, and relying on an earlier spec to
+  // have connected it for this person breaks whenever sharding reorders them.
+  await connectClaude(page);
   await page.getByRole('button', { name: /^New project/ }).click();
   await page.getByLabel('Project name', { exact: true }).fill('Preview disclosure');
   await page.getByRole('button', { name: 'Create project', exact: true }).click();

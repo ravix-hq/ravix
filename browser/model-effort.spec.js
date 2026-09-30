@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { signIn, connectClaude } from './sign-in.js';
+import { connectApiKey } from './settings.js';
 
 // RAV-52 on Fountain ADR 0062: the model menu offers what the runtime
 // advertised (`session_config_options`), every prompt carries the thread's
@@ -83,15 +84,7 @@ test('a Claude thread sets effort and Fast from the advertised options, per turn
 test('a Codex thread gets effort and Fast under its own option ids', async ({ page }) => {
   test.setTimeout(120_000);
   await signIn(page, 'modeleffort', '/home');
-  await page.locator('#account-trigger').click();
-  await page.locator('#open-account').click();
-  const account = page.getByRole('dialog', { name: 'Your account', exact: true });
-  await account.getByRole('button', { name: /^Codex/ }).click();
-  await account.getByRole('button', { name: 'API key', exact: true }).click();
-  await account.getByLabel('API key', { exact: true }).fill('mock-model-effort-key');
-  await account.getByRole('button', { name: 'Connect Codex', exact: true }).click();
-  await expect(account.locator('#held-codex-api_key')).toBeVisible();
-  await account.getByRole('button', { name: 'Close', exact: true }).click();
+  await connectApiKey(page, 'Codex', 'mock-model-effort-key');
   await newTrack(page, 'Codex effort', 'codex');
 
   const trigger = page.locator('#model-trigger');

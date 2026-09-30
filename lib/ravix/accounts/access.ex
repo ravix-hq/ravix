@@ -721,6 +721,7 @@ defmodule Ravix.Accounts.Access do
           | :delete_workspace
           | :add_installations
           | :manage_members
+          | :rename_workspace
           | :connect_repos
           | :manage_projects
           | :create_project
@@ -728,7 +729,7 @@ defmodule Ravix.Accounts.Access do
           | :see_workspace_tracks
 
   @owner_only [:manage_roles, :delete_workspace, :add_installations]
-  @admin [:manage_members, :connect_repos, :manage_projects, :create_project]
+  @admin [:manage_members, :rename_workspace, :connect_repos, :manage_projects, :create_project]
   @member [:create_track, :see_workspace_tracks]
 
   @doc """
@@ -737,7 +738,8 @@ defmodule Ravix.Accounts.Access do
   Owners transfer ownership, appoint admins and delete the workspace
   (`:manage_roles`, `:delete_workspace`), and add a GitHub installation
   they can see themselves (`:add_installations`, RAV-69). Admins also manage members,
-  repository connections and project settings and secrets, and admit
+  rename the workspace (`:rename_workspace`, RAV-72), repository connections and
+  project settings and secrets, and admit
   repositories as projects. Members work on the tracks visibility admits
   them to and start tracks. Pure: it answers about a role, not a person;
   `workspace_grant/3` is the door that asks about a person.
