@@ -159,8 +159,10 @@ defmodule RavixWeb.Live.MachineDockShellTest do
     render_hook(view, "shell-input", %{id: id, data: "psql\r"})
     assert await_output(view, id, "ran: psql")
 
+    # The resize goes page -> shell -> socket with no answer of its own; the
+    # fake's report of the frame is the event, so wait for it by name.
     render_hook(view, "shell-resize", %{id: id, cols: 90, rows: 20})
-    assert_receive {SpritesFake, :exec, {:resize, "s1", 90, 20}}
+    assert_receive {SpritesFake, :exec, {:resize, "s1", 90, 20}}, 2_000
   end
 
   test "several tabs, each its own shell; selecting one shows only its pane", ctx do
@@ -482,7 +484,12 @@ defmodule RavixWeb.Live.MachineDockShellTest do
       assert has_element?(view, "#{empty}.busy", "Waking the machine…")
       send(probe, :go)
       render_async(view, 5_000)
-      assert_receive {SpritesFake, :exec, {:spawn, %{"cols" => "80"}}}
+      # The wake's answer attaches the tab, and the shell connects in its own
+      # process: `render_async` settles the first, the shell's `:ready` (the
+      # pane's reset) the second. The fake reports the spawn before it
+      # answers the upgrade, so it is in the mailbox by then.
+      assert_push_event(view, "shell:reset", %{id: ^id}, 2_000)
+      assert_received {SpritesFake, :exec, {:spawn, %{"cols" => "80"}}}
       assert await_output(view, id, "$ ")
       refute has_element?(view, empty)
     end
@@ -500,7 +507,13 @@ defmodule RavixWeb.Live.MachineDockShellTest do
       assert has_element?(view, "#shell-asleep-#{tab.id}", "Waking the machine…")
       send(probe, :go)
       render_async(view, 5_000)
-      assert_receive {SpritesFake, :exec, {:spawn, _}}
+      # The wake's answer attaches the tab, and the shell connects in its own
+      # process: `render_async` settles the first, the shell's `:ready` (the
+      # pane's reset) the second. The fake reports the spawn before it
+      # answers the upgrade, so it is in the mailbox by then.
+      tab_id = tab.id
+      assert_push_event(view, "shell:reset", %{id: ^tab_id}, 2_000)
+      assert_received {SpritesFake, :exec, {:spawn, _}}
       assert await_output(view, tab.id, "$ ")
     end
   end
@@ -553,7 +566,9 @@ defmodule RavixWeb.Live.MachineDockShellTest do
     assert has_element?(view, "#shell-asleep-#{id}", "Waking the machine…")
     send(probe, :go)
     render_async(view, 5_000)
-    assert_receive {SpritesFake, :exec, {:spawn, %{"cols" => "100", "rows" => "30"}}}
+    # Attached once the wake answers; connected once the shell is ready.
+    assert_push_event(view, "shell:reset", %{id: ^id}, 2_000)
+    assert_received {SpritesFake, :exec, {:spawn, %{"cols" => "100", "rows" => "30"}}}
   end
 
   test "Wake and Retry answer only this page's own tabs, in a held state", ctx do
