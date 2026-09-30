@@ -1,6 +1,10 @@
 defmodule RavixWeb.Live.NewProject do
   @moduledoc """
-  The shared project form for the workspace and first-project step.
+  The workspace's New project form.
+
+  The walkthrough's last step used to draw it too; it now asks for a first
+  prompt instead (`RavixWeb.Live.QuickStart`), which creates the project
+  through the same `Ravix.Projects.create/2`.
 
   Pages own creation and repository reads. This component renders the same fields
   in both places; its helpers preserve drafts while availability is refreshed.
@@ -68,8 +72,7 @@ defmodule RavixWeb.Live.NewProject do
     end
   end
 
-  defp picker_visible?(%{assigns: %{dialog: dialog}}), do: dialog == :new_project
-  defp picker_visible?(socket), do: socket.assigns.live_action == :project
+  defp picker_visible?(socket), do: socket.assigns.dialog == :new_project
 
   def edit(socket, params),
     do:

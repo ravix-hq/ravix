@@ -45,14 +45,15 @@
       </section>
 
       <section :if={@live_action == :agent} id="welcome-agent" aria-labelledby="welcome-agent-h">
-        <h1 id="welcome-agent-h">Connect your agents</h1>
+        <h1 id="welcome-agent-h">Connect your agent</h1>
         <p class="lede">
-          Connect Claude Code, Codex, or both using your own subscriptions or API keys. Your first connection becomes the default for new projects. You can change the default here and choose a different connected agent for each project.
+          Ravix runs Claude Code or Codex on your own subscription. Connect one to continue; the first becomes your default.
         </p>
         <.live_component
           module={RavixWeb.Live.AgentPanel}
           id="agent-panel"
           onboarding={true}
+          compact={true}
           current_user={@current_user}
           session_hash={@session_hash}
         />
@@ -66,7 +67,7 @@
             id="agent-later"
           >
             {if Inference.connected?(@current_user),
-              do: "Continue to GitHub",
+              do: "Continue",
               else: "I'll do this later"}
           </.link>
         </div>
@@ -144,26 +145,48 @@
         id="welcome-project"
         aria-labelledby="welcome-project-h"
       >
-        <h1 id="welcome-project-h">Create your first project</h1>
+        <h1 id="welcome-project-h">What do you want to work on?</h1>
         <p class="lede">
-          Pick the repository to work in. Ravix builds its machine, clones the repository onto it, and opens your first conversation.
+          Pick a repository and say what you want done. Ravix builds its machine and opens a track, and your agent starts as soon as setup is ready.
         </p>
-        <RavixWeb.Live.NewProject.render_form
-          form_id="first-project-form"
+        <form
+          :if={length(@installations || []) > 1}
+          id="installation-form"
+          phx-change="installation"
+        >
+          <.input
+            name="installation"
+            id="installation"
+            label="GitHub account"
+            type="select"
+            value={@installation}
+            options={Enum.map(@installations, &{&1.account, &1.id})}
+          />
+        </form>
+        <RavixWeb.Live.QuickStart.composer
+          id="first-prompt"
+          form={@quick_form}
+          groups={targets(@repos)}
+          loading={@repos_loading}
+          busy={@quick_busy}
+          disabled={!Inference.connected?(@current_user)}
+          class="welcome-quick-start"
           submit_class="primary welcome-primary"
-          project_form={@project_form}
-          project_agents={@project_agents}
-          project_generation={@project_generation}
-          project_agent_error={@project_agent_error}
-          project_mode={@project_mode}
-          current_user={@current_user}
-          session_hash={@session_hash}
-          repos={@repos}
-          repos_loading={@repos_loading}
-          installations={@installations}
-          installation={@installation}
-          busy={@busy}
-        />
+        >
+          <:notice>
+            <p
+              :if={!Inference.connected?(@current_user)}
+              class="welcome-warning"
+              id="first-prompt-no-agent"
+            >
+              <.icon name="info" size={14} class="ico" />
+              <span>
+                Every track runs on your agent. <.link patch={path(:agent)}>Connect one</.link>
+                to start.
+              </span>
+            </p>
+          </:notice>
+        </RavixWeb.Live.QuickStart.composer>
         <div class="welcome-actions">
           <.link patch={path(:github)} class="ghost">Back</.link>
         </div>
