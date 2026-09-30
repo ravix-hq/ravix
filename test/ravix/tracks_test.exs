@@ -518,6 +518,83 @@ defmodule Ravix.TracksTest do
              end)
     end
 
+    # RAV-106: dedicated opens and closes returned before the event was sent.
+    defp captured(event, layout) do
+      for %{event: ^event, properties: %{"ravix.layout" => ^layout}} = captured <-
+            PostHog.Test.all_captured(),
+          do: captured
+    end
+
+    test "an open sends one track opened event on each layout", ctx do
+      for {dedicated?, layout} <- [{false, "shared"}, {true, "dedicated"}] do
+        stub(Ravix.Config, :dedicated_opens_enabled?, fn _ -> dedicated? end)
+
+        if dedicated?,
+          do: stub(Ravix.Fountain, :client, fn -> FakeTransport.client([]) end),
+          else: opening_fountain(ctx.project, true)
+
+        assert {:ok, opened} =
+                 Tracks.open(ctx.owner, ctx.project.id, %{"title" => "event-#{layout}"},
+                   opening_turn: :sync
+                 )
+
+        assert Atom.to_string(opened.sandbox_layout) == layout
+
+        assert [%{distinct_id: distinct_id, properties: props}] =
+                 captured("track opened", layout)
+
+        assert distinct_id == ctx.owner.id
+        assert props["ravix.layout"] == layout
+        assert props["ravix.origin"] == :blank
+        assert props["ravix.runtime"] == "claude"
+        assert props["ravix.repo"] == "acme/ledger"
+      end
+    end
+
+    test "a close sends one track closed event on each layout", ctx do
+      caller = self()
+
+      stub(Ravix.Previews.Lifecycle, :stop_service, fn _, :cleanup ->
+        send(caller, {:teardown, self()})
+        :ok
+      end)
+
+      stub(Ravix.Fountain, :client, fn -> FakeTransport.client([], verify: false) end)
+      shared = insert_track(project: ctx.project, conversation_id: nil)
+
+      dedicated =
+        insert_track(project: ctx.project, sandbox_layout: :dedicated, sandbox_id: "own")
+
+      assert :ok = Tracks.close(ctx.owner, shared.id, delete_branch: true)
+      assert :ok = Tracks.close(ctx.owner, dedicated.id, force: true)
+      assert_receive {:teardown, pid}
+      ref = Process.monitor(pid)
+      assert_receive {:DOWN, ^ref, :process, ^pid, _}
+
+      assert [%{properties: shared_props}] = captured("track closed", "shared")
+      assert [%{properties: dedicated_props}] = captured("track closed", "dedicated")
+
+      assert %{"ravix.forced" => false, "ravix.branch_deleted" => true} = shared_props
+      assert %{"ravix.forced" => true, "ravix.branch_deleted" => false} = dedicated_props
+
+      for props <- [shared_props, dedicated_props] do
+        assert props["ravix.repo"] == "acme/ledger"
+        assert is_integer(props["ravix.lifetime_sec"])
+      end
+    end
+
+    test "a refused dedicated close sends no event", ctx do
+      stub(Ravix.Fountain, :client, fn -> FakeTransport.client([]) end)
+
+      track =
+        insert_track(project: ctx.project, sandbox_layout: :dedicated, sandbox_id: "own")
+
+      assert {:error, {:conflict, "confirm_machine_deletion", _}} =
+               Tracks.close(ctx.owner, track.id)
+
+      assert captured("track closed", "dedicated") == []
+    end
+
     test "a shared close rollback is returned instead of crashing", ctx do
       track = insert_track(project: ctx.project)
       client = FakeTransport.client([])
