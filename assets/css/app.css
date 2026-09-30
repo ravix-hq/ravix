@@ -18,7 +18,6 @@
   --mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
   --sans: "IBM Plex Sans", ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --rail: 248px;
-  --tree-step: 12px;
   /* Every sidebar row, project or track, open or closed, is this tall. */
   --rail-row: 28px;
   --radius: 8px;
@@ -510,7 +509,7 @@ html[data-inspector="closed"] #inspector-toggle .label-show { display: inline; }
 .yard:has(#account-menu:popover-open) .yard-account { background: var(--surface-hover); }
 /* The login is `--dimmer` on the rail; on a lit row that falls under 4.5:1. */
 .yard-account:hover small, .yard:has(#account-menu:popover-open) .yard-account small { color: var(--dim); }
-.account-chevron { flex: none; color: var(--dimmer); }
+.account-chevron { flex: none; color: var(--dimmer); transform: rotate(-90deg); }
 /* What's new has something unseen: a dot on the gear's corner. The gear is
    round, so its box's corner is empty and the dot there covers no stroke. */
 .account-icon { position: relative; flex: none; display: grid; place-items: center; }
@@ -545,6 +544,7 @@ html[data-inspector="closed"] #inspector-toggle .label-show { display: inline; }
    its menu a native popover like the account menu, dropping down instead. */
 .workspace-switcher { flex: 1; min-width: 0; display: flex; align-items: center; gap: 2px; }
 .workspace-trigger { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; padding: 4px 6px; color: var(--ink); font-weight: 600; text-align: left; }
+.workspace-chevron { flex: none; margin-left: auto; color: var(--dimmer); }
 .workspace-mark {
   flex: none; display: grid; place-items: center; width: 20px; height: 20px; border-radius: var(--radius);
   background: var(--surface); border: 1px solid var(--line); color: var(--ink); font-size: 11px; font-weight: 600;
@@ -611,8 +611,13 @@ html[data-yard="closed"] .workspace-trigger-skeleton { flex: none; width: 28px; 
 .yard-nav { display: flex; flex-direction: column; align-items: stretch; flex-wrap: nowrap; gap: 1px; padding: 2px 8px 10px; }
 #top-new-track { display: flex; align-items: center; justify-content: center; gap: 6px; margin-bottom: 6px; }
 .yard-nav a, .home-recent a { text-decoration: none; }
+/* Every row in the rail is lit by a tint on hover, never an underline, and
+   its focus ring is drawn inside it, so the scroller never clips it and it
+   never reaches past the rail's padding (RAV-96). */
+.yard a:hover { text-decoration: none; }
+.yard :is(button, a, [tabindex]):focus-visible { outline-offset: -2px; }
 .yard-item {
-  display: flex; align-items: center; gap: 10px; width: 100%; padding: 6px 9px;
+  display: flex; align-items: center; gap: 10px; width: 100%; height: 30px; padding: 0 9px;
   color: var(--dim); background: transparent; border: none; border-radius: 8px;
   text-align: left; font-size: 13px;
 }
@@ -622,9 +627,12 @@ html[data-yard="closed"] .workspace-trigger-skeleton { flex: none; width: 28px; 
 .yard-item.on .ico, .yard-item:hover .ico { color: var(--dim); }
 .badge { display: inline-grid; place-items: center; min-width: 21px; height: 23px; padding: 0 6px; border: 1px solid var(--line); border-radius: 999px; color: var(--dim); background: var(--surface); font-size: 11px; font-weight: 400; }
 
+/* In the rail a count sits inside its row, never taller than it (RAV-96). */
+.yard .badge { height: 18px; min-width: 18px; padding: 0 5px; line-height: 1; }
+
 .yard-footer { flex: none; padding: 8px; border-top: 1px solid var(--line); }
 .yard-footer .yard-account { width: 100%; }
-.yard-scroll { flex: 1; min-height: 0; overflow-y: auto; padding: 10px 8px 12px; }
+.yard-scroll { flex: 1; min-height: 0; overflow-y: auto; scrollbar-gutter: stable; padding: 10px 8px 12px; }
 .yard-label {
   display: flex; align-items: center; justify-content: space-between;
   padding: 6px 8px; color: var(--dimmer);
@@ -751,6 +759,17 @@ html[data-yard="closed"] .workspace-trigger-skeleton { flex: none; width: 28px; 
 
 /* The same picker on the sign-in screen, which has no rail to sit in. */
 .corner-theme { position: fixed; left: 14px; bottom: 14px; width: 190px; }
+
+/* In the account menu (RAV-96) Theme and Desktop notifications are rows like
+   the rest: one line, 32px, the label then its value on the right, their
+   swatch and dot in the same 14px column as the other rows' icons. */
+.account-menu :is(.account-item, .theme-trigger) { height: 32px; padding: 0 8px; gap: 10px; border: 0; }
+.account-menu .theme-trigger .col { flex-direction: row; align-items: center; gap: 8px; line-height: 1.5; }
+.account-menu .theme-trigger .col small { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--dim); font-size: 13px; font-weight: 400; }
+.account-menu .theme-trigger .col span { flex: 0 1 auto; max-width: 60%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--dimmer); font-size: 12px; }
+.account-menu .theme-trigger:hover .col small { color: var(--ink); }
+.account-menu .theme-swatch { width: 14px; }
+.account-menu .notify-dot { margin: 3px; }
 
 /* ── the track's own header ────────────────────────────────────────────── */
 
@@ -2225,10 +2244,11 @@ body:has(.phx-error) #request-progress { display: none; }
 .section-toggle:hover:not(:disabled) { color: var(--dim); background: transparent; border-color: transparent; }
 .section-toggle .truncate { flex: 1; }
 .section-toggle .dim { font-weight: 400; font-variant-numeric: tabular-nums; }
-/* One indent step per level: section label, then its projects, then their
-   tracks (which `.project-tree-tracks` steps in again from the project). */
-.project-section.labelled > div > .workspace-project { padding-left: var(--tree-step); }
-.section-empty { margin: 0; padding: 2px 6px 4px calc(var(--tree-step) + 30px); font-size: 12px; }
+/* A section's chevron and its projects' chevrons are one column (RAV-96);
+   the label's small capitals say which is the heading. Tracks step in from
+   their project (`.project-tree-tracks`). The empty line's words start
+   where a project's name would. */
+.section-empty { margin: 0; padding: 2px 6px 4px 32px; font-size: 12px; }
 .project-section-picker { display: flex; align-items: center; gap: 8px; padding: 4px 0; }
 .project-section-picker label { flex: 1; min-width: 0; }
 .project-section-picker select { flex: 1; min-width: 0; padding: 4px; }
@@ -2395,6 +2415,9 @@ body:has(.phx-error) #request-progress { display: none; }
   font-size: 8px; font-weight: 600; line-height: 1; color: var(--ink); background: var(--surface-active);
 }
 .track-creator img { width: 100%; height: 100%; object-fit: cover; }
+/* One creator for every track shown: an avatar per row would say nothing
+   (RAV-96). Each row's name still says who created it. */
+#project-tree[data-one-creator] .track-creator { display: none; }
 /* How long since the track last did anything. It never shrinks: at the
    narrowest rail the title truncates first. */
 .track-age { flex: none; color: var(--dim); font-size: 11px; font-variant-numeric: tabular-nums; white-space: nowrap; }

@@ -109,7 +109,8 @@ defmodule RavixWeb.Live.WorkspaceSwitcher do
       >
         <span class="workspace-mark" aria-hidden="true">{initial(@current.name)}</span>
         <span class="truncate">{@current.name}</span>
-        <.icon name="chevron" size={12} />
+        <%!-- Down, and quiet: the menu drops below the trigger (RAV-96). --%>
+        <.icon name="chevron" size={12} open={true} class="workspace-chevron" />
       </button>
       <.link
         id="workspace-settings-gear"
@@ -149,6 +150,9 @@ defmodule RavixWeb.Live.WorkspaceSwitcher do
             <span class="truncate">{workspace.name}</span>
             <span class="spacer"></span>
             <small :if={workspace.kind == :personal}>Personal</small>
+            <span class="menu-check" aria-hidden="true">
+              <.icon :if={workspace.id == @current.id} name="check" size={14} />
+            </span>
           </button>
         </div>
         <hr />
