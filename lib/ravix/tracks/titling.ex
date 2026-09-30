@@ -59,7 +59,7 @@ defmodule Ravix.Tracks.Titling do
          %Track{} = track <- Store.get_track(track_id),
          # ownership: the prompt on this row was accepted through
          # Access.thread_access/3 in `Ravix.Tracks`, which scheduled this.
-         true <- Ravix.PromptQueue.Store.first_on_thread?(track_id, thread_id, item_id),
+         {^item_id, _prompt} <- Ravix.PromptQueue.Store.first_person_prompt(track_id, thread_id),
          title when is_binary(title) <- Title.from_prompt(prompt) do
       write(thread, track, title)
     else
