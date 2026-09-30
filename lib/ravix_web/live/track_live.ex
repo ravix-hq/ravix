@@ -2626,7 +2626,11 @@ defmodule RavixWeb.TrackLive do
         <h4 class="change-path">
           <span :if={@selected.change.status == :renamed}>{@selected.old_path} → </span>{@selected.change.path}
         </h4>
-        <p :if={@selected.partial}>Partial file — diff was truncated.</p>
+        <p :if={@selected.partial}>
+          {if @selected.hunks == [] and @selected.change.status == :untracked,
+            do: "New file too large to show here.",
+            else: "Partial file — diff was truncated."}
+        </p>
         <p :for={line <- @selected.metadata}>{line}</p>
         <p :if={@selected.binary}>Binary files differ</p>
         <%= if large_diff?(@selected) and !@diff_show_large do %>
@@ -2973,10 +2977,18 @@ defmodule RavixWeb.TrackLive do
     """
   end
 
-  defp diff_status(status), do: %{added: "A", modified: "M", deleted: "D", renamed: "R"}[status]
+  defp diff_status(status),
+    do: %{added: "A", modified: "M", deleted: "D", renamed: "R", untracked: "U"}[status]
 
   defp diff_status_label(status),
-    do: %{added: "Added", modified: "Modified", deleted: "Deleted", renamed: "Renamed"}[status]
+    do:
+      %{
+        added: "Added",
+        modified: "Modified",
+        deleted: "Deleted",
+        renamed: "Renamed",
+        untracked: "New, untracked"
+      }[status]
 
   defp changed_files(1), do: "1 changed file"
   defp changed_files(count), do: "#{count} changed files"

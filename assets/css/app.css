@@ -2269,7 +2269,8 @@ section.first-prompt#project-start { align-self: center; padding: 32px 24px; }
 .change-counts { white-space: nowrap; margin-left: auto; font-size: 12px; font-variant-numeric: tabular-nums; }
 .change-status { flex: 0 0 1.25rem; border: 1px solid currentColor; text-align: center; border-radius: .2rem; font-size: 11px; line-height: 1.5; }
 /* What happened to a file, by colour as well as by its letter. */
-.change-status.change-added { color: var(--ok); }
+.change-status.change-added,
+.change-status.change-untracked { color: var(--ok); }
 .change-status.change-deleted { color: var(--bad); }
 .change-status.change-modified { color: var(--warn); }
 .change-status.change-renamed { color: var(--accent-ink); }

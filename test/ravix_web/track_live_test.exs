@@ -3483,6 +3483,36 @@ defmodule RavixWeb.TrackLiveTest do
     end
   end
 
+  test "untracked files are listed as new, and one too large to show says so", ctx do
+    untracked =
+      "diff --git a/notes.md b/notes.md\nnew file mode 100644\n--- /dev/null\n" <>
+        "+++ b/notes.md\n@@ -0,0 +1 @@\n+draft\n" <>
+        "diff --git a/dump.sql b/dump.sql\nnew file mode 100644\n"
+
+    output =
+      Jason.encode!(%{available: true, diff: untracked, large: ["dump.sql"], truncated: false})
+
+    diff = Diff.with_untracked(changes_fixture(), {:ok, %{code: 0, stdout: output}})
+    expect(Tracks, :diff, fn _, _ -> {:ok, diff} end)
+    render_click(ctx.view, "panel", %{name: "changes"})
+    render_async(ctx.view, 1_000)
+
+    assert has_element?(
+             ctx.view,
+             ".change-file:has(.change-untracked[title='New, untracked'])",
+             "notes.md"
+           )
+
+    assert has_element?(ctx.view, ".change-file .sr-only", "New, untracked:")
+    assert has_element?(ctx.view, ".change-file", "added.txt")
+    render_click(ctx.view, "select-diff", %{path: "notes.md"})
+    assert has_element?(ctx.view, ".diff-line.diff-add code", "draft")
+    render_click(ctx.view, "close-diff")
+    render_click(ctx.view, "select-diff", %{path: "dump.sql"})
+    assert has_element?(ctx.view, ".changes-panel p", "New file too large to show here.")
+    refute has_element?(ctx.view, ".file-diff")
+  end
+
   test "nonempty Changes does not fetch PR state", ctx do
     expect(Tracks, :diff, fn _, _ -> {:ok, changes_fixture()} end)
     reject(Tracks, :checks, 2)
