@@ -428,6 +428,35 @@
             the agent, so the whole box says which one it is: its colour, its
             placeholder, its accessible name and the send button's. Images
             are for prompts; any already attached wait for Ask agent. --%>
+          <%!-- RAV-50: a draft may start with what its siblings already
+            did. Each pick is a toggle; the first prompt carries a compact
+            transcript of every picked thread, and the sent message says which. --%>
+          <div
+            :if={@thread_draft[:selected?] && @thread_draft.offered != []}
+            id="draft-context"
+            class="draft-context"
+            role="group"
+            aria-labelledby="draft-context-label"
+          >
+            <span id="draft-context-label" class="draft-context-label">
+              Carry context from
+            </span>
+            <button
+              :for={source <- @thread_draft.offered}
+              type="button"
+              id={"carry-#{source.id}"}
+              class="context-chip"
+              aria-pressed={to_string(source.id in @thread_draft.carry)}
+              phx-click="carry-context"
+              phx-value-thread_id={source.id}
+            >
+              <.icon
+                name={if source.id in @thread_draft.carry, do: "check", else: "plus"}
+                size={12}
+              />
+              <span>{source.title}</span>
+            </button>
+          </div>
           <form id="composer-form" phx-submit="send" phx-change="validate">
             <div
               class={["composer-box", @composer_mode == :comment && "commenting"]}

@@ -69,6 +69,7 @@ defmodule Ravix.Tracks do
   alias Ravix.Tracks.{
     Attribution,
     Billing,
+    Carry,
     Diff,
     Files,
     Follower,
@@ -635,6 +636,13 @@ defmodule Ravix.Tracks do
   as `Ravix.Tracks.Runtime.select/7` reads them. `payload`: `prompt`,
   `images` and `request_id`, as `prompt/3` reads them. The request id names
   the draft: the same id again answers the thread it already started.
+
+  `payload["context_thread_ids"]` names sibling threads to carry context
+  from (RAV-50). Each is admitted through `Access.thread_access/3` as this
+  person on this track, its transcript is read, and `Ravix.Tracks.Carry`
+  puts a compact, size-bounded digest of all of them in front of the first
+  prompt. One that is not theirs to read refuses the whole send, before
+  anything is created, with the same answer as one that does not exist.
   """
   @spec start_thread(User.t(), String.t(), map(), map()) ::
           {:ok, Thread.t()} | {:error, reason()}
@@ -652,13 +660,95 @@ defmodule Ravix.Tracks do
              is_nil(track.closed_at) and track.sandbox_state not in [:closing, :terminated],
              {:conflict, "closed_track", "This track is closing or closed."}
            ),
-         {:ok, body} <- first_prompt(payload) do
+         {:ok, body} <- first_prompt(payload),
+         {:ok, sources} <- context_ids(payload["context_thread_ids"]) do
       case started(user, track, payload["request_id"]) do
-        nil -> launch_thread(user, track, project, stringify(attrs), payload["request_id"], body)
-        found -> found
+        nil ->
+          launch_thread(
+            user,
+            track,
+            project,
+            stringify(attrs),
+            payload["request_id"],
+            {body, sources}
+          )
+
+        found ->
+          found
       end
     end
   end
+
+  @doc """
+  The threads a new thread on this track may carry context from: those with
+  a conversation, on a track this person can read. See `start_thread/4`.
+  """
+  @spec context_sources(User.t(), String.t()) ::
+          {:ok, [%{id: String.t(), title: String.t()}]} | {:error, :not_found}
+  def context_sources(%User{} = user, track_id) do
+    with {:ok, _access} <- Access.track_access(user, track_id) do
+      sources =
+        for thread <- Store.threads_of(track_id),
+            is_binary(thread.conversation_id),
+            do: %{id: thread.id, title: thread.title}
+
+      {:ok, sources}
+    end
+  end
+
+  defp context_ids(nil), do: {:ok, []}
+
+  defp context_ids(ids) when is_list(ids) do
+    ids = Enum.uniq(ids)
+
+    with :ok <-
+           check(
+             Enum.all?(ids, &is_binary/1) and length(ids) <= Carry.max_sources(),
+             {:unprocessable, "context_invalid",
+              "Carry context from at most #{Carry.max_sources()} threads."}
+           ),
+         do: {:ok, ids}
+  end
+
+  defp context_ids(_ids),
+    do: {:error, {:unprocessable, "context_invalid", "Choose threads to carry context from."}}
+
+  # Every source is read as this person, through the same door a page uses
+  # to open it; an id that door refuses is never read.
+  defp carry(_user, _track_id, [], body), do: {:ok, body}
+
+  defp carry(user, track_id, ids, body) do
+    ids
+    |> Enum.reduce_while({:ok, []}, fn id, {:ok, sources} ->
+      case context_source(user, track_id, id) do
+        {:ok, source} -> {:cont, {:ok, [source | sources]}}
+        {:error, _} = refused -> {:halt, refused}
+      end
+    end)
+    |> case do
+      {:ok, sources} ->
+        {:ok, %{body | prompt: Carry.prepend(Enum.reverse(sources), body.prompt)}}
+
+      refused ->
+        refused
+    end
+  end
+
+  defp context_source(user, track_id, id) do
+    with {:ok, %{thread: %Thread{conversation_id: conversation} = thread}}
+         when is_binary(conversation) <- Access.thread_access(user, track_id, id),
+         {:ok, page} <- events(user, track_id, thread_id: thread.id) do
+      {:ok, %{title: thread.title, page: page}}
+    else
+      {:error, %Fountain.Error{}} = failed -> failed
+      _ -> {:error, context_unavailable()}
+    end
+  end
+
+  defp context_unavailable,
+    do:
+      {:unprocessable, "context_unavailable",
+       "A thread you chose to carry context from is not available."}
 
   defp first_prompt(payload) do
     with {:ok, images} <- read_images(payload["images"]),
@@ -698,8 +788,9 @@ defmodule Ravix.Tracks do
     end
   end
 
-  defp launch_thread(user, track, project, attrs, request_id, body) do
-    with {:ok, client} <- fountain(),
+  defp launch_thread(user, track, project, attrs, request_id, {body, sources}) do
+    with {:ok, delivered} <- carry(user, track.id, sources, body),
+         {:ok, client} <- fountain(),
          {:ok, sandbox_id} <- thread_sandbox(client, track),
          {:ok, payer_opts} <- thread_payer(track, project),
          {:ok, selection} <-
@@ -725,7 +816,7 @@ defmodule Ravix.Tracks do
         client,
         sandbox_id,
         selection,
-        {request_id, body}
+        {request_id, delivered}
       )
     end
   end
@@ -769,7 +860,9 @@ defmodule Ravix.Tracks do
   defp launch_selected_thread(user, track, project, client, sandbox_id, selection, first) do
     {request_id, body} = first
     id = Ecto.UUID.generate()
-    title = Thread.title_from(body.prompt)
+    # Named for what the person asked, not for what it carried in.
+    {_sources, said} = Carry.split(body.prompt)
+    title = Thread.title_from(said)
 
     launch = %Launch{
       agent_id: selection.agent_id,

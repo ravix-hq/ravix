@@ -59,7 +59,7 @@ defmodule RavixWeb.TrackLive do
   alias Ravix.{Hub, Previews, PromptQueue, Tracks}
   alias Ravix.Hub.Event
   alias Ravix.PromptQueue.Recovery
-  alias Ravix.Tracks.{AgentFailure, Diff, Files, Follower, MachineState}
+  alias Ravix.Tracks.{AgentFailure, Carry, Diff, Files, Follower, MachineState}
   alias Ravix.Tracks.Transcript
   alias Ravix.Tracks.Transcript.Block, as: TranscriptBlock
   alias Ravix.Tracks.Transcript.Event, as: TranscriptEvent
@@ -240,7 +240,11 @@ defmodule RavixWeb.TrackLive do
       runtime: nil,
       model: nil,
       source: nil,
-      explicit?: false
+      explicit?: false,
+      # RAV-50: sibling threads this person may carry context from, and the
+      # ones picked, in the order offered. See `Tracks.context_sources/2`.
+      offered: [],
+      carry: []
     }
 
     {:noreply,
@@ -272,6 +276,25 @@ defmodule RavixWeb.TrackLive do
   end
 
   def handle_event("discard-draft", _, socket), do: {:noreply, socket}
+
+  # A chip above the draft's composer. Only a thread on offer can be picked,
+  # and it is admitted again here, so an id nobody offered this person never
+  # joins the draft. `Tracks.start_thread/4` admits each once more on send.
+  def handle_event("carry-context", %{"thread_id" => id}, socket) when is_binary(id) do
+    %{current_user: user, track_id: track_id, thread_draft: draft} = socket.assigns
+
+    with %{selected?: true, offered: offered, carry: carry} <- draft,
+         true <- Enum.any?(offered, &(&1.id == id)),
+         {:ok, _} <- Access.thread_access(user, track_id, id) do
+      carry = if id in carry, do: List.delete(carry, id), else: carry ++ [id]
+      carry = for %{id: offered_id} <- offered, offered_id in carry, do: offered_id
+      {:noreply, assign(socket, thread_draft: %{draft | carry: carry})}
+    else
+      _ -> {:noreply, socket}
+    end
+  end
+
+  def handle_event("carry-context", _, socket), do: {:noreply, socket}
 
   def handle_event("narrow-view", %{"name" => name}, socket)
       when name in ["conversation", "files", "terminal"] do
@@ -410,6 +433,8 @@ defmodule RavixWeb.TrackLive do
          true <- Enum.any?(turn.blocks, &match?(%TranscriptBlock.Failure{}, &1)) do
       {prompt, _restored?} = Recovery.visible_prompt(prompt)
       {_speaker, body} = prompt |> Ravix.Previews.Agent.visible_prompt() |> prompt_author()
+      # The thread already holds what was carried in; a retry asks again.
+      {_carried, body} = Carry.split(body)
 
       {:noreply,
        push_event(socket, "composer:retry", %{text: body, images: turn.image_count > 0})}
@@ -1272,7 +1297,12 @@ defmodule RavixWeb.TrackLive do
           "preference_explicit" => to_string(draft.explicit?)
         }
 
-        payload = %{prompt: text, images: images, request_id: draft.id}
+        payload = %{
+          prompt: text,
+          images: images,
+          request_id: draft.id,
+          context_thread_ids: draft.carry
+        }
 
         socket
         |> assign(thread_error: nil)
@@ -1295,12 +1325,28 @@ defmodule RavixWeb.TrackLive do
     |> drop_attachments()
     |> update(:thread_generation, &(&1 + 1))
     |> update(:thread_draft, &%{&1 | selected?: true})
+    |> offer_context()
     # A draft has no thread to comment on yet; its first message is a prompt.
     |> assign(thread_error: nil, agent_refused: false, composer_mode: :ask, comment_editing: nil)
     |> follow_siblings()
   end
 
   defp show_draft(socket), do: socket
+
+  # The threads the draft may carry context from, read each time it is shown
+  # so a thread started meanwhile is on offer and a pick nobody may read any
+  # longer is dropped.
+  defp offer_context(%{assigns: %{thread_draft: draft}} = socket) do
+    case Tracks.context_sources(socket.assigns.current_user, socket.assigns.track_id) do
+      {:ok, offered} ->
+        ids = MapSet.new(offered, & &1.id)
+        carry = Enum.filter(draft.carry, &MapSet.member?(ids, &1))
+        assign(socket, thread_draft: %{draft | offered: offered, carry: carry})
+
+      {:error, _} ->
+        assign(socket, thread_draft: %{draft | offered: [], carry: []})
+    end
+  end
 
   defp draft_options(socket) do
     if MapSet.member?(socket.assigns.pending, :thread_options),
@@ -3181,12 +3227,21 @@ defmodule RavixWeb.TrackLive do
   defp prompt_message(assigns) do
     {prompt, restored?} = Recovery.visible_prompt(assigns.prompt)
     {speaker, body} = prompt |> Ravix.Previews.Agent.visible_prompt() |> prompt_author()
-    assigns = assign(assigns, speaker: speaker, body: body, restored?: restored?)
+    {carried, body} = Carry.split(body)
+
+    assigns =
+      assign(assigns, speaker: speaker, body: body, restored?: restored?, carried: carried)
 
     ~H"""
     <div class="said">
       <span class="speaker">{@speaker}</span>
       <span :if={@restored?} class="chip">Context restored</span>
+      <div :if={@carried != []} class="said-carried" role="group" aria-label="Imported context">
+        <span class="said-carried-label">
+          <.icon name="document" size={12} />Context from
+        </span>
+        <span :for={title <- @carried} class="chip">{title}</span>
+      </div>
       <div :if={@body != ""} class="workspace-prompt">{@body}</div>
       <div :if={@image_count > 0} class="prompt-images" role="group" aria-label="Attached images">
         <a

@@ -2123,6 +2123,184 @@ defmodule RavixWeb.TrackLiveTest do
     end
   end
 
+  describe "carrying context into a draft (RAV-50)" do
+    setup ctx do
+      {:ok, sibling} =
+        Tracks.Store.create_thread(%{
+          track_id: ctx.track.id,
+          conversation_id: "sibling-conversation",
+          title: "Fix the login"
+        })
+
+      %{sibling: sibling}
+    end
+
+    test "the track's threads are offered as chips, and the picks go with the first message",
+         ctx do
+      open_draft(ctx, draft_options(ctx))
+
+      assert has_element?(ctx.view, "#draft-context", "Carry context from")
+      assert has_element?(ctx.view, "#carry-#{ctx.track.id}[aria-pressed=false]")
+
+      assert has_element?(
+               ctx.view,
+               "#carry-#{ctx.sibling.id}[aria-pressed=false]",
+               "Fix the login"
+             )
+
+      ctx.view |> element("#carry-#{ctx.sibling.id}") |> render_click()
+      ctx.view |> element("#carry-#{ctx.track.id}") |> render_click()
+      assert has_element?(ctx.view, "#carry-#{ctx.sibling.id}[aria-pressed=true]")
+      assert has_element?(ctx.view, "#carry-#{ctx.track.id}[aria-pressed=true]")
+
+      # Pressing again unpicks; picks keep the order they are offered in.
+      ctx.view |> element("#carry-#{ctx.track.id}") |> render_click()
+      assert has_element?(ctx.view, "#carry-#{ctx.track.id}[aria-pressed=false]")
+      ctx.view |> element("#carry-#{ctx.track.id}") |> render_click()
+
+      test_pid = self()
+
+      expect(Tracks, :start_thread, fn user, id, _attrs, payload ->
+        assert {user.id, id} == {ctx.user.id, ctx.track.id}
+        send(test_pid, {:carried, payload.context_thread_ids})
+        {:error, {:conflict, "not_open", "The track's machine is not ready."}}
+      end)
+
+      ctx.view |> form("#composer-form", %{text: "Carry on"}) |> render_submit()
+      render_async(ctx.view)
+      assert_received {:carried, ids}
+      assert ids == [ctx.track.id, ctx.sibling.id]
+      # A refusal keeps the picks with the draft.
+      assert has_element?(ctx.view, "#carry-#{ctx.sibling.id}[aria-pressed=true]")
+    end
+
+    test "a forged thread id is never picked or sent", ctx do
+      creator = insert_user()
+      insert_project_member(ctx.project, creator)
+
+      private =
+        insert_track(
+          project: ctx.project,
+          visibility: :private,
+          created_by: creator.id,
+          created_by_login: creator.login,
+          conversation_id: "private-conversation"
+        )
+
+      {:ok, secret} =
+        Tracks.Store.create_thread(%{
+          track_id: private.id,
+          conversation_id: "secret-conversation",
+          title: "Private work"
+        })
+
+      open_draft(ctx, draft_options(ctx))
+      refute has_element?(ctx.view, "#carry-#{secret.id}")
+      refute has_element?(ctx.view, "#carry-#{private.id}")
+
+      for forged <- [secret.id, private.id, insert_track().id, "nope"] do
+        render_click(ctx.view, "carry-context", %{thread_id: forged})
+      end
+
+      render_click(ctx.view, "carry-context", %{})
+      refute has_element?(ctx.view, "#draft-context [aria-pressed=true]")
+
+      test_pid = self()
+
+      expect(Tracks, :start_thread, fn _, _, _, payload ->
+        send(test_pid, {:carried, payload.context_thread_ids})
+        {:error, :not_found}
+      end)
+
+      ctx.view |> form("#composer-form", %{text: "Carry on"}) |> render_submit()
+      render_async(ctx.view)
+      assert_received {:carried, []}
+    end
+
+    test "a thread that stops being readable is dropped from the picks", ctx do
+      open_draft(ctx, draft_options(ctx))
+      ctx.view |> element("#carry-#{ctx.sibling.id}") |> render_click()
+
+      # Leaving the draft and coming back reads the offer again.
+      Repo.delete!(ctx.sibling)
+      render_hook(ctx.view, "select-thread", %{thread_id: ctx.track.id})
+      settle(ctx.view)
+      render_hook(ctx.view, "select-thread", %{thread_id: "draft"})
+      refute has_element?(ctx.view, "#carry-#{ctx.sibling.id}")
+
+      # And a pick whose thread went meanwhile is not accepted.
+      render_click(ctx.view, "carry-context", %{thread_id: ctx.sibling.id})
+      refute has_element?(ctx.view, "#draft-context [aria-pressed=true]")
+    end
+
+    test "a revoked session cannot pick a source", ctx do
+      open_draft(ctx, draft_options(ctx))
+      token = Plug.Conn.get_session(ctx.conn, :session_token)
+      Repo.delete!(Repo.get_by!(Session, token_hash: Ravix.Crypto.sha256(token)))
+
+      :sys.replace_state(ctx.view.pid, fn state ->
+        update_in(state.socket.assigns.session_guard, &%{&1 | stale?: true})
+      end)
+
+      assert {:error, {:redirect, %{to: "/login"}}} =
+               render_click(ctx.view, "carry-context", %{thread_id: ctx.sibling.id})
+    end
+
+    test "a thread nobody else is on offers nothing to carry", ctx do
+      Repo.delete!(ctx.sibling)
+      Repo.update_all(Tracks.Thread, set: [conversation_id: nil])
+      open_draft(ctx, draft_options(ctx))
+      refute has_element?(ctx.view, "#draft-context")
+    end
+
+    test "the sent message names its sources and shows only what the person wrote", ctx do
+      prompt =
+        Tracks.Carry.prepend(
+          [%{title: "Fix the login", page: Transcript.page([], "claude")}],
+          "Carry on"
+        )
+
+      delivered =
+        PromptQueue.with_author(
+          "teammate",
+          "[ravix] This conversation shares track x. Your working directory is /w.\n\n" <>
+            prompt
+        )
+
+      timed_out = %{
+        "id" => 101,
+        "turn_id" => "carried",
+        "kind" => "output",
+        "stream" => "acp",
+        "data" =>
+          Ravix.TranscriptFixture.update(Ravix.TranscriptFixture.text("request timed out"))
+      }
+
+      closed = %{
+        "id" => 102,
+        "turn_id" => "carried",
+        "kind" => "stage",
+        "stage" => "turn",
+        "state" => "completed"
+      }
+
+      page = Transcript.page([opened(100, "carried", delivered), timed_out, closed], "claude")
+      stub(Tracks, :events, fn _, _, _ -> {:ok, page} end)
+      render_click(ctx.view, "retry-load")
+      render_async(ctx.view)
+
+      assert has_element?(ctx.view, "#turns-carried .said-carried", "Context from")
+      assert has_element?(ctx.view, "#turns-carried .said-carried .chip", "Fix the login")
+      assert has_element?(ctx.view, "#turns-carried .workspace-prompt", "Carry on")
+      assert has_element?(ctx.view, "#turns-carried .speaker", "@teammate")
+      refute render(ctx.view) =~ "imported thread context"
+
+      # Retrying asks again; the thread already holds what was carried.
+      ctx.view |> element("button[phx-click=retry-turn]", "Retry message") |> render_click()
+      assert_push_event(ctx.view, "composer:retry", %{text: "Carry on", images: false})
+    end
+  end
+
   defp draft_key(view) do
     [key] =
       view

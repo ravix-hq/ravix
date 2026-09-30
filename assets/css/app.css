@@ -794,6 +794,10 @@ html[data-yard="closed"] .yard .workspace-gear { display: none; }
   background: var(--surface); border: 1px solid var(--line);
   border-radius: 12px 12px 3px 12px;
 }
+/* RAV-50: the threads a first prompt carried context from, above its bubble. */
+.said-carried { display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: 4px; max-width: 100%; margin-bottom: 2px; }
+.said-carried-label { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; color: var(--dimmer); }
+.said-carried .chip { max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .prompt-images { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; max-width: 100%; margin-top: 6px; }
 .prompt-images a { display: block; max-width: 100%; border-radius: 8px; overflow: hidden; border: 1px solid var(--line); background: var(--surface); }
 .prompt-images img { display: block; max-width: 100%; object-fit: contain; }
@@ -971,6 +975,17 @@ html[data-yard="closed"] .yard .workspace-gear { display: none; }
 }
 .composer-mode button[aria-pressed="true"] { background: var(--surface-active); color: var(--ink); }
 .composer-box { position: relative; }
+/* RAV-50: a draft's sibling threads, each a toggle; picked ones take the accent. */
+.draft-context { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-bottom: 8px; }
+.draft-context-label { font-size: 12px; color: var(--dim); margin-right: 2px; }
+.context-chip {
+  display: inline-flex; align-items: center; gap: 5px; max-width: 260px; height: 24px; padding: 0 9px;
+  border: 1px solid var(--line-strong); border-radius: 999px;
+  font-size: 12px; color: var(--dim); background: var(--surface);
+}
+.context-chip span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.context-chip:hover { color: var(--ink); background: var(--surface-active); }
+.context-chip[aria-pressed="true"] { color: var(--accent-ink); border-color: var(--accent-line); background: var(--accent-soft); }
 .composer-box.commenting, .composer-box.commenting:focus-within {
   border-color: var(--warn); background: var(--warn-soft);
 }
