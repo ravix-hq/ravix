@@ -213,6 +213,51 @@ defmodule Ravix.Workspaces.Repositories do
     end
   end
 
+  @doc """
+  A repository for one of the workspace's projects to move to (RAV-76):
+  in the catalog, still granted to its connection's installation, and not
+  already the workspace's project. Takes `:create_project`, as admitting it
+  would. Answers GitHub's current spelling and the installation and
+  connection that read it.
+  """
+  @spec readable(User.t(), String.t(), String.t() | nil) ::
+          {:ok,
+           %{
+             repo: GitHub.Shapes.RepoRef.t(),
+             installation_id: integer(),
+             workspace_installation_id: String.t()
+           }}
+          | {:error, term()}
+  def readable(%User{} = user, workspace_id, full_name) do
+    with {:ok, %{workspace: workspace}} <-
+           Access.workspace_grant(user, workspace_id, :create_project),
+         {:ok, key} <- key(full_name),
+         :ok <- not_a_project(workspace.id, key),
+         {:ok, repo, entry} <- resolve(workspace.id, key) do
+      {:ok,
+       %{
+         repo: repo,
+         installation_id: entry.workspace_installation.installation_id,
+         workspace_installation_id: entry.workspace_installation_id
+       }}
+    end
+  end
+
+  defp not_a_project(workspace_id, key) do
+    case Store.index_holder(workspace_id, key) do
+      nil ->
+        :ok
+
+      %Project{archived_at: nil, deletion_requested_at: nil, name: name} ->
+        {:error,
+         {:conflict, "repository_taken",
+          "This workspace already has a project for that repository: #{name}."}}
+
+      %Project{} ->
+        {:error, held()}
+    end
+  end
+
   # The unique index counts an archived or pending-deletion project too, so
   # provisioning a machine for the same repository would only be refused
   # and unwound: say so first, and spend nothing.

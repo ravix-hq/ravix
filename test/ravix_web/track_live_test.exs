@@ -518,6 +518,12 @@ defmodule RavixWeb.TrackLiveTest do
     settle(ctx.view)
     assert has_element?(ctx.view, "#track-agent-health-banner", "Sending is paused")
     assert has_element?(ctx.view, "[phx-value-id=funding]", "Retry")
+
+    assert has_element?(
+             ctx.view,
+             "li.queue-item .queue-error",
+             "A different reconnect explanation."
+           )
   end
 
   test "setup credential refusal raises the banner independently of message text", ctx do
@@ -1042,7 +1048,13 @@ defmodule RavixWeb.TrackLiveTest do
     render_async(ctx.view, 2_000)
     refute has_element?(ctx.view, "#new-thread-dialog")
     assert has_element?(ctx.view, "#thread-tab-draft[aria-selected=true]", "New thread")
-    assert has_element?(ctx.view, ".thread-default-source", "Project default")
+
+    assert has_element?(
+             ctx.view,
+             "#draft-runtime-menu .model-option:has(input[checked])",
+             "Project default"
+           )
+
     # Stubbed `Tracks.get` reads the rows, so the page sees the new thread.
     stub(Tracks, :get, fn _, id, _opts ->
       {:ok,
@@ -1073,7 +1085,7 @@ defmodule RavixWeb.TrackLiveTest do
     assert has_element?(ctx.view, "#composer-#{thread.id}")
     assert has_element?(ctx.view, "#thread-tab-#{thread.id}[aria-selected=true]")
     refute has_element?(ctx.view, "#thread-tab-draft")
-    refute has_element?(ctx.view, "#thread_draft-runtime")
+    refute has_element?(ctx.view, "#draft-runtime")
     assert has_element?(ctx.view, ".composer-model")
     assert_push_event(ctx.view, "composer:forget", %{key: key})
     assert key == "track:#{ctx.track.id}:thread:draft:#{request_id}"
@@ -1098,8 +1110,20 @@ defmodule RavixWeb.TrackLiveTest do
     stub(Ravix.MachineCache, :machine_of, fn _, _ -> {:ok, nil} end)
     ctx.view |> element("#thread-switcher button[aria-label='Add thread']") |> render_click()
     render_async(ctx.view)
-    assert has_element?(ctx.view, ".thread-default-source", "Your default: Claude Code")
-    assert has_element?(ctx.view, "#thread_draft-model option[selected]", "Claude Opus 5")
+    assert has_element?(ctx.view, "#draft-runtime-trigger", "Claude Code · Claude Opus 5")
+
+    assert has_element?(
+             ctx.view,
+             "#draft-runtime-menu .model-option:has(input[checked])",
+             "Your default"
+           )
+
+    assert has_element?(
+             ctx.view,
+             "#draft-runtime-menu label:has(input[name=\"thread_draft[model]\"][checked])",
+             "Claude Opus 5"
+           )
+
     assert has_element?(ctx.view, "#thread-tab-draft", "Claude Code · Claude Opus 5")
     assert has_element?(ctx.view, "#thread-picker option[value=draft][selected]", "New thread")
   end
@@ -1122,16 +1146,25 @@ defmodule RavixWeb.TrackLiveTest do
     }
 
     open_draft(ctx, base)
-    assert has_element?(ctx.view, "label[for=thread_draft-runtime]", "Agent")
-    assert has_element?(ctx.view, "#thread_draft-runtime option[value=claude]", "Claude Code")
+    assert has_element?(ctx.view, "#draft-runtime-menu legend", "Agent")
 
     assert has_element?(
              ctx.view,
-             "#thread_draft-runtime option[value=codex][disabled]",
+             "#draft-runtime-menu label:has(input[name=\"thread_draft[runtime]\"][value=claude])",
+             "Claude Code"
+           )
+
+    assert has_element?(
+             ctx.view,
+             "#draft-runtime-menu label:has(input[name=\"thread_draft[runtime]\"][value=codex][disabled])",
              "Codex threads on this project aren't available yet"
            )
 
-    assert has_element?(ctx.view, "#thread_draft-model option", "Claude Opus 5")
+    assert has_element?(
+             ctx.view,
+             "#draft-runtime-menu label:has(input[name=\"thread_draft[model]\"])",
+             "Claude Opus 5"
+           )
 
     for {owner?, reason} <- [
           {true, "Connect to use"},
@@ -1149,7 +1182,20 @@ defmodule RavixWeb.TrackLiveTest do
       }
 
       open_draft(ctx, options)
-      assert has_element?(ctx.view, "#thread_draft-runtime option[value=codex][disabled]", reason)
+
+      assert has_element?(
+               ctx.view,
+               "#draft-runtime-menu label:has(input[name=\"thread_draft[runtime]\"][value=codex][disabled])",
+               reason
+             )
+
+      # RAV-80: the payer connects from the agent menu; nothing waits above
+      # the composer.
+      connect =
+        "#draft-runtime-menu button[phx-click=connect-thread-agent][phx-value-runtime=codex]"
+
+      assert has_element?(ctx.view, connect, "Connect Codex…") == owner?
+      refute has_element?(ctx.view, ".thread-connections button[phx-click=connect-thread-agent]")
     end
   end
 
@@ -1204,6 +1250,15 @@ defmodule RavixWeb.TrackLiveTest do
              "Codex is at capacity on this machine; your prompt is queued."
            )
 
+    # RAV-94: one row per waiting prompt, its state first and its action last.
+    assert has_element?(
+             ctx.view,
+             "ol.workspace-queue[aria-label='Queued prompts'] > li.queue-item > .chip",
+             "Waiting"
+           )
+
+    assert has_element?(ctx.view, "li.queue-item > button[phx-value-action=cancel]", "Cancel")
+
     assert has_element?(ctx.view, ".composer-model", "Codex · GPT-6 Astra")
     assert has_element?(ctx.view, ".composer-model", "GPT-6 Astra")
 
@@ -1227,7 +1282,12 @@ defmodule RavixWeb.TrackLiveTest do
       render_async(ctx.view)
       assert has_element?(ctx.view, "#thread-error[role=alert]", message)
       assert has_element?(ctx.view, "#thread-tab-draft[aria-selected=true]")
-      assert has_element?(ctx.view, "#thread_draft-runtime option[value=codex][selected]")
+
+      assert has_element?(
+               ctx.view,
+               "#draft-runtime-menu label:has(input[name=\"thread_draft[runtime]\"][value=codex][checked])"
+             )
+
       refute_push_event(ctx.view, "composer:clear", %{})
       refute_push_event(ctx.view, "composer:forget", %{})
     end
@@ -1298,7 +1358,9 @@ defmodule RavixWeb.TrackLiveTest do
     assert has_element?(ctx.view, "#thread-tab-draft", "Claude Code")
 
     ctx.view
-    |> element("button[phx-click=connect-thread-agent][phx-value-runtime=codex]")
+    |> element(
+      "#draft-runtime-menu button[phx-click=connect-thread-agent][phx-value-runtime=codex]"
+    )
     |> render_click()
 
     render_async(ctx.view)
@@ -1325,11 +1387,16 @@ defmodule RavixWeb.TrackLiveTest do
 
     assert has_element?(
              ctx.view,
-             "#thread_draft-runtime option[value=codex][selected]",
-             "Connected"
+             "#draft-runtime-menu label:has(input[name=\"thread_draft[runtime]\"][value=codex][checked]:not([disabled]))",
+             "Codex"
            )
 
-    assert has_element?(ctx.view, "#thread_draft-model option[selected]", "GPT-6 Astra")
+    assert has_element?(
+             ctx.view,
+             "#draft-runtime-menu label:has(input[name=\"thread_draft[model]\"][checked])",
+             "GPT-6 Astra"
+           )
+
     assert has_element?(ctx.view, "#thread-tab-draft", "Codex · GPT-6 Astra")
     refute has_element?(ctx.view, ".thread-connections form")
     render_click(ctx.view, "discard-draft")
@@ -2604,9 +2671,32 @@ defmodule RavixWeb.TrackLiveTest do
              )
 
       refute has_element?(ctx.view, "#transcript-turns")
-      assert has_element?(ctx.view, ".thread-default-source", "Your default: Claude Code")
-      assert has_element?(ctx.view, ".draft-default-hint", "Also your default for new threads")
+      assert has_element?(ctx.view, "#draft-runtime-trigger", "Claude Code · Claude Opus 5")
+
+      assert has_element?(
+               ctx.view,
+               "#draft-runtime-menu .model-option:has(input[checked])",
+               "Your default"
+             )
+
+      assert has_element?(
+               ctx.view,
+               "#draft-runtime-menu .model-default-hint",
+               "Also your default for new threads"
+             )
+
       refute has_element?(ctx.view, "#model-trigger")
+      # RAV-80: one model control, the composer's pill, and no native selects.
+      refute has_element?(ctx.view, "#composer-form select")
+      assert has_element?(ctx.view, "#draft-runtime-trigger.composer-model.model-trigger")
+
+      assert 1 ==
+               ctx.view
+               |> render()
+               |> LazyHTML.from_fragment()
+               |> LazyHTML.query("#composer-form [aria-haspopup=dialog]")
+               |> Enum.count()
+
       key = draft_key(ctx.view)
 
       ctx.view |> element("#thread-switcher button[aria-label='Add thread']") |> render_click()
@@ -2645,14 +2735,19 @@ defmodule RavixWeb.TrackLiveTest do
       assert has_element?(ctx.view, "#composer-#{ctx.track.id}")
       assert has_element?(ctx.view, "#thread-tab-#{ctx.track.id}[aria-selected=true]")
       assert has_element?(ctx.view, "#thread-tab-draft[aria-selected=false]", "Claude Sonnet 5")
-      refute has_element?(ctx.view, "#thread_draft-runtime")
+      refute has_element?(ctx.view, "#draft-runtime")
 
       # The narrow picker offers the draft too, and choosing it comes back.
       assert has_element?(ctx.view, "#thread-picker option[value=draft]", "New thread")
       ctx.view |> element("#thread-picker-form") |> render_change(%{thread_id: "draft"})
       assert has_element?(ctx.view, "#thread-tab-draft[aria-selected=true]")
       assert draft_key(ctx.view) == key
-      assert has_element?(ctx.view, "#thread_draft-model option[selected]", "Claude Sonnet 5")
+
+      assert has_element?(
+               ctx.view,
+               "#draft-runtime-menu label:has(input[name=\"thread_draft[model]\"][checked])",
+               "Claude Sonnet 5"
+             )
 
       {:ok, parent, _} = live(ctx.conn, "/p/#{ctx.project.id}/t/#{ctx.track.id}")
       reloaded = find_live_child(parent, "track-host")
@@ -2668,8 +2763,17 @@ defmodule RavixWeb.TrackLiveTest do
       |> form("#composer-form", %{thread_draft: %{runtime: "codex"}})
       |> render_change(%{_target: ["thread_draft", "runtime"]})
 
-      assert has_element?(ctx.view, "#thread_draft-runtime option[value=codex][selected]")
-      assert has_element?(ctx.view, "#thread_draft-model option[selected]", "GPT-6 Astra")
+      assert has_element?(
+               ctx.view,
+               "#draft-runtime-menu label:has(input[name=\"thread_draft[runtime]\"][value=codex][checked])"
+             )
+
+      assert has_element?(
+               ctx.view,
+               "#draft-runtime-menu label:has(input[name=\"thread_draft[model]\"][checked])",
+               "GPT-6 Astra"
+             )
+
       assert has_element?(ctx.view, "#thread-tab-draft", "Codex · GPT-6 Astra")
 
       ctx.view
@@ -4305,6 +4409,108 @@ defmodule RavixWeb.TrackLiveTest do
     end
   end
 
+  describe "one working state (RAV-91)" do
+    # What each surface says, in one render: the shown thread's tab word,
+    # whether Stop is drawn, the machine chip's word, and whether Checks
+    # says the turn is moving its counts.
+    defp surfaces(html, tab) do
+      doc = LazyHTML.from_document(html)
+      [label] = doc |> LazyHTML.query(tab) |> LazyHTML.attribute("aria-label")
+      [_, word] = Regex.run(~r/· (Running|Queued|Failed|Idle)$/, label)
+
+      %{
+        tab: word,
+        stop: Enum.count(LazyHTML.query(doc, "#composer-stop")) == 1,
+        chip: doc |> LazyHTML.query("#track-machine-state .chip-label") |> LazyHTML.text(),
+        checks: Enum.count(LazyHTML.query(doc, "#git-working[role=status]")) == 1
+      }
+    end
+
+    # A track whose opening turn has finished, so its chip's resting word is
+    # Idle rather than Starting.
+    defp opened(ctx) do
+      Repo.update!(
+        Ecto.Changeset.change(Repo.get!(Track, ctx.track.id), opened_at: DateTime.utc_now())
+      )
+
+      send(ctx.view.pid, {:hub, Event.new(:tracks, ctx.project.id, track_id: ctx.track.id)})
+      settle(ctx.view)
+    end
+
+    test "the tab, Stop, the machine chip and Checks change together through a turn", ctx do
+      opened(ctx)
+      open_checks(ctx, {:ok, git(0, 0)})
+      tab = "#thread-tab-#{ctx.track.id}"
+
+      assert surfaces(render(ctx.view), tab) == %{
+               tab: "Idle",
+               stop: false,
+               chip: "Idle",
+               checks: false
+             }
+
+      stub(Tracks, :git_status, fn _, _ -> {:ok, git(2, 0)} end)
+
+      for {state, expected} <- [
+            {"queued", %{tab: "Queued", stop: false, chip: "Working", checks: true}},
+            {"started", %{tab: "Running", stop: true, chip: "Working", checks: true}},
+            {"completed", %{tab: "Idle", stop: false, chip: "Idle", checks: false}}
+          ] do
+        assert surfaces(turn_stage(ctx.view, ctx.track.id, state), tab) == expected
+      end
+
+      # A settled turn reads the counts again.
+      render_async(ctx.view)
+      assert has_element?(ctx.view, "#git-uncommitted", "2 uncommitted changes")
+    end
+
+    test "a detail read's running track does not hold the chip on Working under an Idle tab",
+         ctx do
+      stub(Tracks, :get, fn _, _, _ ->
+        {:ok,
+         %{
+           track: %{Tracks.present(ctx.track, role: :owner) | status: :running},
+           header: blank_header(),
+           starters: [],
+           models: [],
+           threads: thread_options(ctx.track.id)
+         }}
+      end)
+
+      send(ctx.view.pid, {:hub, Event.new(:tracks, ctx.project.id, track_id: ctx.track.id)})
+      settle(ctx.view)
+
+      assert surfaces(render(ctx.view), "#thread-tab-#{ctx.track.id}") ==
+               %{tab: "Idle", stop: false, chip: "Idle", checks: false}
+    end
+
+    test "a sibling's turn is the machine working, but not the shown thread's Stop", ctx do
+      {:ok, sibling} =
+        Tracks.Store.create_thread(%{
+          track_id: ctx.track.id,
+          conversation_id: "live-sibling",
+          title: "Sibling"
+        })
+
+      opened(ctx)
+      html = turn_stage(ctx.view, sibling.id, "started")
+
+      assert surfaces(html, "#thread-tab-#{ctx.track.id}") ==
+               %{tab: "Idle", stop: false, chip: "Working", checks: false}
+
+      assert surfaces(html, "#thread-tab-#{sibling.id}").tab == "Running"
+    end
+
+    test "Checks does not call a machine asleep while a turn is working on it", ctx do
+      open_checks(ctx, {:error, :machine_asleep})
+      assert has_element?(ctx.view, "#git-asleep")
+
+      turn_stage(ctx.view, ctx.track.id, "started")
+      refute has_element?(ctx.view, "#git-asleep")
+      assert has_element?(ctx.view, "#git-working", "The agent is taking a turn.")
+    end
+  end
+
   test "starters and typing use the composer protocol", ctx do
     ctx.view |> element("button", "Start here") |> render_click()
     assert_push_event(ctx.view, "composer:insert", %{text: "Build it"})
@@ -5931,6 +6137,13 @@ defmodule RavixWeb.TrackLiveTest do
       turn_stage(ctx.view, ctx.track.id, "started")
       assert [{"stop", "ravix", "interrupt"} | _] = composer_commands(ctx.view)
 
+      # RAV-94: and what is sent now waits for the turn, which the box says.
+      assert has_element?(
+               ctx.view,
+               "#composer-form textarea[placeholder='Queue a follow-up, @mention files, run /commands']" <>
+                 "[data-placeholder-ask='Queue a follow-up, @mention files, run /commands']"
+             )
+
       # Comment mode has its own list of people and no commands.
       render_click(ctx.view, "composer-mode", %{mode: "comment"})
       assert has_element?(ctx.view, "#composer-form textarea[aria-controls=mention-options]")
@@ -6656,7 +6869,7 @@ defmodule RavixWeb.TrackLiveTest do
 
       assert has_element?(
                ctx.view,
-               ".workspace-queue > div:last-child .queue-feedback",
+               ".workspace-queue > li:last-child .queue-feedback",
                "Waiting behind a prompt that needs attention"
              )
 
