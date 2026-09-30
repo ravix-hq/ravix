@@ -30,7 +30,13 @@ test('an asleep track says so once, in the inspector, and Wake wakes it', async 
   // Setting up: the inspector says the banner's step, and turns while it does.
   const setup = page.locator('#panel-setup');
   await expect(setup).toBeVisible();
-  await expect(setup.locator('h3')).toHaveText((await page.locator('#track-setup-status strong').textContent()).trim());
+  // Setup moves on between two reads, so wait for both to show the same step
+  // rather than comparing against a snapshot of the banner.
+  const banner = page.locator('#track-setup-status strong');
+  await expect.poll(async () => {
+    const [step, heading] = await Promise.all([banner.textContent(), setup.locator('h3').textContent()]);
+    return step !== null && step.trim() !== '' && step.trim() === heading?.trim();
+  }).toBe(true);
   await expect(page.locator('#track-setup-status')).toHaveCount(0, { timeout: 45_000 });
   await expect(setup).toHaveCount(0);
 
