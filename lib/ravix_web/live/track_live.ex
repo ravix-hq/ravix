@@ -2631,6 +2631,20 @@ defmodule RavixWeb.TrackLive do
     """
   end
 
+  # Fountain's diff answered but the sprite was asleep, so files Git is not
+  # tracking yet could not be listed: "No changes" would be a guess.
+  defp panel_body(%{data: %Diff{diff: "", untracked: :asleep}} = assigns) do
+    ~H"""
+    <.empty
+      pane
+      id="changes-empty"
+      icon="moon"
+      title="No tracked changes"
+      because="The machine is asleep, so new files Git is not tracking yet cannot be listed."
+    />
+    """
+  end
+
   defp panel_body(%{data: %Diff{diff: ""}} = assigns) do
     ~H"""
     <.empty
@@ -2669,6 +2683,9 @@ defmodule RavixWeb.TrackLive do
         </span>
       </p>
       <p :if={@data.truncated} class="changes-note">Diff is truncated.</p>
+      <p :if={@data.untracked == :asleep} id="changes-untracked-asleep" class="changes-note">
+        The machine is asleep, so new files Git is not tracking yet are not listed.
+      </p>
       <div :if={!@selected}>
         <form id="diff-filter-form" phx-change="filter-diff" phx-submit="filter-diff">
           <label for="diff-filter" class="sr-only">Filter paths</label>
@@ -2710,7 +2727,11 @@ defmodule RavixWeb.TrackLive do
         <h4 class="change-path">
           <span :if={@selected.change.status == :renamed}>{@selected.old_path} → </span>{@selected.change.path}
         </h4>
-        <p :if={@selected.partial}>Partial file — diff was truncated.</p>
+        <p :if={@selected.partial}>
+          {if @selected.hunks == [] and @selected.change.status == :untracked,
+            do: "New file too large to show here.",
+            else: "Partial file — diff was truncated."}
+        </p>
         <p :for={line <- @selected.metadata}>{line}</p>
         <p :if={@selected.binary}>Binary files differ</p>
         <%= if large_diff?(@selected) and !@diff_show_large do %>
@@ -2762,6 +2783,7 @@ defmodule RavixWeb.TrackLive do
       :if={@data.runs == []}
       pane
       id="checks-empty"
+      class="checks-empty"
       icon="check"
       title={if @data.pushed, do: "No checks yet", else: "No checks until the branch is pushed"}
     />
@@ -2853,9 +2875,7 @@ defmodule RavixWeb.TrackLive do
       />
       <ul class="git-rows">
         <li :if={@status} id="git-uncommitted" class="git-row">
-          <span class={["chip", if(@status.uncommitted > 0, do: "warn", else: "ok")]}>
-            {@status.uncommitted}
-          </span>
+          <.git_count count={@status.uncommitted} />
           <span class="git-row-label">
             {count_label(@status.uncommitted, "uncommitted change", "uncommitted changes")}
           </span>
@@ -2872,9 +2892,7 @@ defmodule RavixWeb.TrackLive do
           </button>
         </li>
         <li :if={@status} id="git-unpushed" class="git-row">
-          <span class={["chip", if(@status.unpushed > 0, do: "warn", else: "ok")]}>
-            {@status.unpushed}
-          </span>
+          <.git_count count={@status.unpushed} />
           <span class="git-row-label">
             {count_label(@status.unpushed, "unpushed commit", "unpushed commits")}<span
               :if={!@status.upstream? && @status.unpushed > 0}
@@ -2920,6 +2938,31 @@ defmodule RavixWeb.TrackLive do
     </section>
     """
   end
+
+  attr :count, :integer, required: true
+
+  # A number to act on, in amber; none is a grey dash rather than a green 0,
+  # which reads as a count of successes. The row's words say it either way.
+  defp git_count(%{count: 0} = assigns) do
+    ~H"""
+    <span class="git-count zero" aria-hidden="true">–</span>
+    """
+  end
+
+  defp git_count(assigns) do
+    ~H"""
+    <span class="chip warn git-count" aria-hidden="true">{@count}</span>
+    """
+  end
+
+  # The toolbar's one icon says what it refreshes.
+  defp refresh_label(:files), do: "Refresh files"
+  defp refresh_label(:changes), do: "Refresh changes"
+  defp refresh_label(:checks), do: "Refresh checks"
+  defp refresh_label(:preview), do: "Refresh preview"
+
+  # Nothing running and nothing failed: the Preview tab is its empty state.
+  defp preview_idle?(preview), do: preview.state == :stopped and !preview.error
 
   defp count_label(0, _one, many), do: "No " <> many
   defp count_label(1, one, _many), do: "1 " <> one
@@ -3097,10 +3140,18 @@ defmodule RavixWeb.TrackLive do
     """
   end
 
-  defp diff_status(status), do: %{added: "A", modified: "M", deleted: "D", renamed: "R"}[status]
+  defp diff_status(status),
+    do: %{added: "A", modified: "M", deleted: "D", renamed: "R", untracked: "U"}[status]
 
   defp diff_status_label(status),
-    do: %{added: "Added", modified: "Modified", deleted: "Deleted", renamed: "Renamed"}[status]
+    do:
+      %{
+        added: "Added",
+        modified: "Modified",
+        deleted: "Deleted",
+        renamed: "Renamed",
+        untracked: "New, untracked"
+      }[status]
 
   defp changed_files(1), do: "1 changed file"
   defp changed_files(count), do: "#{count} changed files"

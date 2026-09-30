@@ -901,7 +901,21 @@ html[data-yard="closed"] .workspace-trigger-skeleton { flex: none; width: 28px; 
 .workspace-turn { margin: 0 0 18px; max-width: none; line-height: 1.6; overflow-wrap: anywhere; }
 .workspace-turn pre, .workspace-panel pre, .term-scroll pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; }
 .workspace-panel #preview-logs { margin-block: 16px; }
-.workspace-panel #preview-logs summary { cursor: pointer; }
+.empty .empty-link { font-size: 12px; margin-top: 2px; text-align: center; }
+/* Idle, the run script is reached through the empty state's link alone. */
+.preview-controls.idle #preview-config:not([open]) { display: none; }
+.preview-controls .preview-actions { align-items: center; margin-block: 8px 0; }
+/* The app's chevron, turned by `[open]`, in place of the native marker,
+   and aligned with the action row above it. */
+.preview-disclosure > summary {
+  display: flex; align-items: center; gap: 6px; list-style: none; cursor: pointer;
+  padding: 6px 0; color: var(--dim); font-size: 13px;
+}
+.preview-disclosure > summary:hover { color: var(--ink); }
+.preview-disclosure > summary::-webkit-details-marker { display: none; }
+.preview-disclosure > summary > .disclosure-chevron { flex: none; color: var(--dimmer); transition: transform 120ms; }
+.preview-disclosure[open] > summary > .disclosure-chevron { transform: rotate(90deg); }
+@media (prefers-reduced-motion: reduce) { .preview-disclosure > summary > .disclosure-chevron { transition: none; } }
 .workspace-panel #preview-logs pre { max-height: 320px; overflow: auto; }
 /* Prose is set in the sans face at a readable measure; mono is for code,
    commands and tool output, which the fold below keeps in it. 15/24 with
@@ -1519,7 +1533,7 @@ html[data-yard="closed"] .workspace-trigger-skeleton { flex: none; width: 28px; 
 @media (prefers-reduced-motion: reduce) { .workspace-tabs .panel-refresh.busy svg { animation: none; } }
 .tab-count {
   display: inline-block; min-width: 18px; margin-left: 6px; padding: 0 5px; border-radius: 9px;
-  font-size: 11px; line-height: 16px; text-align: center; font-variant-numeric: tabular-nums;
+  font: 11px/16px var(--mono); text-align: center; font-variant-numeric: tabular-nums;
   color: var(--dim); background: var(--surface); border: 1px solid var(--line);
 }
 .workspace-tabs .selected .tab-count { color: inherit; }
@@ -1570,6 +1584,34 @@ html[data-yard="closed"] .workspace-trigger-skeleton { flex: none; width: 28px; 
 .dock-tabs { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: thin; }
 .dock-tabs > * { flex-shrink: 0; }
 .workspace-tabs .dock-toggle { width: 24px; padding: 5px; }
+/* The strip's height does not depend on which tab it holds, nor on a close
+   button coming or going, so switching or closing never moves the column. */
+.dock-tabs { height: 38px; padding-block: 0; }
+.dock-tabs .dock-tab { display: inline-flex; align-items: center; gap: 6px; }
+.dock-tabs .dock-tab svg { flex: none; color: var(--dimmer); }
+.dock-tabs .dock-tab.selected svg { color: var(--dim); }
+.workspace-tabs.dock-tabs button.selected,
+.workspace-tabs.dock-tabs button.selected:hover:not(:disabled) { border-bottom-color: var(--accent); }
+/* A terminal tab's × shows on hover or focus, and keeps its room hidden. */
+.workspace-tabs .dock-shell-tab .dock-shell-close { opacity: 0; }
+.workspace-tabs .dock-shell-tab:is(:hover, :focus-within) .dock-shell-close { opacity: 1; }
+@media (hover: none) { .workspace-tabs .dock-shell-tab .dock-shell-close { opacity: 1; } }
+.dock-add-menu {
+  position: fixed; inset: auto; margin: 0; width: 220px; padding: 4px;
+  color: var(--ink); background: var(--panel); border: 1px solid var(--line);
+  border-radius: var(--radius-lg); box-shadow: 0 8px 28px var(--shadow);
+}
+.dock-add-menu .account-item { width: 100%; height: 32px; padding: 0 8px; gap: 10px; border: 0; }
+.dock-add-menu .account-item span { flex: 1; text-align: left; }
+/* The menu sits inside the tab strip, so its items outrank the strip's
+   transparent tab hover. */
+.dock-add-menu .account-item:hover:not(:disabled),
+.dock-add-menu .account-item:focus-visible { background: var(--surface-hover); color: var(--ink); }
+.dock-add-menu kbd { font: 11px var(--mono); color: var(--dim); }
+@supports (position-anchor: --a) {
+  #dock-add-trigger { anchor-name: --dock-add; }
+  .dock-add-menu { position-anchor: --dock-add; bottom: calc(anchor(top) + 4px); left: anchor(left); position-try-fallbacks: flip-inline; }
+}
 .machine-dock { height: 240px; flex: none; display: flex; flex-direction: column; min-height: 0; border-top: 1px solid var(--line); }
 .machine-dock .workspace-terminal { height: 100%; }
 .machine-dock .hint { padding: 0 10px; font-size: 11px; color: var(--dim); }
@@ -1612,11 +1654,21 @@ html[data-yard="closed"] .workspace-trigger-skeleton { flex: none; width: 28px; 
 .shell-pane { position: relative; }
 .shell-pane > .empty.pane { position: absolute; inset: 0; z-index: 2; background: var(--code-bg); }
 
-.machine-stats { display: grid; gap: 10px; max-width: 480px; margin: 0; }
-.machine-stats > div { display: grid; grid-template-columns: 100px minmax(0, 1fr); gap: 16px; }
+/* Every row the same height, bar or no bar, and the bar a 6px rounded one
+   on a track that shows against the panel. */
+.machine-stats { display: grid; gap: 0; max-width: 480px; margin: 0; }
+.machine-stats > div {
+  display: grid; grid-template-columns: 100px minmax(0, 1fr); gap: 16px;
+  align-items: center; height: 40px;
+}
+.machine-stats > div + div { border-top: 1px solid var(--line); }
 .machine-stats dt { color: var(--dim); }
-.machine-stats dd { display: grid; gap: 4px; margin: 0; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
-.machine-stats meter { width: 100%; height: 8px; accent-color: var(--accent); }
+.machine-stats dd { display: grid; gap: 5px; margin: 0; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.stat-bar { display: block; height: 6px; border-radius: 3px; background: var(--surface-active); overflow: hidden; }
+.stat-bar > span { display: block; height: 100%; border-radius: 3px; background: var(--accent); }
+.stats-updated { display: flex; align-items: center; gap: 4px; margin: 8px 0 0; font-size: 12px; color: var(--dim); }
+.stats-updated .stats-refresh { display: inline-grid; place-items: center; width: 22px; height: 22px; padding: 0; border: 0; color: var(--dimmer); }
+.stats-updated .stats-refresh:hover { color: var(--ink); background: var(--surface-hover); }
 
 /* The terminal is a `.term` given a fixed height as `.workspace-terminal`; the
    second class is written after the first so its height wins on the element
@@ -2392,10 +2444,15 @@ section.first-prompt#project-start { align-self: center; padding: 32px 24px; }
 .git-branch { display: inline-flex; align-items: center; gap: 4px; min-width: 0; color: var(--dim); font-weight: 400; }
 .git-branch code { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .git-rows { list-style: none; margin: 0; padding: 0; }
-.git-row { display: flex; align-items: center; gap: 8px; min-height: 36px; padding: 4px .25rem; font-size: 13px; }
+/* Every row the same height, with a button or without one. */
+.git-row { display: flex; align-items: center; gap: 8px; height: 40px; padding: 0 .25rem; font-size: 13px; }
+.git-row button { padding-top: 4px; padding-bottom: 4px; }
 .git-row + .git-row { border-top: 1px solid var(--line); }
 .git-row-icon { flex: none; width: 23px; color: var(--dim); }
-.git-row .chip { flex: none; justify-content: center; min-width: 23px; font-variant-numeric: tabular-nums; }
+.git-row .git-count { flex: none; justify-content: center; min-width: 23px; font-variant-numeric: tabular-nums; }
+.git-count.zero { display: inline-flex; color: var(--dimmer); }
+/* No runs: said directly under the Git rows, not centred in the pane. */
+.empty.pane.checks-empty { flex: 0 0 auto; min-height: 0; padding: 20px 16px; }
 .git-row-label { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .git-row button { flex: none; margin-left: auto; }
 .git-hint, .git-note { color: var(--dim); font-size: 12px; }
@@ -2415,7 +2472,8 @@ section.first-prompt#project-start { align-self: center; padding: 32px 24px; }
 .change-counts { white-space: nowrap; margin-left: auto; font-size: 12px; font-variant-numeric: tabular-nums; }
 .change-status { flex: 0 0 1.25rem; border: 1px solid currentColor; text-align: center; border-radius: .2rem; font-size: 11px; line-height: 1.5; }
 /* What happened to a file, by colour as well as by its letter. */
-.change-status.change-added { color: var(--ok); }
+.change-status.change-added,
+.change-status.change-untracked { color: var(--ok); }
 .change-status.change-deleted { color: var(--bad); }
 .change-status.change-modified { color: var(--warn); }
 .change-status.change-renamed { color: var(--accent-ink); }

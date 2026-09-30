@@ -19,7 +19,8 @@ defmodule Ravix.Tracks.Diff do
     @enforce_keys [:path, :added, :removed, :status]
     defstruct @enforce_keys
 
-    @type status :: :added | :modified | :deleted | :renamed
+    @typedoc "`:untracked` is a new file Git has not been told about; see `with_untracked/2`."
+    @type status :: :added | :modified | :deleted | :renamed | :untracked
 
     @type t :: %__MODULE__{
             path: String.t(),
@@ -33,7 +34,7 @@ defmodule Ravix.Tracks.Diff do
   # "0 changed files" beside a non-empty `diff`, indistinguishable from a
   # real empty one.
   @enforce_keys [:path, :repo_root, :diff, :truncated, :changes, :files]
-  defstruct @enforce_keys
+  defstruct @enforce_keys ++ [untracked: :unread]
 
   @typedoc """
   A track's working diff. `diff` is the unified text as `git` produced it and
@@ -46,8 +47,15 @@ defmodule Ravix.Tracks.Diff do
           diff: String.t(),
           truncated: boolean(),
           changes: [Change.t()],
-          files: [map()]
+          files: [map()],
+          untracked: untracked()
         }
+
+  @typedoc """
+  Whether the untracked files are in: `:listed` when the machine answered,
+  `:asleep` when it was not running to ask, `:unread` for anything else.
+  """
+  @type untracked :: :listed | :asleep | :unread
 
   @hunk ~r/^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@(.*)$/
 
@@ -69,6 +77,87 @@ defmodule Ravix.Tracks.Diff do
   @doc "Every file in `diff`, in order, with its counts and what happened to it."
   @spec summarize(String.t()) :: [Change.t()]
   def summarize(diff), do: Enum.map(parse(diff), & &1.change)
+
+  # The machine's side of `with_untracked/2`: at most this many files, each
+  # shown whole up to the size, the lot up to the total, all within the
+  # deadline. A file over the size is listed with no lines rather than left out.
+  @untracked_files 200
+  @untracked_file_bytes 256_000
+  @untracked_total_bytes 1_000_000
+  @untracked_budget_sec 4
+
+  @external_resource Path.expand("../../../priv/scripts/untracked_diff.py", __DIR__)
+  @untracked_script @external_resource |> File.read!() |> Base.encode64()
+
+  @doc """
+  A read-only command that prints the worktree's untracked files, as Git
+  would diff them against nothing, in JSON. The worktree is encoded, never
+  shell syntax. `git diff` leaves them out, which is Fountain's diff.
+  """
+  @spec untracked_command(String.t()) :: String.t()
+  def untracked_command(root) do
+    payload =
+      Jason.encode!([
+        root,
+        @untracked_files,
+        @untracked_file_bytes,
+        @untracked_total_bytes,
+        @untracked_budget_sec
+      ])
+      |> Base.encode64()
+
+    ~s|python3 -c 'import base64;exec(base64.b64decode("#{@untracked_script}"))' #{payload}|
+  end
+
+  @doc "How long `untracked_command/1` may take on the machine, in seconds, with room to answer."
+  @spec untracked_timeout_sec() :: pos_integer()
+  def untracked_timeout_sec, do: @untracked_budget_sec + 2
+
+  @doc """
+  `diff` with the untracked files `untracked_command/1` found, as `:untracked`
+  changes after the tracked ones. Anything else it was answered with, an
+  exec that failed or a machine without Python, leaves `diff` as it was:
+  the tracked diff is still true without them.
+  """
+  @spec with_untracked(t(), term()) :: t()
+  def with_untracked(%__MODULE__{} = diff, :asleep), do: %{diff | untracked: :asleep}
+
+  def with_untracked(%__MODULE__{} = diff, {:ok, %{code: 0, stdout: output}}) do
+    case Jason.decode(output) do
+      {:ok, %{"available" => true, "diff" => text, "large" => large, "truncated" => cut}}
+      when is_binary(text) and text != "" and is_list(large) ->
+        known = MapSet.new(diff.files, & &1.change.path)
+
+        files =
+          text
+          |> parse()
+          |> Enum.reject(&MapSet.member?(known, &1.change.path))
+          |> Enum.map(fn file ->
+            %{
+              file
+              | change: %{file.change | status: :untracked},
+                partial: file.change.path in large
+            }
+          end)
+
+        %{
+          diff
+          | untracked: :listed,
+            diff: if(diff.diff == "", do: text, else: diff.diff <> "\n" <> text),
+            truncated: diff.truncated or cut == true,
+            changes: diff.changes ++ Enum.map(files, & &1.change),
+            files: diff.files ++ files
+        }
+
+      {:ok, %{"available" => true, "truncated" => cut}} ->
+        %{diff | untracked: :listed, truncated: diff.truncated or cut == true}
+
+      _ ->
+        diff
+    end
+  end
+
+  def with_untracked(%__MODULE__{} = diff, _result), do: diff
 
   defp section(section) do
     [header | lines] = String.split(section, "\n")

@@ -81,6 +81,8 @@ defmodule RavixWeb.Live.MachineDock do
        exec_busy: false,
        vitals: nil,
        vitals_busy?: false,
+       # When the readings on screen were taken, for "Updated 12s ago".
+       vitals_at: nil,
        # This person's terminal tabs on the track, each with what the page
        # last heard about it. See `shell/2`.
        shells: [],
@@ -461,7 +463,13 @@ defmodule RavixWeb.Live.MachineDock do
   defp receive_async(:shell_wake, _, socket), do: {:noreply, still_asleep(socket)}
 
   defp receive_async(:vitals, {:ok, response}, socket),
-    do: {:noreply, result(assign(socket, vitals_busy?: false), response, &assign(&1, vitals: &2))}
+    do:
+      {:noreply,
+       result(
+         assign(socket, vitals_busy?: false),
+         response,
+         &assign(&1, vitals: &2, vitals_at: DateTime.utc_now())
+       )}
 
   defp receive_async(:vitals, {:exit, reason}, socket),
     do: {:noreply, socket |> assign(vitals_busy?: false) |> exit(reason)}
@@ -520,6 +528,11 @@ defmodule RavixWeb.Live.MachineDock do
   # Waking and asleep are the pane's whole content (`<.empty>`), not a line.
   defp shell_status(_ready_waking_or_asleep), do: nil
 
+  defp tab_icon(:terminal), do: "list"
+  defp tab_icon(:vitals), do: "machine"
+
+  defp bar_width(fraction), do: Float.round(min(max(fraction * 1.0, 0.0), 1.0) * 100, 1)
+
   @impl true
   def render(assigns) do
     ~H"""
@@ -537,16 +550,17 @@ defmodule RavixWeb.Live.MachineDock do
         </button>
         <button
           :for={{tab, label} <- tabs()}
-          class={if @dock == tab, do: "selected", else: "ghost"}
+          class={["dock-tab", if(@dock == tab, do: "selected", else: "ghost")]}
           phx-click="dock"
           phx-target={@myself}
           phx-value-name={tab}
         >
+          <.icon name={tab_icon(tab)} size={12} />
           {label}
         </button>
         <span :for={shell <- @shells} class="dock-shell-tab" data-shell-tab={shell.tab.id}>
           <button
-            class={if @dock == {:shell, shell.tab.id}, do: "selected", else: "ghost"}
+            class={["dock-tab", if(@dock == {:shell, shell.tab.id}, do: "selected", else: "ghost")]}
             phx-click="shell"
             phx-target={@myself}
             phx-value-id={shell.tab.id}
@@ -565,22 +579,59 @@ defmodule RavixWeb.Live.MachineDock do
             <.icon name="x" size={11} />
           </button>
         </span>
-        <button
-          :if={@can_write}
-          id="dock-shell-new"
-          class="ghost dock-shell-new"
-          phx-click="shell-new"
-          phx-target={@myself}
-          disabled={length(@shells) >= Terminal.max_tabs()}
-          aria-label="New terminal"
-          title={
-            if length(@shells) >= Terminal.max_tabs(),
-              do: "A track can have #{Terminal.max_tabs()} terminals open at once",
-              else: "New terminal"
-          }
-        >
-          <.icon name="plus" size={13} />
-        </button>
+        <%!-- "+" asks what to open rather than opening a terminal at once.
+          The menu is a native popover (light dismiss, top layer); `ChipMenu`
+          adds the menu button's keyboard and focus. Ctrl+` is the Terminal
+          hook's, and clicks the same item. --%>
+        <div id="dock-add" class="chip-menu" phx-hook="ChipMenu">
+          <button
+            id="dock-add-trigger"
+            type="button"
+            class="ghost dock-shell-new"
+            aria-label="Open in the dock"
+            aria-haspopup="menu"
+            aria-expanded="false"
+            title="Open in the dock"
+            popovertarget="dock-add-menu"
+          >
+            <.icon name="plus" size={13} />
+          </button>
+          <div
+            id="dock-add-menu"
+            class="dock-add-menu"
+            popover
+            role="menu"
+            aria-label="Open in the dock"
+          >
+            <button
+              :if={@can_write}
+              id="dock-shell-new"
+              type="button"
+              class="account-item"
+              role="menuitem"
+              data-chip-close
+              phx-click="shell-new"
+              phx-target={@myself}
+              disabled={length(@shells) >= Terminal.max_tabs()}
+              title={
+                if length(@shells) >= Terminal.max_tabs(),
+                  do: "A track can have #{Terminal.max_tabs()} terminals open at once"
+              }
+            >
+              <.icon name="terminal" size={14} /><span>New terminal</span><kbd>⌃`</kbd>
+            </button>
+            <button
+              id="dock-run-script"
+              type="button"
+              class="account-item"
+              role="menuitem"
+              data-chip-close
+              phx-click={JS.push("panel", value: %{name: "preview"})}
+            >
+              <.icon name="play" size={14} /><span>Run script</span>
+            </button>
+          </div>
+        </div>
       </nav>
       <div id="machine-dock" hidden={!@dock_open} class="machine-dock">
         <div
@@ -697,12 +748,43 @@ defmodule RavixWeb.Live.MachineDock do
               <dt>{label}</dt>
               <dd>
                 <span>{value}</span>
-                <meter :if={!is_nil(fraction)} min="0" max="1" value={fraction} aria-label={label}>
-                  {RavixWeb.MachineStats.percent(fraction)}
-                </meter>
+                <span
+                  :if={!is_nil(fraction)}
+                  class="stat-bar"
+                  role="meter"
+                  aria-label={label}
+                  aria-valuemin="0"
+                  aria-valuemax="100"
+                  aria-valuenow={round(fraction * 100)}
+                  aria-valuetext={RavixWeb.MachineStats.percent(fraction)}
+                ><span style={"width: #{bar_width(fraction)}%"}></span></span>
               </dd>
             </div>
           </dl>
+          <p
+            :if={@vitals && @vitals.readings && @vitals_at}
+            id="machine-stats-updated"
+            class="stats-updated"
+          >
+            Updated
+            <time
+              id="machine-stats-updated-at"
+              phx-hook="RelativeTime"
+              data-style="ago"
+              data-title-prefix="Read "
+              datetime={DateTime.to_iso8601(@vitals_at)}
+              title={"Read " <> RavixWeb.LocalTime.full(@vitals_at, nil)}
+            >{RavixWeb.LocalTime.ago_words(@vitals_at)}</time>
+            <button
+              type="button"
+              class="ghost stats-refresh"
+              phx-click={JS.push("dock", target: @myself, value: %{name: "vitals"})}
+              aria-label="Refresh machine stats"
+              title="Refresh machine stats"
+            >
+              <.icon name="refresh" size={12} />
+            </button>
+          </p>
         </div>
       </div>
     </div>

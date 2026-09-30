@@ -668,8 +668,9 @@ test('project, track, streaming, image upload, reconnect, and revocation', async
   await expect(stats).toContainText('15%');
   await expect(stats).toContainText('1.0 GB of 8.0 GB');
   await expect(stats).toContainText('3.2 GB of 20.0 GB');
-  await expect(stats.locator('meter')).toHaveCount(3);
-  await expect(stats.getByRole('meter', { name: 'CPU in use', exact: true })).toHaveAttribute('value', '0.15');
+  // RAV-101: 6px bars drawn by the page, still meters to assistive tech.
+  await expect(stats.getByRole('meter')).toHaveCount(3);
+  await expect(stats.getByRole('meter', { name: 'CPU in use', exact: true })).toHaveAttribute('aria-valuenow', '15');
   await accessible(page);
   await capture(page, 'machine-stats');
   await page.getByRole('button', { name: 'Commands', exact: true }).click();
