@@ -3559,6 +3559,7 @@ defmodule RavixWeb.TrackLive do
     assigns =
       assign(assigns,
         label: work_label(assigns.blocks, length(tools)),
+        kinds: work_kinds(tools),
         now: now && running(now, assigns.workdir),
         thoughts: thoughts,
         rows: rows
@@ -3571,7 +3572,12 @@ defmodule RavixWeb.TrackLive do
       phx-mounted={JS.ignore_attributes("open")}
     >
       <summary>
-        <span>{@label}</span>
+        <.disclosure_chevron />
+        <span :if={@label != ""}>{@label}</span>
+        <span :if={@kinds != []} class="work-kinds">
+          <.icon :for={{icon, word} <- @kinds} name={icon} size={13} data-kind={word} />
+          <span class="sr-only">Used: {Enum.map_join(@kinds, ", ", &elem(&1, 1))}</span>
+        </span>
         <span :if={@now} class="work-now">{@now}</span>
       </summary>
       <div class="workspace-work-body">
@@ -3581,7 +3587,10 @@ defmodule RavixWeb.TrackLive do
           class="workspace-thinking"
           phx-mounted={JS.ignore_attributes("open")}
         >
-          <summary>{counted(length(@thoughts), "thought")}</summary>
+          <summary>
+            <.disclosure_chevron />
+            <span>{counted(length(@thoughts), "thought")}</span>
+          </summary>
           <.block :for={thought <- @thoughts} block={thought} html={rendered(@rendered, thought)} />
         </details>
         <div :for={{block, index} <- Enum.with_index(@rows)}>
@@ -3605,14 +3614,29 @@ defmodule RavixWeb.TrackLive do
     end
   end
 
+  # Thoughts are counted on their own toggle inside the fold, not on this
+  # line, unless they are all the fold holds and the line would say nothing.
   defp work_label(blocks, tools) do
     [
       counted(tools, "tool call"),
-      counted(Enum.count(blocks, &match?(%TranscriptBlock.Text{}, &1)), "message"),
-      counted(Enum.count(blocks, &match?(%TranscriptBlock.Thinking{}, &1)), "thought")
+      counted(Enum.count(blocks, &match?(%TranscriptBlock.Text{}, &1)), "message")
     ]
     |> Enum.reject(&is_nil/1)
-    |> Enum.join(", ")
+    |> case do
+      [] -> counted(Enum.count(blocks, &match?(%TranscriptBlock.Thinking{}, &1)), "thought") || ""
+      counts -> Enum.join(counts, ", ")
+    end
+  end
+
+  # The distinct kinds of work the calls did, in the order each was first
+  # used, capped so the line stays a glance.
+  @work_kinds 4
+  defp work_kinds(tools) do
+    tools
+    |> Enum.map(&ToolCall.summary_kind/1)
+    |> Enum.reject(&is_nil/1)
+    |> Enum.uniq()
+    |> Enum.take(@work_kinds)
   end
 
   defp counted(0, _noun), do: nil
@@ -3833,8 +3857,8 @@ defmodule RavixWeb.TrackLive do
         class="ghost"
         popovertarget="model-menu"
       >Change setting</button>
-      <details :if={@block.body != ""}>
-        <summary>Technical details</summary>
+      <details :if={@block.body != ""} class="failure-details">
+        <summary><.disclosure_chevron /> Technical details</summary>
         <pre>{@block.details || @block.body}</pre>
       </details>
     </div>

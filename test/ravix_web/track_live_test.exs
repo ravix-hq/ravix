@@ -6024,8 +6024,15 @@ defmodule RavixWeb.TrackLiveTest do
     assert has_element?(
              ctx.view,
              "#turns-turn .workspace-work > summary",
-             "2 tool calls, 1 message, 1 thought"
+             "2 tool calls, 1 message"
            )
+
+    # Thoughts are counted inside the fold, not on its line, which shows
+    # what kind of work the calls did instead.
+    refute has_element?(ctx.view, "#turns-turn .workspace-work > summary", "thought")
+    assert has_element?(ctx.view, "#turns-turn .workspace-thinking > summary", "1 thought")
+    assert has_element?(ctx.view, ~s|#turns-turn .work-kinds > svg[data-kind="shell"]|)
+    assert has_element?(ctx.view, "#turns-turn .work-kinds .sr-only", "Used: shell")
 
     # The folded line counts work, never failures.
     refute has_element?(ctx.view, "#turns-turn .workspace-work > summary .chip")
@@ -6141,7 +6148,8 @@ defmodule RavixWeb.TrackLiveTest do
     render_async(ctx.view)
 
     # Three thoughts, one toggle, ahead of the calls rather than between them.
-    assert has_element?(ctx.view, "#turns-turn .workspace-work > summary", "3 thoughts")
+    assert has_element?(ctx.view, "#turns-turn .workspace-work > summary", "3 tool calls")
+    refute has_element?(ctx.view, "#turns-turn .workspace-work > summary", "thoughts")
 
     assert has_element?(
              ctx.view,
@@ -6224,6 +6232,91 @@ defmodule RavixWeb.TrackLiveTest do
     assert has_element?(ctx.view, "#work-turn-4 > summary .tool-name", "Edit")
     assert has_element?(ctx.view, "#work-turn-4 > summary .chip.tool-running", "running")
     assert has_element?(ctx.view, "#turns-turn .work-now", "Edit lib/app.ex")
+  end
+
+  test "a turn's folded line shows the kinds of work its calls did, first used first", ctx do
+    update = fn data ->
+      Jason.encode!(%{jsonrpc: "2.0", method: "session/update", params: %{update: data}})
+    end
+
+    call = fn id, kind, input ->
+      [
+        %{sessionUpdate: "tool_call", toolCallId: id, title: id, kind: kind, rawInput: input},
+        %{sessionUpdate: "tool_call_update", toolCallId: id, status: "completed"}
+      ]
+    end
+
+    frames =
+      Enum.concat([
+        call.("todo", "other", %{todos: []}),
+        call.("read", "read", %{file_path: "lib/app.ex"}),
+        call.("rm", "delete", %{file_path: "tmp/x"}),
+        call.("sh", "execute", %{command: "mix test"}),
+        call.("again", "read", %{file_path: "lib/b.ex"}),
+        call.("write", "edit", %{file_path: "lib/new.ex", content: "new"}),
+        call.("edit", "edit", %{file_path: "lib/app.ex", old_string: "a", new_string: "b"}),
+        call.("grep", "search", %{pattern: "app"}),
+        call.("web", "fetch", %{url: "https://example.com"}),
+        [%{sessionUpdate: "agent_message_chunk", content: %{type: "text", text: "Done."}}]
+      ])
+
+    turn = fn id, frames ->
+      frames
+      |> Enum.with_index(1)
+      |> Enum.map(fn {data, n} ->
+        %{
+          "id" => id * 100 + n,
+          "turn_id" => "t#{id}",
+          "kind" => "output",
+          "stream" => "acp",
+          "data" => update.(data)
+        }
+      end)
+    end
+
+    thought = %{sessionUpdate: "agent_thought_chunk", content: %{type: "text", text: "Hmm."}}
+    answer = %{sessionUpdate: "agent_message_chunk", content: %{type: "text", text: "Yes."}}
+
+    events =
+      [opened(0, "t1", "Do it") | turn.(1, frames)] ++
+        [opened(200, "t2", "Think") | turn.(2, [thought, answer])]
+
+    stub(Tracks, :events, fn _, _, _ -> {:ok, Transcript.page(events, "claude")} end)
+    render_click(ctx.view, "retry-load")
+    render_async(ctx.view)
+
+    # Distinct kinds in first-use order: the wrench and the delete are left
+    # out, a second read and the edit after a write add nothing, and the cap
+    # of four leaves the fetch off.
+    kinds =
+      ctx.view
+      |> element("#turns-t1 .workspace-work > summary .work-kinds")
+      |> render()
+      |> then(&Regex.scan(~r/data-kind="([^"]+)"/, &1, capture: :all_but_first))
+      |> List.flatten()
+
+    assert kinds == ["read", "shell", "edit", "search"]
+    assert has_element?(ctx.view, ~s|#turns-t1 .work-kinds > svg[aria-hidden="true"]|)
+
+    assert has_element?(
+             ctx.view,
+             "#turns-t1 .work-kinds .sr-only",
+             "Used: read, shell, edit, search"
+           )
+
+    assert has_element?(ctx.view, "#turns-t1 .workspace-work > summary", "9 tool calls")
+
+    # Both toggles draw the app's chevron rather than the native marker.
+    assert has_element?(ctx.view, "#turns-t1 .workspace-work > summary > svg.disclosure-chevron")
+
+    # A fold of thoughts alone still says what it holds, and has no kinds.
+    assert has_element?(ctx.view, "#turns-t2 .workspace-work > summary", "1 thought")
+    refute has_element?(ctx.view, "#turns-t2 .work-kinds")
+
+    assert has_element?(
+             ctx.view,
+             "#turns-t2 .workspace-thinking > summary > svg.disclosure-chevron"
+           )
   end
 
   defp count(html, needle), do: length(String.split(html, needle)) - 1
