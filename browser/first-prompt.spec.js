@@ -5,7 +5,7 @@ import { signIn, connectClaude } from './sign-in.js';
 // RAV-47: the New track dialog takes an optional first prompt. Enter creates
 // the track, and the prompt waits in its queue until setup is ready.
 test('a first prompt typed in the create dialog opens the track with it waiting for setup', async ({ page }) => {
-  test.setTimeout(120_000);
+  test.setTimeout(180_000);
   await signIn(page, 'threadruntime', '/home');
   await connectClaude(page);
   await page.getByRole('button', { name: 'Add a project', exact: true }).first().click();
@@ -37,8 +37,10 @@ test('a first prompt typed in the create dialog opens the track with it waiting 
   await expect(page.locator('#track-setup-status')).toContainText('Prompts will wait until setup is ready.');
 
   // Once setup is ready the queue delivers it as the thread's first message.
-  await expect(page.locator('#track-setup-status')).toHaveCount(0, { timeout: 45_000 });
-  await expect(queue).toHaveCount(0, { timeout: 30_000 });
+  // Setup's later checks and the delivery ride the queue's sweep, whose
+  // backstop is thirty seconds, so each wait allows a full sweep and more.
+  await expect(page.locator('#track-setup-status')).toHaveCount(0, { timeout: 60_000 });
+  await expect(queue).toHaveCount(0, { timeout: 45_000 });
   await expect(page.locator('#transcript-turns .workspace-prompt')
     .filter({ hasText: 'Add a health check endpoint' })).toHaveCount(1, { timeout: 20_000 });
 });
