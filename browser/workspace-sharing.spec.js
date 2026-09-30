@@ -183,7 +183,10 @@ test("a workspace project's People dialog lists every source and gives a differe
   const summary = people.getByRole('list', { name: 'Access summary' });
   await expect(summary).toContainText('Base role: Write');
   await expect(summary).toContainText('Direct access: 1 person');
-  await expect(summary).toContainText('3 sharecreator members get Write by default');
+  // The earlier test in this file admits two more members to the same workspace.
+  const members = sql(`SELECT count(*) FROM ravix.workspace_memberships
+                         WHERE workspace_id = '${workspaceId}' AND revoked_at IS NULL`);
+  await expect(summary).toContainText(`${members} sharecreator members get Write by default`);
   await expect(people.locator('#people-person-sharecreator')).toContainText('Admin');
   await expect(people.locator('#people-person-sharecreator')).toContainText('owner');
   await expect(people.locator('#people-person-accessalice')).toContainText('direct');
