@@ -10,7 +10,7 @@ test('sidebar avatars line up whether or not a row shows a status dot', async ({
   test.setTimeout(120_000);
   await signIn(page, 'eli', '/home');
   await connectClaude(page);
-  await page.getByRole('button', { name: /^New project/ }).click();
+  await page.getByRole('button', { name: 'Add a project', exact: true }).first().click();
   await page.getByLabel('Project name', { exact: true }).fill(`Aligned rail ${Date.now().toString(36)}`);
   await page.getByRole('button', { name: 'Create project', exact: true }).click();
   const projectPath = new URL(page.url()).pathname;
@@ -61,7 +61,7 @@ test('the sidebar tree steps in per level and its chevrons follow their state', 
   // Its own person, so the sections made here reach no other spec's rail.
   await signIn(page, 'sidebartree', '/home');
   await connectClaude(page);
-  await page.getByRole('button', { name: /^New project/ }).click();
+  await page.getByRole('button', { name: 'Add a project', exact: true }).first().click();
   const newProject = page.getByRole('dialog', { name: 'New project' });
   await newProject.getByLabel('Project name', { exact: true }).fill('Tree filed');
   await expect(newProject.locator('#project-repositories option')).not.toHaveCount(0);

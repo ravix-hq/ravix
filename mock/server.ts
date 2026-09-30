@@ -1582,6 +1582,8 @@ const PEOPLE = [
     { id: 9190, login: "inspectorswitch", name: "Inspector Switch", avatar_url: `${BASE}/ghweb/avatar.svg` },
     { id: 9191, login: "inspectordiff", name: "Inspector Diff", avatar_url: `${BASE}/ghweb/avatar.svg` },
     { id: 9192, login: "inspectorevidence", name: "Inspector Evidence", avatar_url: `${BASE}/ghweb/avatar.svg` },
+    { id: 9100, login: "stagepages", name: "Stage Pages", avatar_url: `${BASE}/ghweb/avatar.svg` },
+    { id: 9101, login: "homerecent", name: "Home Recent", avatar_url: `${BASE}/ghweb/avatar.svg` },
   ] : []),
   { id: 9001, login: "dana", name: "Dana Okonkwo", avatar_url: `${BASE}/ghweb/avatar.svg?dana` },
   { id: 9002, login: "eli", name: "Eli Fischer", avatar_url: `${BASE}/ghweb/avatar.svg?eli` },
