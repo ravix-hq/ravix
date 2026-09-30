@@ -863,7 +863,6 @@ defmodule Ravix.Tracks do
       vault_id:
         if(track.sandbox_layout == :dedicated, do: track.vault_id, else: project.vault_id),
       sandbox_id: sandbox_id,
-      title: title,
       channel_id: Ids.track_channel(project.id, track.slug, track.rev, id),
       prompt: nil
     }
@@ -1336,7 +1335,6 @@ defmodule Ravix.Tracks do
         environment_id: project.environment_id,
         vault_id: project.vault_id,
         sandbox_id: machine && machine.sandbox_id,
-        title: title,
         channel_id: Ids.track_channel(project.id, slug, project.rev, id),
         # On the launch that *provisions* the machine the opening turn rides
         # along, because a fresh conversation with no prompt is what made

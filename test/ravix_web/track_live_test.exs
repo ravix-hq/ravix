@@ -1046,7 +1046,6 @@ defmodule RavixWeb.TrackLiveTest do
 
     expect(Ravix.Fountain, :create_conversation, fn _, launch ->
       assert launch.sandbox_id == "sandbox"
-      assert launch.title == "Explain Prompt Queue"
       {:ok, Shapes.conversation(%{"id" => "added"})}
     end)
 

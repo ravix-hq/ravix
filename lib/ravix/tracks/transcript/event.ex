@@ -116,31 +116,6 @@ defmodule Ravix.Tracks.Transcript.Event do
 
   def suspension(%__MODULE__{}), do: nil
 
-  @doc """
-  The title a runtime gave its session, if this event is the ACP
-  `session_info_update` carrying one. The Claude adapter writes it a moment
-  after its first reply; it describes the session and is nothing the agent
-  said, so the transcript draws nothing for it.
-  """
-  @spec session_title(t()) :: String.t() | nil
-  def session_title(%__MODULE__{kind: :output, stream: :acp, data: data})
-      when is_binary(data) do
-    if String.contains?(data, "session_info_update") do
-      case Managoat.ACP.Protocol.classify_line(data) do
-        {:notification, "session/update", params} -> info_title(params["update"] || params)
-        _ -> nil
-      end
-    end
-  end
-
-  def session_title(%__MODULE__{}), do: nil
-
-  defp info_title(%{"sessionUpdate" => "session_info_update", "title" => title})
-       when is_binary(title) and title != "",
-       do: title
-
-  defp info_title(_update), do: nil
-
   @doc "Did this event report a stage that failed?"
   @spec failed_stage?(t()) :: boolean()
   def failed_stage?(%__MODULE__{kind: :stage, state: "failed"}), do: true

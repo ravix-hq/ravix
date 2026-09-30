@@ -33,7 +33,9 @@ defmodule Ravix.Fountain.Launch do
       without one it provisions, `sandbox_mode: "persistent"`.
     * `channel_id` --- the track's durable membership of its machine, the
       name Fountain files the conversation under.
-    * `title` --- what the conversation is called.
+    * No `title`. Fountain names the conversation from the harness's own
+      ACP title (RAV-107), and a title sent here would be the owner's,
+      which Fountain never lets the harness replace.
     * `prompt` --- the first turn, sent in the same call. Not an
       optimisation: sending it separately is the one difference that made
       provisioning start answering 422, so it rides along with the launch
@@ -46,7 +48,6 @@ defmodule Ravix.Fountain.Launch do
     :vault_id,
     :sandbox_id,
     :channel_id,
-    :title,
     :prompt
   ]
   defstruct @enforce_keys ++ [model: nil, inference_credential_id: nil]
@@ -59,7 +60,6 @@ defmodule Ravix.Fountain.Launch do
           vault_id: String.t() | nil,
           sandbox_id: String.t() | nil,
           channel_id: String.t(),
-          title: String.t() | nil,
           prompt: String.t() | nil
         }
 end

@@ -118,7 +118,6 @@ defmodule Ravix.DedicatedLifecycleTest do
              sandbox_mode: "persistent",
              fresh: true,
              channel_id: "track-channel",
-             title: track.title,
              prompt: Ravix.Spec.open_dedicated_prompt(project, track)
            }
          }, {422, [], %{error: "sandbox_creation_failed"}}},

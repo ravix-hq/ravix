@@ -102,6 +102,11 @@ defmodule Ravix.Fountain.Shapes do
     `session_config_options` is the runtime's ACP option list (ADR 0062) as
     `Ravix.SessionConfig.options/1` reads it: nil from a Fountain before the
     field, or before a turn has reported one.
+
+    `title` is what Fountain calls the conversation: the harness's own ACP
+    title, redacted and tidied by Fountain, or a name its owner set.
+    `title_source` says which (`"harness"` or `"user"`) when Fountain sends
+    it, and is nil when it does not. See `Ravix.Tracks.Titling`.
     """
 
     @enforce_keys [
@@ -114,7 +119,7 @@ defmodule Ravix.Fountain.Shapes do
       :turn_count,
       :model
     ]
-    defstruct @enforce_keys ++ [:channel_id, :session_config_options]
+    defstruct @enforce_keys ++ [:channel_id, :session_config_options, :title, :title_source]
 
     @typedoc """
     Fountain's own words for where a conversation is, plus `:other` for one
@@ -131,7 +136,9 @@ defmodule Ravix.Fountain.Shapes do
             last_active_at: DateTime.t() | nil,
             turn_count: integer() | nil,
             model: String.t() | nil,
-            session_config_options: [Ravix.SessionConfig.Option.t()] | nil
+            session_config_options: [Ravix.SessionConfig.Option.t()] | nil,
+            title: String.t() | nil,
+            title_source: String.t() | nil
           }
   end
 
@@ -337,7 +344,9 @@ defmodule Ravix.Fountain.Shapes do
       last_active_at: time(raw["last_active_at"]),
       turn_count: raw["turn_count"],
       model: string_or_nil(raw["model"]),
-      session_config_options: Ravix.SessionConfig.options(raw["session_config_options"])
+      session_config_options: Ravix.SessionConfig.options(raw["session_config_options"]),
+      title: string_or_nil(raw["title"]),
+      title_source: string_or_nil(raw["title_source"])
     }
   end
 
