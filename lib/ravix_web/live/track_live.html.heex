@@ -258,6 +258,7 @@
                   phx-value-turn={turn.id}
                 >Retry message</button>
                 <.turn_footer :if={turn.settled?} turn={turn} workdir={@track.workdir} />
+                <.turn_timer :if={!turn.settled?} turn={turn} />
               </section>
               <.thread_comment
                 :for={comment <- comments_after(@comments, turn.id)}

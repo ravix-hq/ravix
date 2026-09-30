@@ -463,6 +463,16 @@ async function act(prompt: string, emit: Emit, say: Say, conv: Conv, disk: Disk,
     return;
   }
 
+  // Long enough to watch a running turn's elapsed time tick in the browser.
+  if (prompt.endsWith("Demonstrate a long-running turn")) {
+    await say("Running the scheduler tests before changing anything.");
+    emit({ kind: "output", stream: "acp", data: tool("slow-test", "mix test test/scheduler_test.exs") });
+    await pause(12_000);
+    emit({ kind: "output", stream: "acp", data: toolDone("slow-test", "42 tests, 0 failures") });
+    await say("The scheduler tests pass.");
+    return;
+  }
+
   const dir = /\/home\/sprite\/work\/[A-Za-z0-9._-]+/.exec(prompt)?.[0] ?? null;
 
   if (prompt.startsWith("[ravix] Open this track") && dir) {

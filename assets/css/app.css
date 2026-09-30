@@ -807,6 +807,7 @@ html[data-yard="closed"] .yard .workspace-gear { display: none; }
   display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; margin-top: 8px;
   color: var(--dimmer); font-size: 12px;
 }
+.turn-footer .turn-elapsed { font-variant-numeric: tabular-nums; }
 .turn-footer .turn-copy { padding: 3px; line-height: 0; color: var(--dimmer); }
 .turn-footer .turn-copy:hover, .turn-footer .turn-copy.copied { color: var(--ink); }
 .turn-footer .turn-file {

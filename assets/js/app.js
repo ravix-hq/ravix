@@ -24,6 +24,7 @@
 //   ProjectSections drag a sidebar project onto one of your sections
 //   ProjectFormFocus synchronous dialog focus that never steals later typing
 //   CopyCode        copy a Help example exactly, with success or failure feedback
+//   TurnTimer       a running turn's elapsed time, ticking without a round-trip
 //
 // Adding a hook is a product decision, not a convenience. Say why in its
 // file's header, and list it here.
@@ -49,8 +50,9 @@ import {ProjectSections} from "./hooks/project_sections"
 import {ProjectFormFocus} from "./hooks/project_form_focus"
 import {CopyCode} from "./hooks/copy_code"
 import {ShareMention} from "./hooks/share_mention"
+import {TurnTimer} from "./hooks/turn_timer"
 
-const hooks = {ThreadTabs, AgentConfirmation, Theme, PanelResize, PanelToggle, TranscriptTail, Composer, Terminal, Notify, SettingsSections, ProjectTree, QuickJump, ProjectSections, CopyCode, ProjectFormFocus, ShareMention}
+const hooks = {ThreadTabs, AgentConfirmation, Theme, PanelResize, PanelToggle, TranscriptTail, Composer, Terminal, Notify, SettingsSections, ProjectTree, QuickJump, ProjectSections, CopyCode, ProjectFormFocus, ShareMention, TurnTimer}
 
 const csrfToken = document.querySelector("meta[name='csrf-token']").getAttribute("content")
 clearTransportFallback(window)
