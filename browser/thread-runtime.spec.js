@@ -30,7 +30,7 @@ test('cohort threads attach the other runtime to the home disk and reuse its pro
     await track.getByRole('button', { name: 'Create track', exact: true }).click();
     await expect(page.getByRole('textbox', { name: 'Message', exact: true })).toBeEnabled({ timeout: 30_000 });
     // Readiness is durable; the live-region announcement only describes new stream events.
-    await expect(page.getByRole('button', { name: 'New thread or terminal', exact: true })).toBeEnabled({ timeout: 30_000 });
+    await expect(page.getByRole('button', { name: 'Add thread', exact: true })).toBeEnabled({ timeout: 30_000 });
     await expect(page.locator('#track-setup-status')).toHaveCount(0);
     const homeAgent = (await list('agents')).find(a => a.metadata?.ravix?.project === projectId);
     expect(homeAgent.runtime).toBe(home);

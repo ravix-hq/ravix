@@ -3,10 +3,14 @@
 //
 // RAV-97: the tablist scrolls on its own, and `data-overflow` on the strip
 // says which of its ends ("start", "end") has tabs out of sight, for the edge
-// fades and the All threads menu. A double-click or F2 on a tab asks to
+// fades and the ‹ › that scroll it. A double-click or F2 on a tab asks to
 // rename it (`data-can-rename`); the server then lays a field over the tab.
 // In that field Escape cancels and leaving it saves; either way focus goes
-// back to the tab.
+// back to the tab. Delete on a tab closes its thread (`data-can-close`), or
+// discards the draft. ⌘T (Ctrl+T off a Mac) asks for a new thread wherever
+// the browser lets a page have it, and the "+" menu's hint says whichever.
+import {macPlatform} from "../platform"
+
 export const ThreadTabs = {
   mounted() {
     this.list = () => this.el.querySelector('.thread-tablist')
@@ -38,6 +42,11 @@ export const ThreadTabs = {
         this.rename(event.target)
         return
       }
+      if (event.key === 'Delete') {
+        event.preventDefault()
+        this.close(event.target)
+        return
+      }
       const next = new Map([['ArrowRight', (index + 1) % tabs.length],
         ['ArrowLeft', (index + tabs.length - 1) % tabs.length],
         ['Home', 0], ['End', tabs.length - 1]]).get(event.key)
@@ -51,7 +60,32 @@ export const ThreadTabs = {
     this.mousedown = event => {
       if (event.detail <= 1) this.pressed = event.target.closest?.('.thread-tab')
     }
-    this.dblclick = event => this.rename(event.target.closest?.('.thread-tab') || this.pressed)
+    this.dblclick = event => {
+      if (event.target.closest?.('.thread-tab-action')) return
+      this.rename(event.target.closest?.('.thread-tab') || this.pressed)
+    }
+    this.close = tab => {
+      if (tab.dataset.threadId === 'draft') this.pushEvent('discard-draft', {})
+      else if (this.el.hasAttribute('data-can-close')) this.pushEvent('close-thread', {thread_id: tab.dataset.threadId})
+    }
+    // ‹ › move the tablist by most of its width.
+    this.scroll = event => {
+      const button = event.target.closest?.('[data-scroll]')
+      const list = this.list()
+      if (!button || !list) return
+      list.scrollBy({left: Number(button.dataset.scroll) * list.clientWidth * 0.8, behavior: 'smooth'})
+    }
+    this.mac = macPlatform()
+    this.shortcut = event => {
+      const mod = this.mac ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey
+      if (!mod || event.altKey || event.shiftKey || event.key?.toLowerCase() !== 't') return
+      const add = this.el.querySelector('#thread-add-trigger')
+      if (!add || add.disabled) return
+      event.preventDefault()
+      this.pushEvent('draft-thread', {})
+    }
+    const hint = this.el.querySelector('[data-shortcut="t"]')
+    if (hint) hint.textContent = this.mac ? '⌘T' : 'Ctrl+T'
     // Leaving the field saves what it holds; the server ignores a save for a
     // rename that Enter or Escape has already ended.
     this.focusout = event => {
@@ -81,6 +115,8 @@ export const ThreadTabs = {
     this.el.addEventListener('focusout', this.focusout)
     this.el.addEventListener('dblclick', this.dblclick)
     this.el.addEventListener('mousedown', this.mousedown)
+    this.el.addEventListener('click', this.scroll)
+    window.addEventListener('keydown', this.shortcut)
     this.list()?.addEventListener('scroll', this.overflow, {passive: true})
     if (typeof ResizeObserver !== 'undefined') {
       // A narrower row keeps the selected tab in sight. This moves the
@@ -125,6 +161,8 @@ export const ThreadTabs = {
     this.el.removeEventListener('focusout', this.focusout)
     this.el.removeEventListener('dblclick', this.dblclick)
     this.el.removeEventListener('mousedown', this.mousedown)
+    this.el.removeEventListener('click', this.scroll)
+    window.removeEventListener('keydown', this.shortcut)
     this.resize?.disconnect()
   },
 }

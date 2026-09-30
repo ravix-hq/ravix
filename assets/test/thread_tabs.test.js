@@ -153,3 +153,57 @@ test('RAV-97: keeping the selected tab in sight scrolls the tablist and nothing 
   expect(list.scrollLeft).toBe(70)
   expect(scrolled).toBe(false)
 })
+
+test('RAV-97: Delete closes a thread or discards the draft; × and ✎ are not double-click targets', () => {
+  strip('data-can-rename data-can-close')
+  const {hook, events} = mountHook(ThreadTabs, '#threads')
+  const [tab, draft] = document.querySelectorAll('.thread-tab')
+  press(tab, 'Delete')
+  expect(events.at(-1)).toEqual({name: 'close-thread', payload: {thread_id: 'a'}})
+  press(draft, 'Delete')
+  expect(events.at(-1)).toEqual({name: 'discard-draft', payload: {}})
+  tab.insertAdjacentHTML('beforeend', '<span class="thread-tab-action thread-tab-close"><i></i></span>')
+  tab.querySelector('i').dispatchEvent(new MouseEvent('dblclick', {bubbles: true}))
+  expect(events.length).toBe(2)
+  hook.el.removeAttribute('data-can-close')
+  press(tab, 'Delete')
+  expect(events.length).toBe(2)
+})
+
+test('RAV-97: ‹ › scroll the tablist by most of its width', () => {
+  strip()
+  const nav = document.getElementById('threads')
+  nav.insertAdjacentHTML('afterbegin', '<button id="back" data-scroll="-1"><i></i></button>')
+  nav.insertAdjacentHTML('beforeend', '<button id="forward" data-scroll="1"></button>')
+  const list = document.querySelector('.thread-tablist')
+  dimensions(list, {clientWidth: 200})
+  const moves = []
+  list.scrollBy = ({left}) => moves.push(left)
+  mountHook(ThreadTabs, '#threads')
+  document.getElementById('forward').click()
+  document.querySelector('#back i').dispatchEvent(new MouseEvent('click', {bubbles: true}))
+  document.querySelector('.thread-tab').click()
+  expect(moves).toEqual([160, -160])
+})
+
+test('RAV-97: the new-thread shortcut and its hint follow the platform', () => {
+  const nav = globalThis.navigator
+  const original = Object.getOwnPropertyDescriptor(nav, 'platform')
+  for (const [platform, hint, mod] of [['MacIntel', '⌘T', {metaKey: true}], ['Linux x86_64', 'Ctrl+T', {ctrlKey: true}]]) {
+    Object.defineProperty(nav, 'platform', {value: platform, configurable: true})
+    strip()
+    document.getElementById('threads').insertAdjacentHTML('beforeend', '<button id="thread-add-trigger"></button><kbd data-shortcut="t">⌘T</kbd>')
+    const {hook, events} = mountHook(ThreadTabs, '#threads')
+    expect(document.querySelector('kbd').textContent).toBe(hint)
+    expect(press(document.body, 't', mod).defaultPrevented).toBe(true)
+    expect(events).toEqual([{name: 'draft-thread', payload: {}}])
+    press(document.body, 't', {...mod, shiftKey: true})
+    press(document.body, 't')
+    document.getElementById('thread-add-trigger').disabled = true
+    press(document.body, 't', mod)
+    expect(events.length).toBe(1)
+    hook.destroyed()
+  }
+  if (original) Object.defineProperty(nav, 'platform', original)
+  else delete nav.platform
+})

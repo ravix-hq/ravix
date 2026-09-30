@@ -1241,6 +1241,31 @@
         </button>
       </.form>
     </.dialog>
+    <.dialog
+      :if={@dialog == :close_thread}
+      id="close-thread-dialog"
+      title="Close thread"
+      on_close="dismiss"
+    >
+      <p>
+        <strong>{thread_title(@threads, @thread_closing, @track)}</strong>
+        is still working. Closing it stops the running turn and hides the thread; its conversation and history are kept.
+      </p>
+      <:footer>
+        <button
+          type="button"
+          id="close-thread-confirm"
+          class="danger"
+          phx-click="close-thread"
+          phx-value-thread_id={@thread_closing}
+          phx-value-confirmed="true"
+          phx-disable-with="Closing…"
+        >
+          Close thread
+        </button>
+        <button type="button" class="ghost" phx-click="dismiss">Keep it open</button>
+      </:footer>
+    </.dialog>
     <.dialog :if={@dialog == :close} id="close-dialog" title="Close track" on_close="dismiss">
       <p>
         <%= if @track.sandbox_layout == :dedicated do %>
