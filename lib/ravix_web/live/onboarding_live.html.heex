@@ -83,7 +83,7 @@
           Signing in told Ravix who you are. Installing the Ravix GitHub App is the separate step that says which repositories it may work in. You choose them on GitHub, and you can change the list there at any time.
         </p>
         <p :if={!@github_available} class="error">
-          GitHub is not configured for this deployment, so there are no repositories to connect. You can still create a project with no repository.
+          GitHub is not configured for this deployment, so there are no repositories to connect. You can still start a track on a scratch machine, with no repository.
         </p>
         <p :if={@github_available && is_nil(@installations)} class="hint" id="github-checking">
           Checking what Ravix can already see…

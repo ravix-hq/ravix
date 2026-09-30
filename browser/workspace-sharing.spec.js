@@ -45,10 +45,10 @@ test('the Share dialog shares a private track with one member, and nobody else l
 
   await signIn(page, 'sharecreator');
   await connectClaude(page);
-  await page.getByRole('button', { name: 'Add a project', exact: true }).first().click();
-  const project = page.getByRole('dialog', { name: 'New project', exact: true });
+  await page.getByRole('button', { name: 'Add a repository', exact: true }).first().click();
+  const project = page.getByRole('dialog', { name: 'Add a repository', exact: true });
   await project.getByLabel('Project name', { exact: true }).fill('Workspace sharing project');
-  await project.getByRole('button', { name: 'Create project', exact: true }).click();
+  await project.getByRole('button', { name: 'Create scratch project', exact: true }).click();
   await expect(project).toHaveCount(0);
   const projectPath = new URL(page.url()).pathname;
   const projectId = idOf(projectPath);
@@ -198,10 +198,10 @@ test("a workspace project's Access page lists every source and gives a different
 
   await signIn(page, 'sharecreator');
   await connectClaude(page);
-  await page.getByRole('button', { name: 'Add a project', exact: true }).first().click();
-  const dialog = page.getByRole('dialog', { name: 'New project', exact: true });
+  await page.getByRole('button', { name: 'Add a repository', exact: true }).first().click();
+  const dialog = page.getByRole('dialog', { name: 'Add a repository', exact: true });
   await dialog.getByLabel('Project name', { exact: true }).fill('Retired links project');
-  await dialog.getByRole('button', { name: 'Create project', exact: true }).click();
+  await dialog.getByRole('button', { name: 'Create scratch project', exact: true }).click();
   await expect(dialog).toHaveCount(0);
   const projectPath = new URL(page.url()).pathname;
   const projectId = idOf(projectPath);

@@ -8,10 +8,10 @@ test('streamed Write and Bash rows finish with their path and command, and outpu
   await page.setViewportSize({ width: 1100, height: 900 });
   await signIn(page, 'dana');
   await connectClaude(page);
-  await page.getByRole('button', { name: 'Add a project', exact: true }).first().click();
-  const project = page.getByRole('dialog', { name: 'New project', exact: true });
+  await page.getByRole('button', { name: 'Add a repository', exact: true }).first().click();
+  const project = page.getByRole('dialog', { name: 'Add a repository', exact: true });
   await project.getByLabel('Project name', { exact: true }).fill('Streamed rows');
-  await project.getByRole('button', { name: 'Create project', exact: true }).click();
+  await project.getByRole('button', { name: 'Create scratch project', exact: true }).click();
   await expect(project).toHaveCount(0);
   const projectId = new URL(page.url()).pathname.split('/')[2];
   await page.locator('#yard .workspace-project.current .project-add').click();

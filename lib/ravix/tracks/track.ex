@@ -81,6 +81,11 @@ defmodule Ravix.Tracks.Track do
     field :title_source, Ecto.Enum, values: [:auto, :manual]
     field :branch, :string
     field :branch_reserved, :boolean, default: true
+    # The repository this track's branch is on, once its project has moved
+    # to another (RAV-76); nil means the project's. Written only by
+    # `Ravix.Projects.Store.change_repository/3`.
+    field :repo_full_name, :string
+    field :repo_installation_id, :integer
     field :workdir, :string
     field :origin_kind, Ecto.Enum, values: @origin_kinds ++ @readable_only_kinds
     field :origin_base, :string

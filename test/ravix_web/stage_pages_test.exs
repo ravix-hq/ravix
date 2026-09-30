@@ -2,7 +2,7 @@ defmodule RavixWeb.StagePagesTest do
   # RAV-100: Home, Inbox, Schedules and Not found share one page container;
   # Home lists recent tracks rather than look-alike project rows; an address
   # nothing answers is a 404 inside the app shell for somebody signed in; the
-  # Inbox's and the New project dialog's loading states hold the shape of
+  # Inbox's and the Add a repository dialog's loading states hold the shape of
   # what arrives.
   use RavixWeb.ConnCase, async: true
   import Phoenix.LiveViewTest
@@ -130,9 +130,10 @@ defmodule RavixWeb.StagePagesTest do
                "#home-track-#{newer.id}[aria-label^='tidy-router in ravix, by @sasha']"
              )
 
-      # "Add a project" in the sidebar is the way in; Home keeps no copy.
-      refute has_element?(view, "#home button")
-      assert has_element?(view, "#yard button.yard-item", "Add a project")
+      # "Add a repository" in the sidebar is the way in; Home's one action is New track.
+      refute has_element?(view, "#home button", "repository")
+      assert has_element?(view, "#home #home-new-track[data-new-track-trigger]", "New track")
+      assert has_element?(view, "#yard button.yard-item", "Add a repository")
     end
 
     test "Mine leaves other people's tracks out, and no tracks says so", %{conn: conn} do
@@ -282,7 +283,7 @@ defmodule RavixWeb.StagePagesTest do
     end
   end
 
-  describe "the New project dialog" do
+  describe "the Add a repository dialog" do
     test "holds the GitHub account field's place while repositories load", %{conn: conn} do
       stub(Accounts, :capabilities, fn -> %{github: true} end)
       test = self()
@@ -299,18 +300,21 @@ defmodule RavixWeb.StagePagesTest do
       user = insert_user()
       insert_project(user: user)
       view = live_at(conn, user, "/home")
-      view |> element("#yard button.yard-item", "Add a project") |> render_click()
+      view |> element("#yard button.yard-item", "Add a repository") |> render_click()
       assert_receive {:repos_asked, loader}
 
       assert has_element?(view, "#project-repos-loading[role=status] .skeleton-control")
       assert has_element?(view, "#project-repos-loading", "Loading GitHub repositories…")
-      assert has_element?(view, "#project-repo")
+      assert has_element?(view, "#project-repo[aria-busy=true]")
+      refute has_element?(view, "#project-repositories")
       refute has_element?(view, "#installation")
 
       send(loader, :answer)
       render_async(view)
       refute has_element?(view, "#project-repos-loading")
       assert has_element?(view, "#installation")
+      assert has_element?(view, "#project-repositories-none", "No GitHub repositories")
+      assert has_element?(view, "#project-repo .repo-scratch input[checked]")
     end
   end
 end

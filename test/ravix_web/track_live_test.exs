@@ -77,8 +77,8 @@ defmodule RavixWeb.TrackLiveTest do
   end
 
   test "dedicated lifecycle stages and close warnings stay visible", ctx do
-    # Shared or not is the header's to say, flag or no flag: the dock no
-    # longer carries a line about it.
+    # Shared or not is said in the header's ⋯ popover, flag or no flag
+    # (RAV-82): the dock carries no line about it and the header no chip.
     assert has_element?(
              ctx.view,
              ~s(#track-machine-scope[title="Used by all of this project's tracks"]),
@@ -131,7 +131,8 @@ defmodule RavixWeb.TrackLiveTest do
     assert has_element?(ctx.view, "#close-machine-changes", "could not be checked")
   end
 
-  test "a ready dedicated track offers rebuild from the header, not the transcript", ctx do
+  test "a ready dedicated track offers rebuild from the header's ⋯, not the transcript",
+       ctx do
     stub(Ravix.Config, :dedicated_opens_enabled?, fn _ -> true end)
 
     Repo.update!(
@@ -144,7 +145,7 @@ defmodule RavixWeb.TrackLiveTest do
     refute has_element?(view, "#rebuild-track-machine")
     refute has_element?(view, "#secrets-changed-rebuild")
 
-    view |> element("button[aria-label='Rebuild machine']") |> render_click()
+    view |> element("#track-more-panel button", "Rebuild machine") |> render_click()
     render_async(view)
     assert has_element?(view, "#rebuild-dialog", "deletes only this track's machine")
     assert has_element?(view, "#rebuild-dialog", "Sibling tracks are unaffected.")
@@ -167,7 +168,7 @@ defmodule RavixWeb.TrackLiveTest do
     {:ok, parent, _} = live(ctx.conn, "/p/#{ctx.project.id}/t/#{ctx.track.id}")
     view = find_live_child(parent, "track-host")
     settle(view)
-    refute has_element?(view, "button[aria-label='Rebuild machine']")
+    refute has_element?(view, "button", "Rebuild machine")
   end
 
   test "disconnect health follows the selected thread rather than its project default", ctx do
@@ -452,7 +453,7 @@ defmodule RavixWeb.TrackLiveTest do
     view = find_live_child(parent, "track-host")
     settle(view)
     refute has_element?(view, "#secrets-changed-rebuild")
-    refute has_element?(view, "button[aria-label='Rebuild machine']")
+    refute has_element?(view, "button", "Rebuild machine")
     render_hook(view, "rebuild-machine", %{force: "true"})
     assert Tracks.Sandbox.Store.operations(ctx.track.id) == []
 
@@ -476,7 +477,7 @@ defmodule RavixWeb.TrackLiveTest do
     assert has_element?(ctx.view, "#track-agent-health-banner", "Reconnect Claude Code")
     assert has_element?(ctx.view, "#track-agent-health-banner", "Your agent connection")
     assert has_element?(ctx.view, "#track-agent-health-banner", "subscription or API key")
-    refute has_element?(ctx.view, "#track-agent-owner")
+    refute has_element?(ctx.view, "#track-payer")
     # With something typed, the warning leaves send enabled.
     render_hook(ctx.view, "composer-draft", %{"empty" => false})
     refute has_element?(ctx.view, "#composer-form button[type=submit][disabled]")
@@ -778,6 +779,19 @@ defmodule RavixWeb.TrackLiveTest do
       {:ok, false}
     end)
 
+    # The real `Tracks.get/3` names the project's owner on the track; the
+    # setup's stub leaves it blank.
+    stub(Tracks, :get, fn _, id, _opts ->
+      {:ok,
+       %{
+         track: Tracks.present(Repo.get!(Track, id), role: :owner, owner_login: ctx.user.login),
+         header: blank_header(),
+         threads: thread_options(id),
+         starters: [],
+         models: []
+       }}
+    end)
+
     {:ok, parent, _} =
       live(log_in_user(build_conn(), guest), "/p/#{ctx.project.id}/t/#{ctx.track.id}")
 
@@ -785,7 +799,9 @@ defmodule RavixWeb.TrackLiveTest do
     settle(view)
     assert has_element?(view, "#track-agent-health-banner", "Ask #{ctx.user.login}")
     assert has_element?(view, "#track-agent-health-banner", "Their agent connection")
-    assert has_element?(view, "#track-agent-owner", "Runs on @#{ctx.user.login}'s Claude Code")
+    # Who pays is said once, in the header's ⋯ (RAV-82).
+    assert has_element?(view, "#track-more-panel #track-payer", "Paid by @#{ctx.user.login}")
+    refute has_element?(view, "#composer-payer")
     refute has_element?(view, "#track-agent-health-banner button")
     view |> with_target("#track-agent-health") |> render_click("reconnect")
     render(view)
@@ -1124,7 +1140,11 @@ defmodule RavixWeb.TrackLiveTest do
              "Claude Opus 5"
            )
 
-    assert has_element?(ctx.view, "#thread-tab-draft", "Claude Code · Claude Opus 5")
+    assert has_element?(
+             ctx.view,
+             ~s(#thread-tab-draft[aria-label*="Claude Code · Claude Opus 5"])
+           )
+
     assert has_element?(ctx.view, "#thread-picker option[value=draft][selected]", "New thread")
   end
 
@@ -1199,6 +1219,74 @@ defmodule RavixWeb.TrackLiveTest do
     end
   end
 
+  test "thread tabs are titles: the first is named after the track, and only working or failed threads have a dot",
+       ctx do
+    stub(Tracks, :get, fn _, id, _ ->
+      thread = fn tid, title, status ->
+        %{id: tid, title: title, unread: false, runtime: "claude", model: nil, status: status}
+      end
+
+      {:ok,
+       %{
+         track: %{Tracks.present(Repo.get!(Track, id), role: :owner) | title: "Tidy the header"},
+         header: blank_header(),
+         threads: [
+           Map.put(thread.(id, "Default", :ready), :default, true),
+           thread.("t-run", "Running one", :running),
+           thread.("t-queue", "Queued one", :pending),
+           thread.("t-fail", "Failed one", :failed)
+         ],
+         starters: [],
+         models: []
+       }}
+    end)
+
+    send(ctx.view.pid, :refresh)
+    settle(ctx.view)
+
+    tab = fn tid -> "#thread-tab-#{tid}" end
+    assert has_element?(ctx.view, tab.(ctx.track.id) <> " .thread-tab-title", "Tidy the header")
+    refute has_element?(ctx.view, "#thread-tablist", "Default")
+    assert has_element?(ctx.view, "#thread-picker option", "Tidy the header")
+    assert has_element?(ctx.view, tab.("t-run") <> " .dot.running")
+    assert has_element?(ctx.view, tab.("t-fail") <> " .dot.failed")
+    refute has_element?(ctx.view, tab.("t-queue") <> " .dot")
+    refute has_element?(ctx.view, tab.(ctx.track.id) <> " .dot")
+    # Agent, model and state are the tab's tooltip and name, not its text.
+    assert has_element?(
+             ctx.view,
+             tab.("t-queue") <> ~s([title="Queued one · Claude Code · Queued"])
+           )
+
+    refute has_element?(ctx.view, "#thread-tablist", "Claude Code")
+  end
+
+  test "Share shows who is here as stacked faces, with the count in words", ctx do
+    faces =
+      for n <- 1..4,
+          do: %{login: "viewer#{n}", avatar_url: "https://example.test/#{n}.png", typing: false}
+
+    send(
+      ctx.view.pid,
+      {:hub, Event.new(:here, ctx.project.id, track_id: ctx.track.id, present: faces)}
+    )
+
+    render(ctx.view)
+    share = ".track-crumbs button[aria-label='Track sharing (4 viewing now)']"
+    assert has_element?(ctx.view, share <> " .track-viewer img[src='https://example.test/1.png']")
+    assert ctx.view |> element(share) |> render() |> String.split("<img") |> length() == 4
+    assert has_element?(ctx.view, share <> " .track-viewer-more", "+1")
+    assert has_element?(ctx.view, share <> " .sr-only", "4 viewing now")
+
+    send(
+      ctx.view.pid,
+      {:hub, Event.new(:here, ctx.project.id, track_id: ctx.track.id, present: [])}
+    )
+
+    render(ctx.view)
+    refute has_element?(ctx.view, ".track-viewers")
+  end
+
   test "selected thread names its agent in the composer and accessible tab", ctx do
     stub(Tracks, :get, fn _, id, _ ->
       {:ok,
@@ -1264,8 +1352,14 @@ defmodule RavixWeb.TrackLiveTest do
 
     assert has_element?(
              ctx.view,
-             "#thread-switcher button[title='Review · Codex · GPT-6 Astra'][aria-label='Review · Codex · GPT-6 Astra · Running']"
+             "#thread-switcher button[title='Review · Codex · GPT-6 Astra · Running'][aria-label='Review · Codex · GPT-6 Astra · Running']"
            )
+
+    # The tab itself reads as its title and nothing else (RAV-82); a running
+    # thread keeps its dot, which an idle one does not draw.
+    assert has_element?(ctx.view, "#thread-switcher .thread-tab .dot.running")
+    tab = element(ctx.view, "#thread-switcher .thread-tab")
+    assert render(tab) =~ ~r{<span class="thread-tab-title">Review</span>\s*</button>}
   end
 
   test "a draft's refusals name the agent and owner in plain words and keep the draft", ctx do
@@ -1355,7 +1449,7 @@ defmodule RavixWeb.TrackLiveTest do
     end)
 
     open_draft(ctx, options)
-    assert has_element?(ctx.view, "#thread-tab-draft", "Claude Code")
+    assert has_element?(ctx.view, ~s(#thread-tab-draft[aria-label*="Claude Code"]))
 
     ctx.view
     |> element(
@@ -1397,7 +1491,7 @@ defmodule RavixWeb.TrackLiveTest do
              "GPT-6 Astra"
            )
 
-    assert has_element?(ctx.view, "#thread-tab-draft", "Codex · GPT-6 Astra")
+    assert has_element?(ctx.view, ~s(#thread-tab-draft[aria-label*="Codex · GPT-6 Astra"]))
     refute has_element?(ctx.view, ".thread-connections form")
     render_click(ctx.view, "discard-draft")
     settle(ctx.view)
@@ -1560,12 +1654,12 @@ defmodule RavixWeb.TrackLiveTest do
     events = Ravix.SuspensionFixture.events()
     tab = "#thread-switcher [data-thread-id='#{ctx.track.id}']"
     send(ctx.view.pid, {:transcript, ctx.track.id, hd(events)})
-    assert has_element?(ctx.view, tab, "Running")
+    assert has_element?(ctx.view, tab <> ~s([aria-label$=" · Running"]))
 
     stub(Tracks, :events, fn _, _, _ -> {:ok, Transcript.page(events, "plain")} end)
     for event <- tl(events), do: send(ctx.view.pid, {:transcript, ctx.track.id, event})
     render_async(drawn(ctx.view))
-    assert has_element?(ctx.view, tab, "Failed")
+    assert has_element?(ctx.view, tab <> ~s([aria-label$=" · Failed"]))
     assert has_element?(ctx.view, "#transcript-status", "Turn failed")
     assert render(ctx.view) =~ Ravix.SuspensionFixture.message()
     refute has_element?(ctx.view, "#threads-working")
@@ -1581,7 +1675,12 @@ defmodule RavixWeb.TrackLiveTest do
     {:ok, parent, _} = live(ctx.conn, "/p/#{ctx.project.id}/t/#{ctx.track.id}")
     view = find_live_child(parent, "track-host")
     settle(view)
-    assert has_element?(view, "#thread-switcher [data-thread-id='#{ctx.track.id}']", "Failed")
+
+    assert has_element?(
+             view,
+             ~s(#thread-switcher [data-thread-id="#{ctx.track.id}"][aria-label$=" · Failed"])
+           )
+
     assert render(view) =~ Ravix.SuspensionFixture.message()
   end
 
@@ -1744,6 +1843,9 @@ defmodule RavixWeb.TrackLiveTest do
              )
 
       assert has_element?(view, "#track-machine-state", label)
+      # Idle and Working are not drawn in the header (RAV-82), but the live
+      # region stays; any other state is a chip in words.
+      assert has_element?(view, "#track-machine-state.sr-only") == label in ["Idle", "Working"]
 
       if detail do
         assert has_element?(
@@ -1754,7 +1856,7 @@ defmodule RavixWeb.TrackLiveTest do
         assert has_element?(view, "#track-machine-detail.sr-only", detail)
       else
         refute has_element?(view, "#track-machine-detail")
-        # A narrow header shows only the dot, so the word is its tooltip.
+        # The word is its tooltip too.
         assert has_element?(view, "#track-machine-state[title=\"#{label}\"]")
       end
     end
@@ -2659,8 +2761,17 @@ defmodule RavixWeb.TrackLiveTest do
 
       refute has_element?(ctx.view, "#new-thread-dialog")
       refute has_element?(ctx.view, "#new-thread-form")
-      assert has_element?(ctx.view, "#thread-tab-draft[aria-selected=true]", "New thread")
-      assert has_element?(ctx.view, "#thread-tab-draft", "Claude Code · Claude Opus 5")
+
+      assert has_element?(
+               ctx.view,
+               ~s(#thread-tab-draft[aria-selected=true][aria-label*="New thread"])
+             )
+
+      assert has_element?(
+               ctx.view,
+               ~s(#thread-tab-draft[aria-label*="Claude Code · Claude Opus 5"])
+             )
+
       assert has_element?(ctx.view, "#thread-tab-#{ctx.track.id}[aria-selected=false]")
       assert has_element?(ctx.view, "#transcript-scroll[aria-labelledby=thread-tab-draft]")
 
@@ -2734,7 +2845,12 @@ defmodule RavixWeb.TrackLiveTest do
       settle(ctx.view)
       assert has_element?(ctx.view, "#composer-#{ctx.track.id}")
       assert has_element?(ctx.view, "#thread-tab-#{ctx.track.id}[aria-selected=true]")
-      assert has_element?(ctx.view, "#thread-tab-draft[aria-selected=false]", "Claude Sonnet 5")
+
+      assert has_element?(
+               ctx.view,
+               ~s(#thread-tab-draft[aria-selected=false][aria-label*="Claude Sonnet 5"])
+             )
+
       refute has_element?(ctx.view, "#draft-runtime")
 
       # The narrow picker offers the draft too, and choosing it comes back.
@@ -2774,13 +2890,13 @@ defmodule RavixWeb.TrackLiveTest do
                "GPT-6 Astra"
              )
 
-      assert has_element?(ctx.view, "#thread-tab-draft", "Codex · GPT-6 Astra")
+      assert has_element?(ctx.view, ~s(#thread-tab-draft[aria-label*="Codex · GPT-6 Astra"]))
 
       ctx.view
       |> form("#composer-form", %{thread_draft: %{runtime: "codex", model: "openai/gpt-5.6"}})
       |> render_change(%{_target: ["thread_draft", "model"]})
 
-      assert has_element?(ctx.view, "#thread-tab-draft", "Codex · GPT-5.6")
+      assert has_element?(ctx.view, ~s(#thread-tab-draft[aria-label*="Codex · GPT-5.6"]))
 
       expect(Tracks, :start_thread, fn user, id, attrs, payload ->
         assert {user.id, id} == {ctx.user.id, ctx.track.id}
@@ -2799,7 +2915,12 @@ defmodule RavixWeb.TrackLiveTest do
       ctx.view |> form("#composer-form", %{text: "Use Codex"}) |> render_submit()
       render_async(ctx.view)
       assert has_element?(ctx.view, "#thread-error", "Couldn't start a Codex thread")
-      assert has_element?(ctx.view, "#thread-tab-draft[aria-selected=true]", "Codex · GPT-5.6")
+
+      assert has_element?(
+               ctx.view,
+               ~s(#thread-tab-draft[aria-selected=true][aria-label*="Codex · GPT-5.6"])
+             )
+
       assert draft_key(ctx.view) == key
     end
 
@@ -4974,9 +5095,10 @@ defmodule RavixWeb.TrackLiveTest do
     @layout layout
     @machine_scope scope
     @machine_title title
-    # RAV-90: the header's badge says whose machine it is, once; the dock's
-    # panes do not repeat it as a heading over their contents.
-    test "#{layout} machine ownership is said once, in the header, not in the dock", ctx do
+    # RAV-90: whose machine it is is said once; the dock's panes do not
+    # repeat it as a heading over their contents. Since RAV-82 it is a fact
+    # in the header's ⋯ popover rather than a chip.
+    test "#{layout} machine ownership is said once, in the header's ⋯, not in the dock", ctx do
       Repo.update!(
         Ecto.Changeset.change(ctx.track, sandbox_layout: @layout, opened_at: DateTime.utc_now())
       )
@@ -4995,7 +5117,7 @@ defmodule RavixWeb.TrackLiveTest do
 
       assert has_element?(
                view,
-               ~s(#track-machine-scope[title="#{@machine_title}"]),
+               ~s(#track-more-panel #track-machine-scope[title="#{@machine_title}"]),
                @machine_scope
              )
 
@@ -5760,7 +5882,8 @@ defmodule RavixWeb.TrackLiveTest do
     ctx.view |> form("#track-visibility-form", visibility: "private") |> render_change()
     assert Repo.get!(Track, ctx.track.id).visibility == :private
     settle(ctx.view)
-    assert has_element?(ctx.view, ".track-crumbs", "Private")
+    # A lock after the title rather than a chip (RAV-82).
+    assert has_element?(ctx.view, ".track-crumbs #track-private .sr-only", "Private")
     token = Plug.Conn.get_session(ctx.conn, :session_token)
     session = Repo.get_by!(Session, token_hash: Ravix.Crypto.sha256(token))
     Repo.delete!(session)
@@ -5877,9 +6000,30 @@ defmodule RavixWeb.TrackLiveTest do
 
     refute has_element?(ctx.view, "#track-actions-menu")
 
-    ctx.view
-    |> element(".track-crumbs button[aria-label='Close track'][title='Close track']")
-    |> render_click()
+    # Title and Share, then ⋯ (RAV-82). Whose machine it is and who pays are
+    # facts in the ⋯ popover, with Rebuild and Close; none is a chip.
+    assert has_element?(ctx.view, "#track-more-panel #track-machine-scope", "Shared machine")
+    refute has_element?(ctx.view, ".track-crumbs .chip#track-machine-scope")
+    refute render(header.(ctx.view)) =~ ~r/Runs on|Private/
+    refute has_element?(ctx.view, "#track-private")
+    # The machine's state is always said in words, never shrunk to its dot.
+    assert has_element?(ctx.view, ".track-crumbs #track-machine-state[role=status]")
+    refute has_element?(ctx.view, "#track-machine-state [data-fit-label]")
+
+    top_level =
+      ctx.view
+      |> element(".track-crumbs")
+      |> render()
+      |> LazyHTML.from_fragment()
+      |> LazyHTML.query(
+        "header > button, .track-header-path > button, .track-header-status > button, #track-more > button"
+      )
+      |> LazyHTML.attribute("title")
+
+    assert top_level == ["Rename track", "Track sharing (0 viewing now)", "More for this track"]
+    refute has_element?(ctx.view, ".track-crumbs > button[aria-label='Close track']")
+
+    ctx.view |> element("#track-more-panel button", "Close track") |> render_click()
 
     assert has_element?(ctx.view, "#close-form")
 
@@ -7549,11 +7693,40 @@ defmodule RavixWeb.TrackLiveTest do
 
     assert has_element?(
              ctx.view,
-             ~s|#turns-turn .turn-footer time[datetime="2026-09-26T13:02:05Z"]|,
-             RavixWeb.LocalTime.short(~U[2026-09-26 13:02:05Z], nil)
+             ~s|#turns-turn .turn-footer time[data-weekday][datetime="2026-09-26T13:02:05Z"]|,
+             RavixWeb.LocalTime.short(~U[2026-09-26 13:02:05Z], nil, DateTime.utc_now(),
+               weekday: true
+             )
            )
 
     assert has_element?(ctx.view, ~s|#turns-turn .turn-copy[data-copy="**Done**"]|)
+    # The ⋯ menu holds the two copies and nothing else (RAV-93): no Retry.
+    menu = ~s|#turns-turn-more-menu[popover][role="menu"]|
+
+    assert has_element?(
+             ctx.view,
+             ~s|#turns-turn-more-trigger[popovertarget="turns-turn-more-menu"]|
+           )
+
+    items =
+      ctx.view
+      |> element(menu)
+      |> render()
+      |> LazyHTML.from_fragment()
+      |> LazyHTML.query(~s|[role="menuitem"]|)
+
+    assert Enum.map(items, &String.trim(LazyHTML.text(&1))) == ["Copy link to turn", "Copy text"]
+    assert has_element?(ctx.view, ~s|#{menu} [data-copy-text="**Done**"]|)
+
+    [link] =
+      ctx.view
+      |> element(~s|#{menu} [data-copy-link]|)
+      |> render()
+      |> LazyHTML.from_fragment()
+      |> LazyHTML.attribute("data-copy-link")
+
+    assert link =~ ~r|^/p/#{ctx.project.id}/t/#{ctx.track.id}\?thread=[^#]+#turns-turn$|
+    refute has_element?(ctx.view, "#turns-turn.running")
     # Files are named from the track's directory, summed across edits, and
     # past the first two are counted rather than listed.
     assert has_element?(ctx.view, ~s|#turns-turn .turn-file[title="README.md"]|, "+1 −0")
@@ -7670,6 +7843,9 @@ defmodule RavixWeb.TrackLiveTest do
 
     assert Enum.count(timer) == 1
     assert LazyHTML.text(timer) =~ ~r/^1m 3\ds$/
+    # The live turn's last line leads with a spinner, and the turn is marked
+    # running so its interim messages are muted (RAV-93).
+    assert has_element?(ctx.view, "#turns-timed.running .turn-running .turn-spinner")
 
     assert {:ok, _now, 0} =
              timer |> LazyHTML.attribute("data-now") |> hd() |> DateTime.from_iso8601()
@@ -7695,7 +7871,16 @@ defmodule RavixWeb.TrackLiveTest do
 
     refute has_element?(ctx.view, "#turns-timed .turn-elapsed")
     refute has_element?(ctx.view, "#turns-timed .turn-running")
+    refute has_element?(ctx.view, "#turns-timed.running")
     assert has_element?(ctx.view, "#turns-timed .turn-footer", "16m 5s")
+  end
+
+  test "a running turn's time is in tenths of a second for its first minute" do
+    assert RavixWeb.TrackLive.running_duration(-50) == "0.0s"
+    assert RavixWeb.TrackLive.running_duration(3_749) == "3.7s"
+    assert RavixWeb.TrackLive.running_duration(59_999) == "59.9s"
+    assert RavixWeb.TrackLive.running_duration(60_000) == "1m 0s"
+    assert RavixWeb.TrackLive.running_duration(3_725_000) == "1h 2m"
   end
 
   test "a turn with no tool calls or thoughts has nothing to fold", ctx do

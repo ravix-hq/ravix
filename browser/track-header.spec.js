@@ -11,9 +11,9 @@ test('the track header keeps the project and title readable and still as late pa
   await page.setViewportSize({ width: 1024, height: 800 });
   await signIn(page, 'eli', '/home');
   await connectClaude(page);
-  await page.getByRole('button', { name: 'Add a project', exact: true }).first().click();
+  await page.getByRole('button', { name: 'Add a repository', exact: true }).first().click();
   await page.getByLabel('Project name', { exact: true }).fill('ravix-hdr');
-  await page.getByRole('button', { name: 'Create project', exact: true }).click();
+  await page.getByRole('button', { name: 'Create scratch project', exact: true }).click();
   const projectRow = page.locator('#yard .workspace-project.current');
   await expect(projectRow).toContainText('ravix-hdr');
   const project = await projectRow.getAttribute('data-project-id');
@@ -57,7 +57,7 @@ test('the track header keeps the project and title readable and still as late pa
     const titleStyle = getComputedStyle(title);
     const titleText = title.clientWidth - parseFloat(titleStyle.paddingLeft) - parseFloat(titleStyle.paddingRight);
     const label = document.querySelector('.project-crumb .project-label');
-    const close = document.querySelector('.track-crumbs [aria-label="Close track"]').getBoundingClientRect();
+    const close = document.querySelector('#track-more-trigger').getBoundingClientRect();
     return {
       header: box('header.track-crumbs'),
       project: box('.project-crumb'),
