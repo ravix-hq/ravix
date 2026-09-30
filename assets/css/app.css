@@ -1320,15 +1320,6 @@ html[data-yard="closed"] .workspace-trigger-skeleton { flex: none; width: 28px; 
 }
 .thread-tab-draft .thread-tab-title { font-style: italic; }
 @media (max-width: 760px) { .thread-tabs { padding-inline: 12px; } }
-/* A draft's agent and model sit where the model menu will be once it is a
-   thread; the labels stay visible because the two selects look alike. */
-.draft-runtime {
-  display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; min-width: 0;
-  font-size: 12px; color: var(--dim);
-}
-.draft-runtime select { max-width: 14rem; min-width: 0; font-size: 12px; padding: 2px 6px; }
-.draft-runtime .thread-default-source,
-.draft-runtime .draft-default-hint { flex-basis: 100%; margin: 0; }
 
 /* ── the inspector: files, changes, checks, preview ────────────────────── */
 
