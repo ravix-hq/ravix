@@ -176,8 +176,12 @@ defmodule Ravix.Terminal.ShellTest do
 
       Task.await(page)
       assert_receive {:shell, shell}
+      # The page has already gone, so the shell may have too by the time it is
+      # monitored (`:noproc`); either way it must stop, and without a crash.
       ref = Process.monitor(shell)
-      assert_receive {:DOWN, ^ref, :process, ^shell, :normal}, 2_000
+
+      assert_receive {:DOWN, ^ref, :process, ^shell, reason} when reason in [:normal, :noproc],
+                     2_000
 
       assert %{"s1" => %{alive: true}} = SpritesFake.exec_sessions(ctx.cfg)
       assert %Tab{session_id: "s1"} = Store.get(ctx.track.id, ctx.owner.id, tab.id)
