@@ -622,6 +622,43 @@ defmodule RavixWeb.Live.MachineDockShellTest do
     refute Enum.any?(SpritesFake.calls(), &(&1.argv == ["true"]))
   end
 
+  test "+ is a menu: New terminal with its shortcut, and Run script; tabs carry icons", ctx do
+    %{view: view} = open(ctx, ctx.owner)
+
+    assert has_element?(
+             view,
+             "#dock-add > #dock-add-trigger[popovertarget=dock-add-menu][aria-haspopup=menu]"
+           )
+
+    assert has_element?(view, "#dock-add[phx-hook=ChipMenu] > #dock-add-menu[popover][role=menu]")
+    refute has_element?(view, "#dock-add-trigger[phx-click]")
+
+    assert has_element?(
+             view,
+             "#dock-shell-new[role=menuitem][data-chip-close]",
+             "New terminal"
+           )
+
+    assert has_element?(view, "#dock-shell-new kbd", "⌃`")
+    assert has_element?(view, "#dock-run-script[role=menuitem]", "Run script")
+
+    for label <- ["Commands", "Machine stats"],
+        do: assert(has_element?(view, ".dock-tabs .dock-tab:has(svg)", label))
+
+    # Nothing opens until the menu's item is chosen.
+    refute has_element?(view, "[data-shell-tab]")
+    tab = new_terminal(view)
+    assert has_element?(view, ~s([data-shell-tab="#{tab}"] .dock-tab svg))
+
+    assert has_element?(
+             view,
+             ~s([data-shell-tab="#{tab}"] .dock-shell-close[aria-label^="Close"])
+           )
+
+    view |> element("#dock-run-script") |> render_click()
+    assert has_element?(view, "button[phx-value-name=preview].selected")
+  end
+
   test "a Read member sees their tabs but has no + to open one, and is refused one", ctx do
     reader = insert_user()
     insert_track_member(ctx.track, reader, role: :read)
@@ -630,6 +667,8 @@ defmodule RavixWeb.Live.MachineDockShellTest do
     %{view: view} = open(ctx, reader)
 
     refute has_element?(view, "#dock-shell-new")
+    # The + menu still offers what a reader may do: the run script's tab.
+    assert has_element?(view, "#dock-add-menu[popover] #dock-run-script", "Run script")
     view |> element("#track-terminal") |> render_hook("shell-new", %{})
     refute has_element?(view, "[data-shell-tab]")
 

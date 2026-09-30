@@ -37,7 +37,7 @@ async function openTrack(page, login, name) {
   await expect(page.getByRole('textbox', { name: 'Message', exact: true })).toBeEnabled({ timeout: 30_000 });
   await expect(page.locator('#transcript-status')).toHaveText('Agent replied', { timeout: 30_000 });
   // The opening turn made the worktree after Files first read the directory.
-  await page.getByRole('button', { name: 'Refresh', exact: true }).click();
+  await page.locator('.panel-refresh').click();
   await expect(page.locator('.file-explorer').getByRole('button', { name: 'src', exact: true })).toBeVisible();
 }
 

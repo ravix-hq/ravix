@@ -2703,7 +2703,15 @@ defmodule Ravix.Tracks do
     end
   end
 
-  @doc "`git diff` in this track's worktree, parsed per file."
+  @doc """
+  `git diff` in this track's worktree, parsed per file, then the untracked
+  files `git diff` leaves out.
+
+  The tracked diff is Fountain's. The untracked files are read on the
+  machine through `Ravix.Terminal.exec/3`, the door that lets a writer read
+  anything in the worktree, so a reader sees the tracked diff alone, as does
+  anybody whose machine did not answer in time (`Diff.with_untracked/2`).
+  """
   @spec diff(User.t(), String.t()) :: {:ok, Diff.t()} | {:error, reason()}
   def diff(%User{} = user, track_id) do
     with {:ok, track, client, sandbox_id} <- machine_read(user, track_id),
@@ -2711,15 +2719,47 @@ defmodule Ravix.Tracks do
       diff = raw["diff"] || ""
       files = Diff.parse(diff, raw["truncated"] == true)
 
-      {:ok,
-       %Diff{
-         path: raw["path"],
-         repo_root: raw["repo_root"],
-         diff: diff,
-         truncated: raw["truncated"] == true,
-         changes: Enum.map(files, & &1.change),
-         files: files
-       }}
+      tracked = %Diff{
+        path: raw["path"],
+        repo_root: raw["repo_root"],
+        diff: diff,
+        truncated: raw["truncated"] == true,
+        changes: Enum.map(files, & &1.change),
+        files: files
+      }
+
+      {:ok, Diff.with_untracked(tracked, read_untracked(user, track))}
+    end
+  end
+
+  # The same shape as `read_file_metadata/3`: never wakes a machine, and a
+  # machine that hangs costs the Changes tab its untracked files, not the tab.
+  defp read_untracked(user, track) do
+    task =
+      Task.Supervisor.async_nolink(
+        Ravix.TaskSupervisor,
+        Ravix.Trace.link(fn ->
+          case Ravix.Terminal.status(user, track.id, passive: true) do
+            {:ok, %{available: true}} ->
+              Ravix.Terminal.exec(user, track.id, %Ravix.Terminal.Request{
+                command: Diff.untracked_command(track.workdir),
+                cwd: track.workdir,
+                timeout_sec: Diff.untracked_timeout_sec()
+              })
+
+            {:ok, %{why: :unreachable}} ->
+              :asleep
+
+            other ->
+              other
+          end
+        end)
+      )
+
+    case Task.yield(task, (Diff.untracked_timeout_sec() + 2) * 1_000) ||
+           Task.shutdown(task, :brutal_kill) do
+      {:ok, result} -> result
+      _ -> :timeout
     end
   end
 

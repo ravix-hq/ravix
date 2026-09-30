@@ -83,9 +83,7 @@
           track_id={@track.id}
           summary={@assigned_plan}
         />
-        <.machine_chip machine={
-          probed(machine(@track, @turn, @setup_now), @machine_probe, @track)
-        } />
+        <.machine_chip machine={@turn.machine} />
       </div>
       <button
         :if={
@@ -533,14 +531,12 @@
             refresh={@health_refresh}
           />
           <%!-- Other people only: presence counts you too, and "@you is
-            typing…" was an `@` beside the composer's popovers (RAV-95). --%>
-          <p
-            :for={
-              person <- Enum.filter(@present, &(&1.typing and &1.login != @current_user.login))
-            }
-            class="hint"
-          >
-            @{person.login} is typing…
+            typing…" was an `@` beside the composer's popovers (RAV-95). One
+            line, always drawn and a fixed height, laid over the transcript's
+            bottom padding (RAV-91), so somebody starting or stopping typing
+            never moves the composer. --%>
+          <p id="typing-notice" class="hint typing-notice" aria-live="polite">
+            {typing_notice(@present, @current_user)}
           </p>
           <%!-- `phx-change` is what `allow_upload/3` needs to see an image
             being chosen, and the textarea's own share of it is a round trip
@@ -980,14 +976,14 @@
             class={["ghost panel-refresh", @panel.busy? && "busy"]}
             phx-click="refresh-panel"
             disabled={@panel.busy?}
-            aria-label="Refresh"
-            title="Refresh"
+            aria-label={refresh_label(@panel.tab)}
+            title={refresh_label(@panel.tab)}
           >
             <.icon name="refresh" size={14} />
           </button>
         </nav>
         <div class="workspace-panel">
-          <%= case inspector_state(@track, machine(@track, @turn, @setup_now), @panel) do %>
+          <%= case inspector_state(@track, @turn.machine, @panel) do %>
             <% {:setup, step} -> %>
               <%!-- The setup banner is the live region for these words. --%>
               <.empty pane busy id="panel-setup" icon="spinner" title={step} />
@@ -1017,6 +1013,7 @@
                 can_wake={@track.level != :read}
                 waking={:wake in @pending}
                 working={@turn.working?}
+                asleep={match?(%{asleep?: true}, @git) && @turn.machine.state == :asleep}
               />
               <p :if={@panel.error} role="alert">{@panel.error}</p>
               <.panel_body
@@ -1049,8 +1046,23 @@
                   click={JS.push("preview", value: %{action: "run"})}
                   disabled={@panel.busy? || !@preview.available}
                 />
+                <:link
+                  id="preview-run-script"
+                  label="Run script…"
+                  click={
+                    JS.set_attribute({"open", ""}, to: "#preview-config")
+                    |> JS.focus(to: "#preview-directory")
+                  }
+                />
               </.empty>
-              <div :if={@panel.tab == :preview && @preview}>
+              <%!-- Idle (nothing running, nothing failed) is the empty state
+              above and nothing else: every action here needs a run. The run
+              script stays reachable through its link. --%>
+              <div
+                :if={@panel.tab == :preview && @preview}
+                id="preview-controls"
+                class={["preview-controls", preview_idle?(@preview) && "idle"]}
+              >
                 <p :if={@preview.state != :stopped || @preview.error} id="run-status">
                   Status: {@preview.state}
                 </p>
@@ -1070,10 +1082,14 @@
                 }>
                   {@preview.unavailable_reason}
                 </p>
-                <p :if={@preview.keeps_awake} id="run-keeps-awake" class="hint">
+                <p
+                  :if={@preview.keeps_awake && !preview_idle?(@preview)}
+                  id="run-keeps-awake"
+                  class="hint"
+                >
                   Keeps this track's machine awake while running
                 </p>
-                <div class="workspace-actions">
+                <div :if={!preview_idle?(@preview)} class="workspace-actions preview-actions">
                   <button
                     :if={@preview.state != :stopped || @preview.error}
                     class="primary"
@@ -1108,15 +1124,6 @@
                   >
                     Stop
                   </button>
-                  <button
-                    phx-click={
-                      JS.push("preview") |> JS.set_attribute({"open", ""}, to: "#preview-logs")
-                    }
-                    phx-value-action="logs"
-                    disabled={@panel.busy?}
-                  >
-                    Logs
-                  </button>
                 </div>
                 <a
                   :if={@preview_url && @preview.state == :ready}
@@ -1134,19 +1141,30 @@
                   sandbox="allow-scripts allow-forms allow-same-origin allow-popups allow-downloads"
                 ></iframe>
                 <details
+                  :if={!preview_idle?(@preview)}
                   id="preview-logs"
+                  class="preview-disclosure"
                   open={@preview.state == :failed}
                   phx-mounted={JS.ignore_attributes(["open"])}
                 >
-                  <summary>Show logs</summary>
+                  <%!-- Opening it reads the latest logs: the one Logs action. --%>
+                  <summary phx-click="preview" phx-value-action="logs">
+                    <.icon name="chevron" size={12} class="disclosure-chevron" />Show logs
+                  </summary>
                   <pre>{RavixWeb.PreviewPresentation.logs(@preview.logs) |> then(&if(&1 == "", do: "No logs yet.", else: &1))}</pre>
                 </details>
                 <!-- Open by the reader, not by the server, and the same
             `ignore_attributes` as the logs above it: a status patch arriving
             while somebody is typing in here used to collapse the section
             under them. -->
-                <details id="preview-config" phx-mounted={JS.ignore_attributes(["open"])}>
-                  <summary>Run script override</summary>
+                <details
+                  id="preview-config"
+                  class="preview-disclosure"
+                  phx-mounted={JS.ignore_attributes(["open"])}
+                >
+                  <summary>
+                    <.icon name="chevron" size={12} class="disclosure-chevron" />Run script override
+                  </summary>
                   <.form
                     :let={f}
                     for={@preview_form}
@@ -1197,10 +1215,7 @@
           current_user={@current_user}
           session_hash={@session_hash}
           can_write={@track.level != :read}
-          asleep={
-            probed(machine(@track, @turn, @setup_now), @machine_probe, @track).state ==
-              :asleep
-          }
+          asleep={@turn.machine.state == :asleep}
         />
       </aside>
     </div>

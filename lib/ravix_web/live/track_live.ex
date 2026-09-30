@@ -97,7 +97,7 @@ defmodule RavixWeb.TrackLive do
         thread_states: %{},
         # What the tabs, Stop, the machine and Checks say of the turns
         # (RAV-91); see `assign_turn/1`.
-        turn: turn([], %{}, nil, nil),
+        turn: %{states: %{}, running?: false, working?: false, machine: nil},
         # The "+" tab: a thread nobody has sent anything to yet. It lives in
         # this page and nowhere else --- a reload drops it, and nobody else
         # on the track ever sees it. See `show_draft/1` and `start/2`.
@@ -628,7 +628,7 @@ defmodule RavixWeb.TrackLive do
   # round trip to the machine every time. See `RavixWeb.Live.Panel`.
   def handle_event("panel", %{"name" => name}, socket) when is_map_key(@tabs, name) do
     panel = Panel.select(socket.assigns.panel, Map.fetch!(@tabs, name))
-    socket = assign(socket, panel: panel, narrow_view: "files")
+    socket = socket |> assign(panel: panel, narrow_view: "files") |> assign_turn()
 
     if Panel.cached?(panel),
       do: {:noreply, load_panel(socket, &Panel.reloading/1)},
@@ -974,7 +974,12 @@ defmodule RavixWeb.TrackLive do
   def handle_info({:machine_probe, track_id, probe}, socket) do
     if track_id == socket.assigns.track_id do
       slept = socket.assigns.track && socket.assigns.track.sandbox_suspended_at
-      {:noreply, assign(socket, machine_probe: probe && {probe, slept})}
+
+      {:noreply,
+       socket
+       |> assign(machine_probe: probe && {probe, slept})
+       |> reread_refused(probe)
+       |> assign_turn()}
     else
       {:noreply, socket}
     end
@@ -993,7 +998,7 @@ defmodule RavixWeb.TrackLive do
   def handle_info(:setup_clock, socket) do
     if match?(%{setup_state: "retry"}, socket.assigns.track) do
       Process.send_after(self(), :setup_clock, 1_000)
-      {:noreply, assign(socket, setup_now: DateTime.utc_now())}
+      {:noreply, socket |> assign(setup_now: DateTime.utc_now()) |> assign_turn()}
     else
       Process.send_after(self(), :setup_clock, 15_000)
       {:noreply, socket}
@@ -1062,7 +1067,7 @@ defmodule RavixWeb.TrackLive do
 
   def handle_async(name, response, socket) do
     if authorized?(socket) do
-      {:noreply, async_result(name, response, socket)}
+      {:noreply, name |> async_result(response, socket) |> assign_turn()}
     else
       {:noreply, redirect(socket, to: "/")}
     end
@@ -2729,12 +2734,14 @@ defmodule RavixWeb.TrackLive do
     label <> if(thread.unread && thread.id != current_id, do: " (unread)", else: "")
   end
 
-  # RAV-91: `@turn`, the one reading of this track's turns that the thread
-  # tabs, the composer's Stop, the machine chip and dock, and the Checks pane
-  # all draw from, so none of them can say Working while another says Idle.
-  # Recomputed wherever one of its inputs changes: the threads and the
-  # track (a detail read), the shown thread, and the per-thread states the
-  # stream brings (`put_thread_state/3`, `drop_thread_state/2`).
+  # RAV-91: `@turn`, the one reading of this track's turns and machine that
+  # the thread tabs, the composer's Stop, the header's machine chip, the
+  # dock and the inspector's asleep states all draw from, so none of them can
+  # say Working, Idle or Asleep while another says something else. It is
+  # recomputed after every async result (`handle_async/3`) and wherever
+  # another of its inputs changes: the shown thread, the per-thread states
+  # the stream brings (`put_thread_state/3`, `drop_thread_state/2`), the
+  # panel (`update_panel/2`), the dock's probe and the setup clock.
   #
   # `states` is each thread's tab word. `running?` is the shown thread's
   # turn running, which is what Stop means; a thread missing from the list
@@ -2744,19 +2751,24 @@ defmodule RavixWeb.TrackLive do
   # words rather than again from the track's status: a detail read's
   # `:running` left over from before the stream said the turn ended used to
   # hold the chip on Working under an Idle tab.
-  defp assign_turn(socket) do
-    %{threads: threads, thread_states: states, thread_id: id, track: track} = socket.assigns
-    assign(socket, turn: turn(threads, states, id, track))
-  end
+  #
+  # `machine` is the chip's state (`machine/2`), which a read the machine
+  # refused as asleep --- the inspector's or Checks' Git status --- now
+  # makes Asleep too, rather than only the pane that asked saying so under
+  # an Idle chip. A working turn outranks such a refusal: the machine is
+  # awake for it, and the pane reads again (`after_turn/2`).
+  defp assign_turn(socket), do: assign(socket, turn: turn(socket.assigns))
 
-  defp turn(threads, states, thread_id, track) do
+  defp turn(%{threads: threads, thread_states: states, thread_id: thread_id, track: track} = a) do
     labels = Map.new(threads, &{&1.id, thread_status(&1, states)})
     shown = Map.get_lazy(labels, thread_id, fn -> status_label(track && track.status) end)
+    working? = Enum.any?([shown | Map.values(labels)], &(&1 in ["Running", "Queued"]))
 
     %{
       states: labels,
       running?: shown == "Running",
-      working?: Enum.any?([shown | Map.values(labels)], &(&1 in ["Running", "Queued"]))
+      working?: working?,
+      machine: track && machine(a, working?)
     }
   end
 
@@ -2770,6 +2782,20 @@ defmodule RavixWeb.TrackLive do
   # images, which are the server's to know and count only when asking.
   defp composer_filled?(empty?, mode, entries, attached),
     do: not empty? or (mode == :ask and (entries != [] or attached != []))
+
+  # Who else is typing on this track, as the one line above the composer.
+  defp typing_notice(present, viewer) do
+    case for(p <- present, p.typing and p.login != viewer.login, do: "@" <> p.login) do
+      [] ->
+        nil
+
+      [one] ->
+        one <> " is typing…"
+
+      names ->
+        Enum.join(Enum.drop(names, -1), ", ") <> " and " <> List.last(names) <> " are typing…"
+    end
+  end
 
   defp tab_status(thread, labels), do: Map.get(labels, thread.id, "Idle")
 
@@ -2845,6 +2871,20 @@ defmodule RavixWeb.TrackLive do
     """
   end
 
+  # Fountain's diff answered but the sprite was asleep, so files Git is not
+  # tracking yet could not be listed: "No changes" would be a guess.
+  defp panel_body(%{data: %Diff{diff: "", untracked: :asleep}} = assigns) do
+    ~H"""
+    <.empty
+      pane
+      id="changes-empty"
+      icon="moon"
+      title="No tracked changes"
+      because="The machine is asleep, so new files Git is not tracking yet cannot be listed."
+    />
+    """
+  end
+
   defp panel_body(%{data: %Diff{diff: ""}} = assigns) do
     ~H"""
     <.empty
@@ -2883,6 +2923,9 @@ defmodule RavixWeb.TrackLive do
         </span>
       </p>
       <p :if={@data.truncated} class="changes-note">Diff is truncated.</p>
+      <p :if={@data.untracked == :asleep} id="changes-untracked-asleep" class="changes-note">
+        The machine is asleep, so new files Git is not tracking yet are not listed.
+      </p>
       <div :if={!@selected}>
         <form id="diff-filter-form" phx-change="filter-diff" phx-submit="filter-diff">
           <label for="diff-filter" class="sr-only">Filter paths</label>
@@ -2924,7 +2967,11 @@ defmodule RavixWeb.TrackLive do
         <h4 class="change-path">
           <span :if={@selected.change.status == :renamed}>{@selected.old_path} → </span>{@selected.change.path}
         </h4>
-        <p :if={@selected.partial}>Partial file — diff was truncated.</p>
+        <p :if={@selected.partial}>
+          {if @selected.hunks == [] and @selected.change.status == :untracked,
+            do: "New file too large to show here.",
+            else: "Partial file — diff was truncated."}
+        </p>
         <p :for={line <- @selected.metadata}>{line}</p>
         <p :if={@selected.binary}>Binary files differ</p>
         <%= if large_diff?(@selected) and !@diff_show_large do %>
@@ -2976,6 +3023,7 @@ defmodule RavixWeb.TrackLive do
       :if={@data.runs == []}
       pane
       id="checks-empty"
+      class="checks-empty"
       icon="check"
       title={if @data.pushed, do: "No checks yet", else: "No checks until the branch is pushed"}
     />
@@ -3030,6 +3078,10 @@ defmodule RavixWeb.TrackLive do
     default: false,
     doc: "`@turn.working?`: a turn is running or queued, so the counts are moving"
 
+  attr :asleep, :boolean,
+    default: false,
+    doc: "this read was refused as asleep and `@turn.machine` agrees (no turn is working)"
+
   # What the worktree holds that GitHub does not, and the one action for
   # each: commit what is uncommitted, push what is unpushed, open a pull
   # request for what is pushed. The counts are the machine's own
@@ -3060,16 +3112,14 @@ defmodule RavixWeb.TrackLive do
         The agent is taking a turn. These counts are read again when it finishes.
       </p>
       <.asleep
-        :if={@git && @git.asleep? && !@working}
+        :if={@asleep}
         id="git-asleep"
         can_wake={@can_wake}
         waking={@waking}
       />
       <ul class="git-rows">
         <li :if={@status} id="git-uncommitted" class="git-row">
-          <span class={["chip", if(@status.uncommitted > 0, do: "warn", else: "ok")]}>
-            {@status.uncommitted}
-          </span>
+          <.git_count count={@status.uncommitted} />
           <span class="git-row-label">
             {count_label(@status.uncommitted, "uncommitted change", "uncommitted changes")}
           </span>
@@ -3086,9 +3136,7 @@ defmodule RavixWeb.TrackLive do
           </button>
         </li>
         <li :if={@status} id="git-unpushed" class="git-row">
-          <span class={["chip", if(@status.unpushed > 0, do: "warn", else: "ok")]}>
-            {@status.unpushed}
-          </span>
+          <.git_count count={@status.unpushed} />
           <span class="git-row-label">
             {count_label(@status.unpushed, "unpushed commit", "unpushed commits")}<span
               :if={!@status.upstream? && @status.unpushed > 0}
@@ -3135,6 +3183,31 @@ defmodule RavixWeb.TrackLive do
     """
   end
 
+  attr :count, :integer, required: true
+
+  # A number to act on, in amber; none is a grey dash rather than a green 0,
+  # which reads as a count of successes. The row's words say it either way.
+  defp git_count(%{count: 0} = assigns) do
+    ~H"""
+    <span class="git-count zero" aria-hidden="true">–</span>
+    """
+  end
+
+  defp git_count(assigns) do
+    ~H"""
+    <span class="chip warn git-count" aria-hidden="true">{@count}</span>
+    """
+  end
+
+  # The toolbar's one icon says what it refreshes.
+  defp refresh_label(:files), do: "Refresh files"
+  defp refresh_label(:changes), do: "Refresh changes"
+  defp refresh_label(:checks), do: "Refresh checks"
+  defp refresh_label(:preview), do: "Refresh preview"
+
+  # Nothing running and nothing failed: the Preview tab is its empty state.
+  defp preview_idle?(preview), do: preview.state == :stopped and !preview.error
+
   defp count_label(0, _one, many), do: "No " <> many
   defp count_label(1, one, _many), do: "1 " <> one
   defp count_label(n, _one, many), do: "#{n} " <> many
@@ -3150,11 +3223,17 @@ defmodule RavixWeb.TrackLive do
   # Asleep is the machine's own word --- a refused read or setup parked on
   # it --- never a guess from the clock. The Checks tab reads GitHub as well
   # as the machine, so there only its Git status says so (`git_status/1`).
+  # A refusal is also `@turn`'s machine (RAV-91), so the chip says Asleep
+  # whenever a tab does. One the chip has outranked --- a turn is working on
+  # the machine --- is read again (`after_turn/2`), and says so meanwhile.
   defp inspector_state(track, machine, panel) do
     cond do
       machine.state in [:starting, :restarting] and
           (track.setup_state != "ready" or track.sandbox_state == :provisioning) ->
         {:setup, machine.detail}
+
+      panel.data == :machine_asleep and machine.state == :working ->
+        {:setup, "Reading the machine again…"}
 
       parked?(track) or panel.data == :machine_asleep ->
         :asleep
@@ -3216,10 +3295,35 @@ defmodule RavixWeb.TrackLive do
 
   defp setup_label(track, now), do: MachineState.setup_label(track, now)
 
-  # One state for the track's machine, working while `@turn` says a turn is
-  # (RAV-91): the per-thread states this page hears on the stream are
-  # fresher than the last detail read, and the tabs read the same ones.
-  defp machine(track, turn, now), do: MachineState.of(track, running: turn.working?, now: now)
+  # One state for the track's machine, working while a turn is (RAV-91):
+  # the per-thread states this page hears on the stream are fresher than the
+  # last detail read, and the tabs read the same ones. Then what the dock's
+  # probe knows, and what a refused read said. See `turn/1`.
+  defp machine(%{track: track} = assigns, working?) do
+    machine =
+      track
+      |> MachineState.of(running: working?, now: assigns.setup_now)
+      |> probed(assigns.machine_probe, track)
+
+    if machine.state in [:idle, :starting] and not working? and refused_asleep?(assigns),
+      do: %{state: :asleep, detail: "Your next message wakes it."},
+      else: machine
+  end
+
+  defp refused_asleep?(%{panel: panel, git: git}),
+    do: panel.data == :machine_asleep or match?(%{asleep?: true}, git)
+
+  # A probe that finds the machine running (a terminal woke it, say) is the
+  # machine awake, so a pane or Git status it had refused as asleep is read
+  # again (RAV-91): the refusal is `@turn`'s Asleep, and is not left to hold
+  # the chip there once the machine answers.
+  defp reread_refused(socket, %{available: true}) do
+    socket
+    |> then(&if(&1.assigns.panel.data == :machine_asleep, do: reload_panel(&1), else: &1))
+    |> then(&if(match?(%{asleep?: true}, &1.assigns.git), do: load_git(&1), else: &1))
+  end
+
+  defp reread_refused(socket, _probe), do: socket
 
   # The header chip's state, corrected and qualified by what the dock's probe
   # knows that the track row does not: that the machine is in fact running
@@ -3311,10 +3415,18 @@ defmodule RavixWeb.TrackLive do
     """
   end
 
-  defp diff_status(status), do: %{added: "A", modified: "M", deleted: "D", renamed: "R"}[status]
+  defp diff_status(status),
+    do: %{added: "A", modified: "M", deleted: "D", renamed: "R", untracked: "U"}[status]
 
   defp diff_status_label(status),
-    do: %{added: "Added", modified: "Modified", deleted: "Deleted", renamed: "Renamed"}[status]
+    do:
+      %{
+        added: "Added",
+        modified: "Modified",
+        deleted: "Deleted",
+        renamed: "Renamed",
+        untracked: "New, untracked"
+      }[status]
 
   defp changed_files(1), do: "1 changed file"
   defp changed_files(count), do: "#{count} changed files"
@@ -3496,11 +3608,16 @@ defmodule RavixWeb.TrackLive do
   # badge forgets its count rather than keep one the turn may have made
   # wrong; it comes back the next time the list is read. No polling, and no
   # read the page was not already going to make.
+  #
+  # A turn starting is the machine awake, so a pane or a Git status it had
+  # refused as asleep is read again (RAV-91): until then `@turn` says
+  # Working over the refusal, and afterwards the refusal is not left to call
+  # the machine asleep again.
   defp after_turn(
-         %{assigns: %{panel: %{data: :machine_asleep}}} = socket,
+         socket,
          %TranscriptEvent{kind: :stage, stage: "turn", state: "started"}
        ),
-       do: reload_panel(socket)
+       do: reread_refused(socket, %{available: true})
 
   defp after_turn(socket, %TranscriptEvent{} = event) do
     cond do
@@ -3603,7 +3720,8 @@ defmodule RavixWeb.TrackLive do
     end
   end
 
-  defp update_panel(socket, fun), do: assign(socket, panel: fun.(socket.assigns.panel))
+  defp update_panel(socket, fun),
+    do: socket |> assign(panel: fun.(socket.assigns.panel)) |> assign_turn()
 
   defp queue_label(:queued), do: "Queued"
   defp queue_label(:sending), do: "Sending…"
