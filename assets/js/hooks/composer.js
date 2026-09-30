@@ -119,22 +119,31 @@ export function commandQuery(text, caret) {
 /**
  * The query's characters found in order in `text`, or null: a score (higher
  * is better; runs and the starts of words and path segments earn more) and
- * the indices matched, for underlining.
+ * the indices matched, for underlining. The whole query in one piece is
+ * preferred wherever it occurs -- at a boundary, and nearest the end, which
+ * in a path is the file's name -- over letters picked up from left to right.
  */
 export function fuzzy(query, text) {
   const q = query.toLowerCase()
   const t = text.toLowerCase()
-  const marks = []
-  let score = 0
-  let from = 0
-  for (const ch of q) {
-    const at = t.indexOf(ch, from)
-    if (at < 0) return null
-    const boundary = at === 0 || "/._- ".includes(t[at - 1])
-    score += 1 + (at === marks[marks.length - 1] + 1 ? 4 : 0) + (boundary ? 3 : 0)
-    marks.push(at)
-    from = at + 1
+  const boundary = at => at === 0 || "/._- ".includes(t[at - 1])
+  let whole = -1
+  for (let at = t.indexOf(q); q && at >= 0; at = t.indexOf(q, at + 1)) {
+    if (whole < 0 || boundary(at) || !boundary(whole)) whole = at
   }
+  const marks = []
+  if (whole >= 0) {
+    for (let i = 0; i < q.length; i++) marks.push(whole + i)
+  } else {
+    let from = 0
+    for (const ch of q) {
+      const at = t.indexOf(ch, from)
+      if (at < 0) return null
+      marks.push(at)
+      from = at + 1
+    }
+  }
+  const score = marks.reduce((sum, at, i) => sum + 1 + (at === marks[i - 1] + 1 ? 4 : 0) + (boundary(at) ? 3 : 0), 0)
   return {score, marks}
 }
 
@@ -228,7 +237,13 @@ export const Composer = {
       this.suggest()
       if (this.el.value.trim()) this.typing()
     })
-    this.el.addEventListener("blur", () => this.closeSuggestions())
+    // A patch that moves the box blurs it for a moment and LiveView puts the
+    // focus back in the same task, so only a blur that lasts closes the list.
+    this.el.addEventListener("blur", () => {
+      setTimeout(() => {
+        if (document.activeElement !== this.el) this.closeSuggestions()
+      })
+    })
     this.el.addEventListener("keydown", e => {
       if (this.suggestionKey(e) || this.mentionKey(e)) {
         e.preventDefault()
@@ -603,7 +618,7 @@ export const Composer = {
     }
     menu.replaceChildren(...options)
     menu.setAttribute("aria-label", kind === "files" ? "Files to mention" : "Commands")
-    menu.setAttribute("data-open", "")
+    menu.hidden = false
     const current = options[active]
     if (current) {
       this.el.setAttribute("aria-activedescendant", current.id)
@@ -672,7 +687,7 @@ export const Composer = {
     if (!this.suggestion) return
     this.suggestion = null
     const menu = this.suggestions()
-    menu?.removeAttribute("data-open")
+    if (menu) menu.hidden = true
     menu?.replaceChildren()
     this.el.removeAttribute("aria-activedescendant")
   },

@@ -16,7 +16,7 @@ beforeEach(() => {
     <div data-composer-note hidden></div>
     <textarea id="composer-t1" data-draft-key="track:a" data-mode="ask" aria-controls="composer-suggestions"
       data-files-event="mention-files"></textarea>
-    <ul id="composer-suggestions" role="listbox" data-composer-suggestions></ul>
+    <ul id="composer-suggestions" role="listbox" aria-label="Suggestions" hidden data-composer-suggestions></ul>
     <p class="sr-only" role="status" data-composer-announce></p>
     <span data-composer-shortcut><kbd>Ctrl+L</kbd> to focus</span>
     <button>Send</button></div></form>
@@ -62,6 +62,11 @@ test("fuzzy ranking prefers file names and runs, and keeps shallow files first w
   expect(rankFiles("", PATHS, 2).map(r => r.path)).toEqual(["README.md", "mix.exs"])
   expect(rankFiles("router", PATHS).map(r => r.path)).toEqual(["lib/ravix/router.ex", "lib/ravix_web/router.ex"])
   expect(rankFiles("app", PATHS)[0].path).toBe("assets/js/app.js")
+  // The `r` in `src` is not where "rout" starts.
+  expect(rankFiles("rout", ["test/router.test.ts", "src/router.ts"])[0].path).toBe("src/router.ts")
+  expect(fuzzy("rout", "src/router.ts").marks).toEqual([4, 5, 6, 7])
+  expect(fuzzy("ab", "xab/ab").marks).toEqual([4, 5])
+  expect(fuzzy("ab", "ab/xab").marks).toEqual([0, 1])
   expect(rankFiles("qqq", PATHS)).toEqual([])
   expect(rankCommands("c", COMMANDS).map(r => r.command.name)).toEqual(["compact", "changes"])
   expect(rankCommands("ew", COMMANDS).map(r => r.command.name)).toEqual(["review"])
@@ -75,7 +80,7 @@ test("@ asks for the track's files once, says it is searching, then filters as t
   type(hook.el, "Look at @")
   type(hook.el, "Look at @r")
   expect(events.filter(e => e.name === "mention-files")).toHaveLength(1)
-  expect(menu().hasAttribute("data-open")).toBe(true)
+  expect(menu().hidden).toBe(false)
   expect(menu().getAttribute("aria-label")).toBe("Files to mention")
   expect(menu().querySelector("[aria-disabled=true]").textContent).toBe("Searching files…")
   expect(announced()).toBe("Searching files…")
@@ -110,7 +115,7 @@ test("arrow keys move and wrap, Enter mentions the highlighted file without send
   expect(hook.el.value).toBe("Fix @lib/ravix_web/router.ex ")
   expect(hook.el.selectionStart).toBe(hook.el.value.length)
   expect(localStorage.getItem("ravix.draft.track:a")).toBe("Fix @lib/ravix_web/router.ex ")
-  expect(menu().hasAttribute("data-open")).toBe(false)
+  expect(menu().hidden).toBe(true)
   expect(menu().children).toHaveLength(0)
   expect(hook.el.hasAttribute("aria-activedescendant")).toBe(false)
   expect(announced()).toBe("lib/ravix_web/router.ex mentioned.")
@@ -126,12 +131,12 @@ test("Escape closes the list and keeps the draft; the same @ stays closed and th
   receive("composer:files", {paths: PATHS, truncated: false})
   type(hook.el, "see @mi")
   expect(key(hook.el, "Escape").defaultPrevented).toBe(true)
-  expect(menu().hasAttribute("data-open")).toBe(false)
+  expect(menu().hidden).toBe(true)
   expect(localStorage.getItem("ravix.draft.track:a")).toBe("see @mi")
   type(hook.el, "see @mix")
-  expect(menu().hasAttribute("data-open")).toBe(false)
+  expect(menu().hidden).toBe(true)
   type(hook.el, "see @mix and @")
-  expect(menu().hasAttribute("data-open")).toBe(true)
+  expect(menu().hidden).toBe(false)
   // Escape with nothing open is the old Escape.
   key(hook.el, "Escape")
   key(hook.el, "Escape")
@@ -189,7 +194,7 @@ test("/ lists the agent's commands and Ravix's, filters by name, and Enter puts 
   key(hook.el, "Enter")
   expect(hook.el.value).toBe("/review ")
   expect(submits()).toBe(0)
-  expect(menu().hasAttribute("data-open")).toBe(false)
+  expect(menu().hidden).toBe(true)
 })
 
 test("a Ravix action runs its event instead of being sent, and unknown /text is sent as text", () => {
@@ -206,22 +211,27 @@ test("a Ravix action runs its event instead of being sent, and unknown /text is 
   expect(events).toContainEqual({name: "interrupt", payload: {}})
 
   type(hook.el, "/deploy")
-  expect(menu().hasAttribute("data-open")).toBe(false)
+  expect(menu().hidden).toBe(true)
   key(hook.el, "Enter")
   expect(submits()).toBe(1)
   expect(hook.el.value).toBe("/deploy")
 
   // Once the command has an argument it is text, whatever it starts with.
   type(hook.el, "/review the router")
-  expect(menu().hasAttribute("data-open")).toBe(false)
+  expect(menu().hidden).toBe(true)
 })
 
-test("a patch keeps the open list and its highlight, and new commands appear; blur closes it", () => {
+test("a patch keeps the open list and its highlight, and new commands appear; blur closes it", async () => {
   const {hook} = mountHook(Composer, "textarea")
   type(hook.el, "/")
   key(hook.el, "ArrowDown")
-  // LiveView rewrites the textarea's attributes from the template.
+  // LiveView rewrites the textarea's attributes from the template, and
+  // strips from the ignored list any `data-` attribute the template lacks.
   hook.el.removeAttribute("aria-activedescendant")
+  for (const {name} of [...menu().attributes]) {
+    if (name.startsWith("data-") && name !== "data-composer-suggestions") menu().removeAttribute(name)
+  }
+  expect(menu().hidden).toBe(false)
   hook.el.dataset.commands = JSON.stringify([{name: "plan", source: "agent"}, ...COMMANDS])
   hook.updated()
   expect(shown()).toHaveLength(5)
@@ -229,10 +239,16 @@ test("a patch keeps the open list and its highlight, and new commands appear; bl
   expect(hook.el.getAttribute("aria-activedescendant")).toBe(selected().id)
   hook.el.dataset.commands = "not json"
   hook.updated()
-  expect(menu().hasAttribute("data-open")).toBe(false)
+  expect(menu().hidden).toBe(true)
+  hook.el.focus()
   type(hook.el, "@")
+  // LiveView blurs the box while it patches and focuses it again at once.
   hook.el.dispatchEvent(new Event("blur"))
-  expect(menu().hasAttribute("data-open")).toBe(false)
+  await new Promise(resolve => setTimeout(resolve))
+  expect(menu().hidden).toBe(false)
+  hook.el.blur()
+  await new Promise(resolve => setTimeout(resolve))
+  expect(menu().hidden).toBe(true)
 })
 
 test("Comment mode keeps its people list and opens neither Ask menu", () => {
@@ -241,7 +257,7 @@ test("Comment mode keeps its people list and opens neither Ask menu", () => {
   const {hook, events} = mountHook(Composer, "#composer-t1")
   type(hook.el, "/")
   type(hook.el, "@")
-  expect(menu().hasAttribute("data-open")).toBe(false)
+  expect(menu().hidden).toBe(true)
   expect(events).toEqual([])
 })
 

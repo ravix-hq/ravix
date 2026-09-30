@@ -506,7 +506,10 @@
                 </li>
               </ul>
               <%!-- Ask mode's `@` files and `/` commands. The hook fills the
-                list and the announcement, so the server leaves both alone. --%>
+                list, names it and opens it, so the server leaves it alone.
+                Open is `hidden` rather than a `data-` flag: a patch strips
+                any `data-` attribute from an ignored element that the
+                template does not have, and keeps the rest. --%>
               <ul
                 :if={@composer_mode == :ask}
                 id="composer-suggestions"
@@ -514,6 +517,7 @@
                 role="listbox"
                 aria-label="Suggestions"
                 phx-update="ignore"
+                hidden
                 data-composer-suggestions
               >
               </ul>

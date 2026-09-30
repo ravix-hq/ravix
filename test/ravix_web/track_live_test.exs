@@ -4244,7 +4244,11 @@ defmodule RavixWeb.TrackLiveTest do
                  "[placeholder='Ask to make changes, @mention files, run /commands']"
              )
 
-      assert has_element?(ctx.view, "#composer-suggestions[role=listbox][phx-update=ignore]")
+      assert has_element?(
+               ctx.view,
+               "#composer-suggestions[role=listbox][phx-update=ignore][hidden][aria-label=Suggestions]"
+             )
+
       assert has_element?(ctx.view, "#composer-suggestions-status[role=status].sr-only")
       assert has_element?(ctx.view, "#composer-shortcut kbd", "Ctrl+L")
 
