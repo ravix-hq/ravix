@@ -54,11 +54,15 @@ test('project track links scroll vertically and preserve the mobile drawer', asy
       expect((await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa']).analyze()).violations).toEqual([]);
     }
   }
-  // The direct action still confirms and restores focus when dismissed.
+  // Close is in the header's ⋯ (RAV-82). It still confirms, and dismissing
+  // returns focus to ⋯.
   const header = page.locator('.track-crumbs');
+  const more = header.getByRole('button', { name: 'More for this track', exact: true });
   const close = header.getByRole('button', { name: 'Close track', exact: true });
   await expect(header.getByRole('button', { name: 'Project settings', exact: true })).toHaveCount(0);
   await expect(header.getByRole('button', { name: /^Track sharing/ })).toHaveAttribute('title', /viewing now/);
+  await expect(close).toBeHidden();
+  await more.click();
   await expect(close).toBeVisible();
   await close.click();
   const dialog = page.getByRole('dialog', { name: 'Close track', exact: true });
@@ -67,5 +71,5 @@ test('project track links scroll vertically and preserve the mobile drawer', asy
   await expectInlineChoice(dialog.locator('label[for="close-force"]'));
   await page.keyboard.press('Escape');
   await expect(dialog).toHaveCount(0);
-  await expect(close).toBeFocused();
+  await expect(more).toBeFocused();
 });

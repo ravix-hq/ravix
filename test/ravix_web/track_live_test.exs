@@ -77,11 +77,11 @@ defmodule RavixWeb.TrackLiveTest do
   end
 
   test "dedicated lifecycle stages and close warnings stay visible", ctx do
-    # Shared or not is the chip at the end of the dock's tab row, flag or no
-    # flag (RAV-82): the dock carries no line about it and the header no chip.
+    # Shared or not is said in the header's ⋯ popover, flag or no flag
+    # (RAV-82): the dock carries no line about it and the header no chip.
     assert has_element?(
              ctx.view,
-             ~s(#track-machine-scope[title="Shared machine: Used by all of this project's tracks"]),
+             ~s(#track-machine-scope[title="Used by all of this project's tracks"]),
              "Shared machine"
            )
 
@@ -131,7 +131,7 @@ defmodule RavixWeb.TrackLiveTest do
     assert has_element?(ctx.view, "#close-machine-changes", "could not be checked")
   end
 
-  test "a ready dedicated track offers rebuild beside the dock's machine chips, not the transcript",
+  test "a ready dedicated track offers rebuild from the header's ⋯, not the transcript",
        ctx do
     stub(Ravix.Config, :dedicated_opens_enabled?, fn _ -> true end)
 
@@ -145,7 +145,7 @@ defmodule RavixWeb.TrackLiveTest do
     refute has_element?(view, "#rebuild-track-machine")
     refute has_element?(view, "#secrets-changed-rebuild")
 
-    view |> element("#dock-machine button[aria-label='Rebuild machine']") |> render_click()
+    view |> element("#track-more-panel button", "Rebuild machine") |> render_click()
     render_async(view)
     assert has_element?(view, "#rebuild-dialog", "deletes only this track's machine")
     assert has_element?(view, "#rebuild-dialog", "Sibling tracks are unaffected.")
@@ -168,7 +168,7 @@ defmodule RavixWeb.TrackLiveTest do
     {:ok, parent, _} = live(ctx.conn, "/p/#{ctx.project.id}/t/#{ctx.track.id}")
     view = find_live_child(parent, "track-host")
     settle(view)
-    refute has_element?(view, "button[aria-label='Rebuild machine']")
+    refute has_element?(view, "button", "Rebuild machine")
   end
 
   test "disconnect health follows the selected thread rather than its project default", ctx do
@@ -453,7 +453,7 @@ defmodule RavixWeb.TrackLiveTest do
     view = find_live_child(parent, "track-host")
     settle(view)
     refute has_element?(view, "#secrets-changed-rebuild")
-    refute has_element?(view, "button[aria-label='Rebuild machine']")
+    refute has_element?(view, "button", "Rebuild machine")
     render_hook(view, "rebuild-machine", %{force: "true"})
     assert Tracks.Sandbox.Store.operations(ctx.track.id) == []
 
@@ -477,7 +477,7 @@ defmodule RavixWeb.TrackLiveTest do
     assert has_element?(ctx.view, "#track-agent-health-banner", "Reconnect Claude Code")
     assert has_element?(ctx.view, "#track-agent-health-banner", "Your agent connection")
     assert has_element?(ctx.view, "#track-agent-health-banner", "subscription or API key")
-    refute has_element?(ctx.view, "#composer-payer")
+    refute has_element?(ctx.view, "#track-payer")
     # With something typed, the warning leaves send enabled.
     render_hook(ctx.view, "composer-draft", %{"empty" => false})
     refute has_element?(ctx.view, "#composer-form button[type=submit][disabled]")
@@ -793,9 +793,9 @@ defmodule RavixWeb.TrackLiveTest do
     settle(view)
     assert has_element?(view, "#track-agent-health-banner", "Ask #{ctx.user.login}")
     assert has_element?(view, "#track-agent-health-banner", "Their agent connection")
-    # Who pays is said once, beside the model picker (RAV-82).
-    assert has_element?(view, "#composer-payer", "Paid by @#{ctx.user.login}")
-    refute has_element?(view, ".track-crumbs", "Paid by")
+    # Who pays is said once, in the header's ⋯ (RAV-82).
+    assert has_element?(view, "#track-more-panel #track-payer", "Paid by @#{ctx.user.login}")
+    refute has_element?(view, "#composer-payer")
     refute has_element?(view, "#track-agent-health-banner button")
     view |> with_target("#track-agent-health") |> render_click("reconnect")
     render(view)
@@ -1177,6 +1177,74 @@ defmodule RavixWeb.TrackLiveTest do
       open_draft(ctx, options)
       assert has_element?(ctx.view, "#thread_draft-runtime option[value=codex][disabled]", reason)
     end
+  end
+
+  test "thread tabs are titles: the first is named after the track, and only working or failed threads have a dot",
+       ctx do
+    stub(Tracks, :get, fn _, id, _ ->
+      thread = fn tid, title, status ->
+        %{id: tid, title: title, unread: false, runtime: "claude", model: nil, status: status}
+      end
+
+      {:ok,
+       %{
+         track: %{Tracks.present(Repo.get!(Track, id), role: :owner) | title: "Tidy the header"},
+         header: blank_header(),
+         threads: [
+           Map.put(thread.(id, "Default", :ready), :default, true),
+           thread.("t-run", "Running one", :running),
+           thread.("t-queue", "Queued one", :pending),
+           thread.("t-fail", "Failed one", :failed)
+         ],
+         starters: [],
+         models: []
+       }}
+    end)
+
+    send(ctx.view.pid, :refresh)
+    settle(ctx.view)
+
+    tab = fn tid -> "#thread-tab-#{tid}" end
+    assert has_element?(ctx.view, tab.(ctx.track.id) <> " .thread-tab-title", "Tidy the header")
+    refute has_element?(ctx.view, "#thread-tablist", "Default")
+    assert has_element?(ctx.view, "#thread-picker option", "Tidy the header")
+    assert has_element?(ctx.view, tab.("t-run") <> " .dot.running")
+    assert has_element?(ctx.view, tab.("t-fail") <> " .dot.failed")
+    refute has_element?(ctx.view, tab.("t-queue") <> " .dot")
+    refute has_element?(ctx.view, tab.(ctx.track.id) <> " .dot")
+    # Agent, model and state are the tab's tooltip and name, not its text.
+    assert has_element?(
+             ctx.view,
+             tab.("t-queue") <> ~s([title="Queued one · Claude Code · Queued"])
+           )
+
+    refute has_element?(ctx.view, "#thread-tablist", "Claude Code")
+  end
+
+  test "Share shows who is here as stacked faces, with the count in words", ctx do
+    faces =
+      for n <- 1..4,
+          do: %{login: "viewer#{n}", avatar_url: "https://example.test/#{n}.png", typing: false}
+
+    send(
+      ctx.view.pid,
+      {:hub, Event.new(:here, ctx.project.id, track_id: ctx.track.id, present: faces)}
+    )
+
+    render(ctx.view)
+    share = ".track-crumbs button[aria-label='Track sharing (4 viewing now)']"
+    assert has_element?(ctx.view, share <> " .track-viewer img[src='https://example.test/1.png']")
+    assert ctx.view |> element(share) |> render() |> String.split("<img") |> length() == 4
+    assert has_element?(ctx.view, share <> " .track-viewer-more", "+1")
+    assert has_element?(ctx.view, share <> " .sr-only", "4 viewing now")
+
+    send(
+      ctx.view.pid,
+      {:hub, Event.new(:here, ctx.project.id, track_id: ctx.track.id, present: [])}
+    )
+
+    render(ctx.view)
+    refute has_element?(ctx.view, ".track-viewers")
   end
 
   test "selected thread names its agent in the composer and accessible tab", ctx do
@@ -1714,6 +1782,9 @@ defmodule RavixWeb.TrackLiveTest do
              )
 
       assert has_element?(view, "#track-machine-state", label)
+      # Idle and Working are not drawn in the header (RAV-82), but the live
+      # region stays; any other state is a chip in words.
+      assert has_element?(view, "#track-machine-state.sr-only") == label in ["Idle", "Working"]
 
       if detail do
         assert has_element?(
@@ -1724,7 +1795,7 @@ defmodule RavixWeb.TrackLiveTest do
         assert has_element?(view, "#track-machine-detail.sr-only", detail)
       else
         refute has_element?(view, "#track-machine-detail")
-        # A narrow header shows only the dot, so the word is its tooltip.
+        # The word is its tooltip too.
         assert has_element?(view, "#track-machine-state[title=\"#{label}\"]")
       end
     end
@@ -4766,10 +4837,10 @@ defmodule RavixWeb.TrackLiveTest do
     @layout layout
     @machine_scope scope
     @machine_title title
-    # RAV-90: one badge says whose machine it is, once; the dock's panes do
-    # not repeat it as a heading over their contents. Since RAV-82 the badge
-    # ends the dock's tab row rather than sitting in the header.
-    test "#{layout} machine ownership is said once, by the dock's badge, not in its panes", ctx do
+    # RAV-90: whose machine it is is said once; the dock's panes do not
+    # repeat it as a heading over their contents. Since RAV-82 it is a fact
+    # in the header's ⋯ popover rather than a chip.
+    test "#{layout} machine ownership is said once, in the header's ⋯, not in the dock", ctx do
       Repo.update!(
         Ecto.Changeset.change(ctx.track, sandbox_layout: @layout, opened_at: DateTime.utc_now())
       )
@@ -4788,7 +4859,7 @@ defmodule RavixWeb.TrackLiveTest do
 
       assert has_element?(
                view,
-               ~s(#dock-machine #track-machine-scope[title="#{@machine_scope}: #{@machine_title}"]),
+               ~s(#track-more-panel #track-machine-scope[title="#{@machine_title}"]),
                @machine_scope
              )
 
@@ -4883,7 +4954,7 @@ defmodule RavixWeb.TrackLiveTest do
 
     assert has_element?(
              view,
-             ~s(#track-machine-scope[title="Shared machine: Used by all of this project's tracks"]),
+             ~s(#track-machine-scope[title="Used by all of this project's tracks"]),
              "Shared machine"
            )
   end
@@ -5671,29 +5742,30 @@ defmodule RavixWeb.TrackLiveTest do
 
     refute has_element?(ctx.view, "#track-actions-menu")
 
-    # Title and Share (RAV-82). The machine's state and scope end the dock's
-    # tab row, and who pays is beside the model picker; none is in the header.
-    for id <- ~w(track-machine-state track-machine-scope) do
-      refute has_element?(ctx.view, ".track-crumbs ##{id}")
-      assert has_element?(ctx.view, ".machine-dock-frame #dock-machine ##{id}")
-    end
-
-    refute render(header.(ctx.view)) =~ ~r/Paid by|Runs on|Private/
+    # Title and Share, then ⋯ (RAV-82). Whose machine it is and who pays are
+    # facts in the ⋯ popover, with Rebuild and Close; none is a chip.
+    assert has_element?(ctx.view, "#track-more-panel #track-machine-scope", "Shared machine")
+    refute has_element?(ctx.view, ".track-crumbs .chip#track-machine-scope")
+    refute render(header.(ctx.view)) =~ ~r/Runs on|Private/
     refute has_element?(ctx.view, "#track-private")
+    # The machine's state is always said in words, never shrunk to its dot.
+    assert has_element?(ctx.view, ".track-crumbs #track-machine-state[role=status]")
+    refute has_element?(ctx.view, "#track-machine-state [data-fit-label]")
 
-    buttons =
+    top_level =
       ctx.view
       |> element(".track-crumbs")
       |> render()
       |> LazyHTML.from_fragment()
-      |> LazyHTML.query("button")
+      |> LazyHTML.query(
+        "header > button, .track-header-path > button, .track-header-status > button, #track-more > button"
+      )
       |> LazyHTML.attribute("title")
 
-    assert buttons == ["Rename track", "Track sharing (0 viewing now)", "Close track"]
+    assert top_level == ["Rename track", "Track sharing (0 viewing now)", "More for this track"]
+    refute has_element?(ctx.view, ".track-crumbs > button[aria-label='Close track']")
 
-    ctx.view
-    |> element(".track-crumbs button[aria-label='Close track'][title='Close track']")
-    |> render_click()
+    ctx.view |> element("#track-more-panel button", "Close track") |> render_click()
 
     assert has_element?(ctx.view, "#close-form")
 

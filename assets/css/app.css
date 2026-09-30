@@ -811,7 +811,8 @@ html[data-yard="closed"] .workspace-trigger-skeleton { flex: none; width: 28px; 
    under a pixel. Each stops at a floor: the plan chip at its count, the
    title at about sixteen characters and the project at twelve. A crumb
    shorter than its floor is marked by the server as not `.long` and never
-   shrinks. Since RAV-82 nothing else is in it but Share and Close. */
+   shrinks. Since RAV-82 the rest is Share, the ⋯ popover, and the machine
+   chip only while its state is out of the ordinary, always in words. */
 .track-crumbs { flex-wrap: nowrap; }
 .track-header-path, .track-header-status { display: contents; }
 .track-crumbs > *, .track-header-path > *, .track-header-status > *, .track-plan-items > * { flex: none; }
@@ -834,6 +835,23 @@ html[data-yard="closed"] .workspace-trigger-skeleton { flex: none; width: 28px; 
    hook can still read how wide each label would be. */
 .track-crumbs[data-compact] [data-fit-label] { max-width: 0; margin-left: calc(-1 * var(--label-gap)); }
 .track-crumbs[data-compact] .track-plan-sep { display: none; }
+/* Who is here, on Share: faces overlapping to the left, as a stack. */
+.track-share { gap: 6px; }
+.track-viewers { display: inline-flex; align-items: center; padding-left: 4px; }
+.track-viewer {
+  display: grid; place-items: center; width: 20px; height: 20px; margin-left: -6px; overflow: hidden;
+  border-radius: 50%; border: 2px solid var(--panel); background: var(--surface);
+  font-size: 10px; color: var(--dim);
+}
+.track-viewer img { width: 100%; height: 100%; object-fit: cover; }
+.track-viewer-more { width: auto; min-width: 20px; padding: 0 4px; border-radius: 999px; }
+/* The ⋯ popover's facts: whose machine, who pays. Read, not chosen. */
+.track-more { width: min(300px, calc(100vw - 32px)); }
+.track-more hr { margin: 4px 2px; border: none; border-top: 1px solid var(--line); }
+.track-facts { margin: 0; padding: 4px 0; }
+.track-facts > div { display: flex; align-items: baseline; gap: 10px; padding: 4px 8px; font-size: 13px; }
+.track-facts dt { flex: none; width: 14px; color: var(--dim); }
+.track-facts dd { margin: 0; min-width: 0; }
 /* Header icons are named by aria-label and tooltip; closing confirms first. */
 .crumbs .icon-button { justify-content: center; width: 30px; height: 30px; padding: 0; }
 
@@ -1426,21 +1444,6 @@ html[data-yard="closed"] .workspace-trigger-skeleton { flex: none; width: 28px; 
    second line under the panels. */
 .dock-tabs { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: thin; }
 .dock-tabs > * { flex-shrink: 0; }
-/* The machine's state and scope end the dock's tab row (RAV-82). The page
-   draws them beside the dock rather than inside it, so the dock's root is
-   `display: contents` here and its tab row, the chips and the panel below
-   are this grid's three items. The tab row still scrolls on its own. */
-.machine-dock-frame {
-  flex: none; display: grid; grid-template-columns: minmax(0, 1fr) auto;
-  border-top: 1px solid var(--line); min-height: 0;
-}
-.machine-dock-frame > .machine-dock-host { display: contents; }
-.machine-dock-frame .dock-tabs { grid-area: 1 / 1; border-top: 0; min-width: 0; }
-.machine-dock-frame > .dock-machine { grid-area: 1 / 2; }
-.machine-dock-frame .machine-dock { grid-area: 2 / 1 / 3 / 3; }
-.dock-machine { display: flex; align-items: center; gap: 6px; padding: 0 10px 0 6px; white-space: nowrap; }
-.dock-machine .chip-label { white-space: nowrap; }
-.dock-machine .icon-button { justify-content: center; width: 24px; height: 24px; padding: 0; }
 .workspace-tabs .dock-toggle { width: 24px; padding: 5px; }
 .machine-dock { height: 240px; flex: none; display: flex; flex-direction: column; min-height: 0; border-top: 1px solid var(--line); }
 .machine-dock .workspace-terminal { height: 100%; }
@@ -2103,10 +2106,10 @@ section.first-prompt#project-start { align-self: center; padding: 32px 24px; }
   [data-narrow-view="conversation"] .inspector,
   [data-narrow-view="files"] .track-conversation,
   [data-narrow-view="terminal"] .track-conversation,
-  [data-narrow-view="files"] .machine-dock-frame,
+  [data-narrow-view="files"] .machine-dock-host,
   [data-narrow-view="terminal"] .inspector > .workspace-tabs,
   [data-narrow-view="terminal"] .workspace-panel { display: none; }
-  [data-narrow-view="terminal"] .machine-dock-frame { flex: 1; grid-template-rows: auto minmax(0, 1fr); }
+  [data-narrow-view="terminal"] .machine-dock-host { display: flex; flex: 1; flex-direction: column; min-height: 0; }
   [data-narrow-view="terminal"] .machine-dock { flex: 1; height: auto; }
   [data-narrow-view="terminal"] .dock-toggle { display: none; }
   .panel-resize-handle { display: none; }

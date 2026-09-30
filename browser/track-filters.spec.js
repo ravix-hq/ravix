@@ -76,6 +76,7 @@ test('Mine/Everyone filters the rail by creator, and Show closed lists closed tr
   // Close one of the owner's tracks, then find it again through the project menu.
   await rail.getByRole('link', { name: /Owner finished/ }).click();
   await expect(page.locator('.track-crumbs')).toContainText('Owner finished');
+  await page.getByRole('button', { name: 'More for this track', exact: true }).click();
   await page.getByRole('button', { name: 'Close track', exact: true }).click();
   const close = page.getByRole('dialog', { name: 'Close track', exact: true });
   await close.getByRole('button', { name: 'Close track', exact: true }).click();

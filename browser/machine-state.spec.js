@@ -2,7 +2,7 @@ import { test, expect } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
 import { signIn, connectClaude } from './sign-in.js';
 
-// Every word the machine's chip says, in order, as the page draws it. Opening
+// Every word the header chip says, in order, as the page draws it. Opening
 // and a mock turn can each finish between two polls, so the page records
 // its own transitions rather than the test sampling them.
 function recordChip() {
@@ -34,16 +34,14 @@ for (const width of [1280, 500]) {
     await expect(chip).toHaveAttribute('role', 'status');
     await expect(chip).toHaveAttribute('aria-live', 'polite');
     await expect(chip).toHaveText('Idle', { timeout: 30_000 });
+    // Idle is normal, so the header does not draw it; the live region stays (RAV-82).
+    await expect(chip).toHaveClass(/sr-only/);
     // The chip is the one live region for the machine's state.
     await expect(page.locator('#track-machine-status')).toHaveCount(0);
     await expect(page.locator('.machine-dock-host > [role=status]')).toHaveCount(0);
     const scope = page.locator('#track-machine-scope');
     await expect(scope).toHaveText('Shared machine');
-    await expect(scope).toHaveAttribute('title', "Shared machine: Used by all of this project's tracks");
-    // Both end the dock's tab row, not the header (RAV-82).
-    await expect(page.locator('#dock-machine #track-machine-state')).toHaveCount(1);
-    await expect(page.locator('#dock-machine #track-machine-scope')).toHaveCount(1);
-    await expect(page.locator('.track-crumbs #track-machine-state, .track-crumbs #track-machine-scope')).toHaveCount(0);
+    await expect(scope).toHaveAttribute('title', "Used by all of this project's tracks");
     expect((await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa']).analyze()).violations).toEqual([]);
 
     const composer = page.getByRole('textbox', { name: 'Message', exact: true });
