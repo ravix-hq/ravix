@@ -65,6 +65,7 @@ with tempfile.TemporaryDirectory(prefix="ravix-hook-coverage-") as tmp:
     shutil.copytree(ROOT / "assets/test", root / "assets/test")
     # Metadata tests exercise this repository, independently from hook instrumentation.
     (root / "assets/test/repository.test.js").unlink()
+    (root / "assets/test/vendor.test.js").unlink()
     shutil.copy(ROOT / "bunfig.toml", root / "bunfig.toml")
     (root / "node_modules").symlink_to(ROOT / "node_modules", target_is_directory=True)
     expect(run(["bun", "test"], root), True, "0 fail")
