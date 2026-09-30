@@ -227,8 +227,7 @@ defmodule RavixWeb.WorkspaceGitHubTest do
       |> with_target("#workspace-settings-content")
       |> render_hook("add-repo", %{"repo" => "acme/web"})
 
-      html = render_async(view)
-      assert html =~ "Your role in this workspace cannot do that."
+      assert flashed(view) =~ "Your role in this workspace cannot do that."
     end
 
     test "adding a repository whose project is archived says so and does not crash", ctx do
@@ -247,8 +246,7 @@ defmodule RavixWeb.WorkspaceGitHubTest do
 
       {:ok, view, _html} = live(ctx.conn, "/w/#{ctx.team.id}/settings/members")
       view |> element("li[data-repo='acme/web'] button", "Add") |> render_click()
-      html = render_async(view)
-      assert html =~ "archived or being deleted"
+      assert flashed(view) =~ "archived or being deleted"
       assert Process.alive?(view.pid)
       assert FakeTransport.calls(client) == []
     end
@@ -324,8 +322,7 @@ defmodule RavixWeb.WorkspaceGitHubTest do
       assert has_element?(view, "#connect-github.ghost")
 
       view |> element("#available-77 button") |> render_click()
-      render_async(view)
-      assert render(view) =~ "Added @acme to this workspace."
+      assert flashed(view) =~ "Added @acme to this workspace."
 
       assert [%Installation{installation_id: 77, account_login: "acme"} = connection] =
                Store.installations(ctx.team.id)
@@ -352,7 +349,7 @@ defmodule RavixWeb.WorkspaceGitHubTest do
         |> with_target("#workspace-settings-content")
         |> render_hook("add-installation", %{"installation" => "77"})
 
-        assert render_async(view) =~ "Your role in this workspace cannot do that."
+        assert flashed(view) =~ "Your role in this workspace cannot do that."
       end
 
       assert Store.installations(ctx.team.id) == []
@@ -366,7 +363,7 @@ defmodule RavixWeb.WorkspaceGitHubTest do
       |> with_target("#workspace-settings-content")
       |> render_hook("add-installation", %{"installation" => "55"})
 
-      assert render_async(view) =~ "not one you can see"
+      assert flashed(view) =~ "not one you can see"
       assert Store.installations(ctx.team.id) == []
     end
 
@@ -414,5 +411,14 @@ defmodule RavixWeb.WorkspaceGitHubTest do
                "Add to workspace"
              )
     end
+  end
+
+  # The settings component's flash reaches the page as a message sent while
+  # it handles the async result: one render flushes the result, and the next
+  # is queued behind the flash.
+  defp flashed(view) do
+    render_async(view)
+    render(view)
+    render(view)
   end
 end
