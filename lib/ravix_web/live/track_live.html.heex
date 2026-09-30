@@ -29,8 +29,9 @@
       (the machine's state) lives, so it grows into the spacer and never
       moves the title. When the strip is short the status chips give way
       first, down to their icon or count, then the branch, and the title
-      last; see "the track's own header" in app.css. --%>
-    <header class="crumbs track-crumbs">
+      last; see "the track's own header" in app.css, and HeaderFit for
+      why a chip's words show whole or not at all. --%>
+    <header id="track-header" class="crumbs track-crumbs" phx-hook="HeaderFit">
       <div class="track-path">
         <.link
           navigate={"/p/#{@project.id}"}
@@ -76,7 +77,7 @@
           summary={@assigned_plan}
         />
         <span :if={@track.visibility == :private} class="chip" title="Private">
-          <.icon name="lock" /><span class="chip-label">Private</span>
+          <.icon name="lock" /><span class="chip-label" data-fit-label>Private</span>
         </span>
         <.machine_chip machine={machine(@track, @threads, @thread_states, @setup_now)} />
         <span
@@ -87,7 +88,9 @@
           class="chip"
           id="track-machine-scope"
           title={machine_scope(@track)}
-        ><.icon name="machine" size={12} /><span class="chip-label">{machine_scope(@track)}</span></span>
+        ><.icon name="machine" size={12} /><span class="chip-label" data-fit-label>{machine_scope(
+          @track
+        )}</span></span>
         <span
           :if={@track.billing == :creator}
           id="track-payer"

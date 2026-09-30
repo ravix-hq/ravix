@@ -65,6 +65,9 @@ test('the track header keeps the project and title readable and still as late pa
       titleShown: titleText + 1 >= sixteen,
       overflow: header.scrollWidth > header.clientWidth || close.right > header.getBoundingClientRect().right,
       page: document.documentElement.scrollWidth > innerWidth,
+      // A status chip's words are drawn whole or not at all, never "Own m".
+      fragments: [...header.querySelectorAll('[data-fit-label]')]
+        .filter(el => el.clientWidth > 0 && el.scrollWidth > el.clientWidth + 1).map(el => el.textContent),
     };
   });
   const before = await measure();
@@ -72,6 +75,7 @@ test('the track header keeps the project and title readable and still as late pa
   expect(before.titleShown).toBe(true);
   expect(before.overflow).toBe(false);
   expect(before.page).toBe(false);
+  expect(before.fragments).toEqual([]);
 
   sql(`
     INSERT INTO ravix.plans (id, project_id, title, summary, version, created_by_login, archived, inserted_at, updated_at)
@@ -93,6 +97,11 @@ test('the track header keeps the project and title readable and still as late pa
   expect(after.titleShown).toBe(true);
   expect(after.overflow).toBe(false);
   expect(after.page).toBe(false);
+  expect(after.fragments).toEqual([]);
+  // At this width the chips are down to their icons, and the plan chip
+  // to its icon and count.
+  await expect(header).toHaveAttribute('data-compact', '');
+  await expect(header.getByRole('button', { name: 'Plan: Small fixes: task state, machine stats, 404 and navigation · 3 items', exact: true })).toBeVisible();
   // The chip gave way down to its icon and count; the count is still drawn.
   expect(await chip.locator('.track-plan-count').evaluate(el => el.getBoundingClientRect().width)).toBeGreaterThan(0);
   expect(await chip.locator('.track-plan-count').evaluate(el => el.scrollWidth <= el.clientWidth + 1)).toBe(true);

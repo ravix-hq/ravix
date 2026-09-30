@@ -769,10 +769,15 @@ html[data-yard="closed"] .yard .workspace-gear { display: none; }
    give way to its icon while a flex chip would stop at its longest word. */
 .track-status .chip, .track-crumbs .track-plan-chip {
   display: inline-grid; grid-auto-flow: column; grid-template-columns: auto minmax(0, max-content);
-  align-items: center; gap: 5px; flex: 0 1000000 auto; min-width: min-content; max-width: 18rem;
+  align-items: center; --label-gap: 5px; gap: var(--label-gap); flex: 0 1000000 auto; min-width: min-content; max-width: 18rem;
 }
-.track-crumbs .track-plan-toggle { grid-template-columns: auto minmax(0, max-content) auto auto; gap: 4px; }
+.track-crumbs .track-plan-toggle { grid-template-columns: auto minmax(0, max-content) auto auto; --label-gap: 4px; }
 .track-status .chip-label, .track-crumbs .track-plan-chip .truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* HeaderFit's compact state: a label that would be cut is not drawn at
+   all, so each chip is its icon, dot or count. Width, not `display`, so the
+   hook can still read how wide each label would be. */
+.track-crumbs[data-compact] [data-fit-label] { max-width: 0; margin-left: calc(-1 * var(--label-gap)); }
+.track-crumbs[data-compact] .track-plan-sep { display: none; }
 .track-status .status-note { flex: 0 1000000 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* Header icons are named by aria-label and tooltip; closing confirms first. */
 .crumbs .icon-button { justify-content: center; width: 30px; height: 30px; padding: 0; }

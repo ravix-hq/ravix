@@ -2732,7 +2732,7 @@ defmodule RavixWeb.TrackLive do
       aria-live="polite"
       aria-describedby={@machine.detail && "track-machine-detail"}
       title={@machine.detail || MachineState.label(@machine.state)}
-    ><.status_dot status={to_string(@machine.state)} /><span class="chip-label">{MachineState.label(
+    ><.status_dot status={to_string(@machine.state)} /><span class="chip-label" data-fit-label>{MachineState.label(
       @machine.state
     )}</span></span>
     <span :if={@machine.detail} id="track-machine-detail" class="sr-only">{@machine.detail}</span>
