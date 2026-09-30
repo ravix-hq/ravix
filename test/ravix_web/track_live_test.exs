@@ -1341,11 +1341,15 @@ defmodule RavixWeb.TrackLiveTest do
     # RAV-94: one row per waiting prompt, its state first and its action last.
     assert has_element?(
              ctx.view,
-             "ol.workspace-queue[aria-label='Queued prompts'] > li.queue-item > .chip",
-             "Waiting"
+             "ol.workspace-queue[aria-label='Queued prompts'] > li.queue-item.said .queue-state",
+             "Queued"
            )
 
-    assert has_element?(ctx.view, "li.queue-item > button[phx-value-action=cancel]", "Cancel")
+    assert has_element?(
+             ctx.view,
+             "li.queue-item .queue-actions [phx-value-action=cancel]",
+             "Cancel"
+           )
 
     assert has_element?(ctx.view, ".composer-model", "Codex · GPT-6 Astra")
     assert has_element?(ctx.view, ".composer-model", "GPT-6 Astra")
@@ -5935,7 +5939,7 @@ defmodule RavixWeb.TrackLiveTest do
     assert html =~ "workspace-queue"
     # The chip is the row's status, and the control is its `can_cancel`, both
     # read off the struct by field.
-    assert has_element?(ctx.view, ".workspace-queue .chip")
+    assert has_element?(ctx.view, ".workspace-queue .queue-state")
     assert has_element?(ctx.view, "button[phx-click=queue][phx-value-action=cancel]")
   end
 
@@ -6359,8 +6363,8 @@ defmodule RavixWeb.TrackLiveTest do
       # RAV-94: and what is sent now waits for the turn, which the box says.
       assert has_element?(
                ctx.view,
-               "#composer-form textarea[placeholder='Queue a follow-up, @mention files, run /commands']" <>
-                 "[data-placeholder-ask='Queue a follow-up, @mention files, run /commands']"
+               "#composer-form textarea[placeholder='Add a follow up']" <>
+                 "[data-placeholder-ask='Add a follow up']"
              )
 
       # Comment mode has its own list of people and no commands.
@@ -7047,19 +7051,22 @@ defmodule RavixWeb.TrackLiveTest do
 
     refresh.()
 
-    for label <- ["Waiting", "Sending…", "Needs attention", "Not confirmed"] do
-      assert has_element?(ctx.view, ".workspace-queue .chip", label)
+    for label <- ["Queued", "Sending…", "Needs attention", "Not confirmed"] do
+      assert has_element?(ctx.view, ".workspace-queue .queue-state", label)
     end
 
     for raw <- ~w(queued sending failed unconfirmed) do
-      refute has_element?(ctx.view, ".workspace-queue .chip", raw)
+      refute has_element?(ctx.view, ".workspace-queue .queue-state", raw)
     end
 
+    # The ordinary wait, for the running turn, is said by the label alone.
     assert has_element?(
              ctx.view,
-             ".workspace-queue .queue-feedback",
-             "Waiting for the current turn to finish"
+             ".workspace-queue > li:first-child .queue-label",
+             "Queued · sends when the agent is free"
            )
+
+    refute has_element?(ctx.view, ".workspace-queue .queue-feedback", PromptQueue.busy_wait())
 
     PromptQueue.Store.set_status(
       hd(ids),

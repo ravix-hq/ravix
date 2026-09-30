@@ -1,13 +1,14 @@
 import { test, expect } from '@playwright/test';
 import { signIn, connectClaude } from './sign-in.js';
 
-// RAV-94: the composer's focus hint gives way to the focused box, Ask agent /
-// Comment switches without waiting for the server and without changing the
-// box's size, the action row is one line at 1280px (and on a phone), and a
-// queued prompt is one row above the box.
+// RAV-94: the composer's focus hint gives way to the focused box (and to a
+// window under 1360px), Ask agent / Comment switches without waiting for the
+// server and without changing the box's size, the action row is one line of
+// 28px controls at 1280px (and on a phone), and a queued prompt is a muted
+// bubble with Edit and Cancel.
 test('the composer switches mode at once, keeps one row, and hides its hint while focused', async ({ page }) => {
   test.setTimeout(120_000);
-  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.setViewportSize({ width: 1440, height: 800 });
   await signIn(page, 'dana');
   await connectClaude(page);
   await page.getByRole('button', { name: 'Add a repository', exact: true }).first().click();
@@ -47,7 +48,17 @@ test('the composer switches mode at once, keeps one row, and hides its hint whil
   expect(await hint.boundingBox()).toEqual(hintAt);
   await textarea.blur();
   await expect(hint).toBeVisible();
+
+  // At 1280px there is no room for it; the row is one line of 28px controls.
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await expect(hint).toBeHidden();
   expect(await oneLine()).toBe(true);
+  const heights = await page.locator('#composer-form .workspace-actions').evaluate(row =>
+    [...row.querySelectorAll(':scope > button, :scope > .composer-mode, :scope > .composer-model, #model-trigger')]
+      .filter(el => el.offsetParent)
+      .map(el => [el.id || el.className, el.getBoundingClientRect().height]));
+  expect(heights.map(([name]) => name).join(' ')).toMatch(/model-trigger|composer-model/);
+  for (const [, h] of heights) expect(h).toBe(28);
   const idle = await height();
 
   // Comment: pressed, coloured and relabelled in the same task as the click,
@@ -100,24 +111,30 @@ test('the composer switches mode at once, keeps one row, and hides its hint whil
   await message.fill('Demonstrate a long-running turn');
   await message.press('Enter');
   await expect(page.locator('#composer-stop')).toBeVisible({ timeout: 30_000 });
-  await expect(message).toHaveAttribute('placeholder', 'Queue a follow-up, @mention files, run /commands');
+  await expect(message).toHaveAttribute('placeholder', 'Add a follow up');
   await message.fill('Then update the changelog');
   await expect(page.locator('#composer-send')).toBeEnabled();
   expect(await oneLine()).toBe(true);
   expect(await height()).toBe(idle);
 
-  // Queued: one row, its state, its prompt and its Cancel.
+  // Queued: a muted bubble at the right, as the prompt will be, saying what
+  // it waits for, with Edit and Cancel.
   await message.press('Enter');
   const row = page.getByRole('list', { name: 'Queued prompts' }).getByRole('listitem');
   await expect(row).toHaveCount(1);
-  await expect(row.locator('.chip')).toHaveText('Waiting');
-  await expect(row.locator('.queue-prompt')).toContainText('Then update the changelog');
+  await expect(row.locator('.queue-label')).toHaveText('Queued · sends when the agent is free');
+  const bubble = row.locator('.queue-prompt');
+  await expect(bubble).toContainText('Then update the changelog');
+  expect(await bubble.evaluate(el => getComputedStyle(el).borderTopStyle)).toBe('dashed');
+  const composerBox = await box.boundingBox();
+  const bubbleBox = await bubble.boundingBox();
+  expect(composerBox.x + composerBox.width - (bubbleBox.x + bubbleBox.width)).toBeLessThan(24);
   await expect(row.getByRole('button', { name: 'Cancel', exact: true })).toBeVisible();
-  const rowBox = await row.boundingBox();
-  const chipBox = await row.locator('.chip').boundingBox();
-  const cancelBox = await row.getByRole('button', { name: 'Cancel', exact: true }).boundingBox();
-  expect(chipBox.y).toBeLessThan(rowBox.y + 16);
-  expect(cancelBox.y).toBeLessThan(rowBox.y + 16);
+
+  // Edit takes it off the queue and puts its words back in the box.
+  await row.getByRole('button', { name: 'Edit', exact: true }).click();
+  await expect(message).toHaveValue('Then update the changelog');
+  await expect(row).toHaveCount(0);
 
   // A phone: the row still does not wrap.
   await page.setViewportSize({ width: 390, height: 800 });

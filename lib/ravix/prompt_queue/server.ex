@@ -534,7 +534,7 @@ defmodule Ravix.PromptQueue.Server do
         claim_and_send(client, row, track, project, server)
 
       :busy ->
-        Store.annotate(row.id, :queued, "Waiting for the current turn to finish")
+        Store.annotate(row.id, :queued, Ravix.PromptQueue.busy_wait())
         :waiting
 
       {:ended, message} ->

@@ -1147,30 +1147,27 @@ html[data-yard="closed"] .workspace-trigger-skeleton { flex: none; width: 28px; 
 .transcript-scroll .workspace-welcome .ghost:hover:not(:disabled) {
   border: 1px dashed var(--line-strong); border-radius: 8px; background: transparent;
 }
-/* RAV-94: prompts waiting their turn, one compact row each above the
-   composer: the state, the prompt's first two lines and why it waits, then
-   its actions at the end. */
+/* RAV-94: a prompt waiting its turn is drawn as its bubble will be, at
+   the right like any prompt, but muted: a dashed edge and dim ink, what it
+   waits for above it, and Edit / Cancel under it. Two lines of it show. */
 .workspace-queue {
-  display: flex; flex-direction: column; gap: 4px; margin: 0; padding: 0 16px 6px;
-  max-height: 140px; overflow: auto; list-style: none; font-size: 12px;
+  display: flex; flex-direction: column; align-items: flex-end; gap: 8px; margin: 0; padding: 4px 16px 6px;
+  max-height: 180px; overflow: auto; list-style: none;
 }
-.queue-item {
-  display: flex; align-items: flex-start; gap: 8px; min-width: 0; padding: 6px 6px 6px 10px;
-  border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface);
-}
-.queue-item .chip { flex: none; margin-top: 1px; }
-.queue-body { flex: 1; min-width: 0; }
-.queue-item > button { flex: none; height: 24px; padding: 0 8px; font-size: 12px; }
-.queue-feedback, .queue-error { margin: 2px 0 0; color: var(--dim); }
-.queue-error { color: var(--bad); }
-/* A waiting prompt, rendered as its bubble will be. The queue sits outside
-   the transcript's copy handler, so a fence here has no copy button. */
-.queue-prompt {
-  margin: 1px 0 0; min-width: 0; overflow: hidden; overflow-wrap: anywhere;
+.workspace-queue .queue-item { margin: 0; }
+.queue-label { margin: 0; }
+.queue-state { color: var(--dim); }
+.queue-item .queue-prompt {
+  color: var(--dim); background: transparent; border-style: dashed; border-color: var(--line-strong);
+  overflow: hidden; overflow-wrap: anywhere;
   display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2;
 }
 .queue-prompt > :first-child { margin-top: 0; }
 .queue-prompt > :last-child { margin-bottom: 0; }
+.queue-feedback, .queue-error { margin: 0; font-size: 12px; color: var(--dim); text-align: right; }
+.queue-error { color: var(--bad); }
+.queue-actions { display: flex; gap: 2px; }
+.queue-actions button { height: 24px; padding: 0 8px; font-size: 12px; }
 .queue-prompt .code-block-toolbar { display: none; }
 /* Setup progress or failure above the composer. A failure that needs the
    machine rebuilt carries that one action; routine rebuilds live in the header. */
@@ -1195,7 +1192,6 @@ html[data-yard="closed"] .workspace-trigger-skeleton { flex: none; width: 28px; 
 .setup-step.now .setup-step-mark { border-color: var(--accent); border-top-color: transparent; animation: request-spin 900ms linear infinite; }
 .setup-step.failed { color: var(--bad); }
 .setup-step.failed .setup-step-mark { border-color: var(--bad); background: var(--bad-soft); }
-.queue-starts { margin: 2px 0 0; color: var(--dim); }
 @media (prefers-reduced-motion: reduce) { .setup-step.now .setup-step-mark { animation: none; border-top-color: var(--accent); } }
 
 /* ── the composer ──────────────────────────────────────────────────────── */
@@ -1225,13 +1221,13 @@ html[data-yard="closed"] .workspace-trigger-skeleton { flex: none; width: 28px; 
    The arrow is the whole label; `aria-label` and `title` say "Send". */
 .workspace-composer .composer-send {
   display: inline-flex; align-items: center; justify-content: center;
-  flex: 0 0 34px; width: 34px; height: 34px; padding: 0; border-radius: var(--radius);
+  flex: 0 0 28px; width: 28px; height: 28px; padding: 0; border-radius: var(--radius);
 }
 .workspace-composer .composer-send svg { flex: none; }
 .workspace-composer .composer-send:disabled { opacity: 0.65; }
 /* RAV-94: sending. From Enter to the server's answer the form is
    `phx-submit-loading` and LiveView disables send; the arrow becomes a
-   spinner in the same 34px, so the press shows and nothing moves. */
+   spinner in the same square, so the press shows and nothing moves. */
 #composer-form.phx-submit-loading .composer-send { opacity: 1; }
 #composer-form.phx-submit-loading .composer-send svg { visibility: hidden; }
 #composer-form.phx-submit-loading .composer-send::after {
@@ -1246,47 +1242,49 @@ html[data-yard="closed"] .workspace-trigger-skeleton { flex: none; width: 28px; 
    right, where it queues the prompt. The template decides which is drawn. */
 .workspace-composer .composer-stop {
   display: inline-flex; align-items: center; justify-content: center;
-  flex: 0 0 34px; width: 34px; height: 34px; padding: 0; border-radius: var(--radius);
+  flex: 0 0 28px; width: 28px; height: 28px; padding: 0; border-radius: var(--radius);
   color: var(--ink); background: var(--panel); border: 1px solid var(--line-strong);
 }
 .workspace-composer .composer-stop svg { flex: none; }
-/* Attach is the row's other icon button, and the same square: an inline
-   icon in a text button stands half a pixel taller than the rest. */
+/* RAV-94: one size for the row. Every control is 28px tall (attach, send
+   and Stop are 28px squares; the Ask/Comment group and the model pill are
+   28px high), and every label in it is 12.5px. */
 .workspace-composer .composer-attach {
   display: inline-flex; align-items: center; justify-content: center;
-  width: 34px; height: 34px; padding: 0;
+  width: 28px; height: 28px; padding: 0;
 }
+.workspace-composer .workspace-actions { font-size: 12.5px; }
 .workspace-composer .composer-stop:hover:not(:disabled) { background: var(--surface-hover); }
 /* Both buttons need the room the shortcut hint takes, and the model's name
    gives way before the row wraps and the composer grows a line. */
 .workspace-actions:has(.composer-stop) .composer-shortcut { display: none; }
-.workspace-composer .model-trigger { min-width: 0; }
+.workspace-composer .model-trigger { min-width: 0; max-width: 100%; height: 28px; padding: 0 8px; }
 /* RAV-94: the action row is one line at every width. What gives way, in
-   order: the shortcut hint, then the model's and the payer's names, which
-   truncate. A draft thread's agent and model selects are the exception
+   order: the shortcut hint, then the model's name, which truncates. A draft thread's agent and model selects are the exception
    (RAV-80 replaces them). */
 .workspace-composer { container-type: inline-size; }
 .workspace-composer .workspace-actions:not(:has(#draft-runtime)) { flex-wrap: nowrap; }
 .workspace-composer .workspace-actions > * { flex-shrink: 0; }
 .workspace-composer .workspace-actions > .composer-model,
-.workspace-composer .workspace-actions > .composer-payer,
 .workspace-composer .workspace-actions > .composer-mode-hint { flex-shrink: 1; min-width: 0; }
-.workspace-composer .composer-payer { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 @container (max-width: 520px) {
   .workspace-composer .composer-shortcut { display: none; }
   .composer-mode button { padding: 0 7px; }
 }
-/* The shortcut is for reaching the box; once it is there, it has nothing to
-   say. Hidden in place, so the row does not shift as focus comes and goes. */
-.composer-box:has(textarea:focus) .composer-shortcut { visibility: hidden; }
+/* RAV-94: below 1360px the row has no room to spare at the widths the
+   rail and inspector leave it, so the shortcut hint goes. (Who pays for the
+   agent is said once, in the header's ⋯, since RAV-82.) */
+@media (max-width: 1360px) {
+  .workspace-composer .composer-shortcut { display: none; }
+}
 /* Ask agent / Comment. In Comment mode the box takes the warning colour, so
    nobody mistakes a note for people for an instruction to the agent. */
 .composer-mode {
-  display: inline-flex; flex: none; padding: 2px; gap: 2px;
+  display: inline-flex; flex: none; height: 28px; padding: 2px; gap: 2px;
   border: 1px solid var(--line-strong); border-radius: var(--radius);
 }
 .composer-mode button {
-  height: 26px; padding: 0 9px; font-size: 12px; border: 0; background: transparent; color: var(--dim);
+  height: 22px; padding: 0 9px; font-size: 12.5px; line-height: 1; border: 0; background: transparent; color: var(--dim);
 }
 .composer-mode button[aria-pressed="true"] { background: var(--surface-active); color: var(--ink); }
 .composer-box { position: relative; }
@@ -1296,7 +1294,7 @@ html[data-yard="closed"] .workspace-trigger-skeleton { flex: none; width: 28px; 
 .composer-box.commenting .composer-send { background: var(--warn); border-color: var(--warn); color: var(--bg); }
 .composer-mode-hint {
   display: flex; align-items: center; gap: 6px; margin: 0; padding: 8px 12px 0;
-  color: var(--warn); font-size: 12px;
+  color: var(--warn); font-size: 12.5px;
 }
 /* RAV-94: Comment's hint sits in the action row, where Ask's controls are,
    so switching changes what the row says and not the box's height. Ask's
@@ -1306,7 +1304,6 @@ html[data-yard="closed"] .workspace-trigger-skeleton { flex: none; width: 28px; 
 .workspace-actions .composer-mode-hint span { overflow: hidden; text-overflow: ellipsis; }
 .composer-box.commenting .workspace-actions .composer-mode-hint { display: flex; }
 .composer-box.commenting .composer-ask-only,
-.composer-box.commenting .composer-payer,
 .composer-box.commenting .composer-model { display: none; }
 .mention-options {
   position: absolute; left: 8px; bottom: calc(100% + 4px); z-index: 5;
@@ -1346,7 +1343,7 @@ html[data-yard="closed"] .workspace-trigger-skeleton { flex: none; width: 28px; 
 .composer-suggestions li mark { color: inherit; background: none; text-decoration: underline; text-underline-offset: 2px; }
 .composer-suggestions li[aria-disabled="true"] { gap: 8px; cursor: default; color: var(--dim); font-size: 12.5px; }
 .composer-suggestions li[aria-disabled="true"]:hover { background: none; }
-.composer-shortcut { font-size: 11.5px; color: var(--dim); white-space: nowrap; }
+.composer-shortcut { font-size: 12.5px; color: var(--dim); white-space: nowrap; }
 .composer-shortcut kbd { font: inherit; }
 /* Narrow tracks (the 760px switch to one view at a time) are mostly touch
    screens, and the hint is what would wrap the action row onto a second
@@ -1372,7 +1369,7 @@ html[data-yard="closed"] .workspace-trigger-skeleton { flex: none; width: 28px; 
 
 /* The model is a name, not code: sans, quiet, and the raw id in its title. */
 .composer-model {
-  color: var(--dimmer); font: 12px/1 var(--sans); max-width: 45%;
+  color: var(--dimmer); font: 12.5px/1 var(--sans); max-width: 45%;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 /* The model under the composer, as a menu (`model_menu/1`). The trigger
