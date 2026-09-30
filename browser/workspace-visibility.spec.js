@@ -107,7 +107,7 @@ test('a private track stays out of another workspace member\'s rail, search and 
     await expect(colleague.locator(`#project-track-tab-${openId} .dot.unread`)).toHaveCount(1);
     await expect(colleague.locator(`#project-track-tab-${secretId}`)).toHaveCount(0);
     await expect(colleague.locator('body')).not.toContainText(secretBranch);
-    await expect(colleague.locator(`#project-link-${projectId} .badge`)).toHaveAttribute('aria-label', '1 unread');
+    await expect(colleague.locator(`#project-link-${projectId} .badge`)).toHaveAttribute('aria-label', '1 track needs you');
 
     await colleague.locator('#quick-jump-trigger').click();
     const search = colleague.getByLabel('Search projects, tracks and plans');
@@ -132,7 +132,7 @@ test('a private track stays out of another workspace member\'s rail, search and 
     await page.goto(projectPath);
     await expect(page.locator(`#project-track-tab-${secretId}`)).toBeVisible();
     await expect(page.locator(`#project-track-tab-${openId} .dot.unread`)).toHaveCount(0);
-    await expect(page.locator(`#project-link-${projectId} .badge`)).toHaveAttribute('aria-label', '1 unread');
+    await expect(page.locator(`#project-link-${projectId} .badge`)).toHaveAttribute('aria-label', '1 track needs you');
 
     // Shared with the colleague by a permission row, it reaches them.
     sql(`INSERT INTO ravix.track_permissions (track_id, user_id, workspace_id, granted_by_user_id, created_at)
