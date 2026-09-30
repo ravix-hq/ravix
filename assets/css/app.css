@@ -19,6 +19,8 @@
   --sans: "IBM Plex Sans", ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --rail: 248px;
   --tree-step: 12px;
+  /* Every sidebar row, project or track, open or closed, is this tall. */
+  --rail-row: 28px;
   --radius: 8px;
   --radius-lg: 10px;
   /* Conversation and inspector tabs. Palettes inherit the ink; Daylight replaces it. */
@@ -636,11 +638,11 @@ html[data-yard="closed"] .workspace-trigger-skeleton { flex: none; width: 28px; 
    row's end: always on the open project, on hover or focus on the others
    (and always where there is no hover to reveal them). */
 .workspace-project { padding: 1px 0; }
-.workspace-project-row { display: flex; align-items: center; gap: 2px; border-radius: var(--radius); }
+.workspace-project-row { display: flex; align-items: center; gap: 2px; height: var(--rail-row); border-radius: var(--radius); }
 .workspace-project-row:hover { background: var(--surface-hover); }
 .workspace-project.current .workspace-project-row { background: var(--surface-active); }
 .workspace-project-name {
-  flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px; padding: 5px 6px;
+  flex: 1; min-width: 0; min-height: var(--rail-row); display: flex; align-items: center; gap: 8px; padding: 0 6px;
   color: var(--dim); text-decoration: none; border-radius: var(--radius); font-size: 13px; font-weight: 500;
 }
 .workspace-project-row:hover .workspace-project-name, .workspace-project-name.selected { color: var(--ink); }
@@ -2334,10 +2336,12 @@ body:has(.phx-error) #request-progress { display: none; }
 /* A single project picker serves the desktop rail and narrow navigation. */
 
 /* The rail shares one tree on desktop and in the mobile menu. */
-.project-tree-tracks { display: flex; flex-direction: column; padding: 2px 0 6px 24px; min-width: 0; }
+.project-tree-tracks { display: flex; flex-direction: column; gap: 1px; padding: 1px 0 4px 24px; min-width: 0; }
 .project-tree-tracks[hidden] { display: none; }
-.project-tree-tracks .track-tab { min-width: 0; }
-.project-tree-tracks .hint { margin: 4px 8px; }
+/* One height and one inset for every row (RAV-96), so a list of tracks, a
+   hint and the closed list below keep the project rows' beat. */
+.project-tree-tracks .track-tab { min-width: 0; height: var(--rail-row); padding: 0 8px; font-size: 13px; }
+.project-tree-tracks .hint { margin: 0; padding: 0 8px; line-height: var(--rail-row); font-size: 12px; }
 /* Who made each track: their GitHub avatar, or initials when there is none. */
 .track-creator {
   flex: none; width: 16px; height: 16px; border-radius: 50%; overflow: hidden; display: grid; place-items: center;
@@ -2346,9 +2350,14 @@ body:has(.phx-error) #request-progress { display: none; }
 .track-creator img { width: 100%; height: 100%; object-fit: cover; }
 /* How long since the track last did anything. It never shrinks: at the
    narrowest rail the title truncates first. */
-.track-age { flex: none; margin-left: auto; color: var(--dim); font-size: 11px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.track-age { flex: none; color: var(--dim); font-size: 11px; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .workspace-track.selected .track-age { color: inherit; }
-.track-private { flex: none; display: inline-flex; align-items: center; gap: 3px; white-space: nowrap; }
+/* A row's end: its age, or a spinner while the agent takes a turn. One
+   width for both, so titles end together and nothing shifts as a turn
+   starts or stops. */
+.track-meta { flex: none; display: flex; align-items: center; justify-content: flex-end; min-width: 3.2ch; margin-left: auto; }
+.track-spinner { width: 11px; height: 11px; border-width: 1.5px; color: var(--accent); }
+.track-private { flex: none; display: inline-flex; align-items: center; color: var(--dim); }
 .rail-scope { display: flex; gap: 2px; margin: 0 8px 6px; padding: 2px; background: var(--surface); border-radius: var(--radius); }
 .rail-scope button { flex: 1; padding: 2px 8px; font-size: 12px; border: none; border-radius: var(--radius); }
 .rail-scope button.on { color: var(--ink); background: var(--panel); box-shadow: 0 1px 2px var(--shadow); }
@@ -2358,13 +2367,13 @@ body:has(.phx-error) #request-progress { display: none; }
 }
 .menu-check { flex: none; width: 14px; height: 14px; display: grid; place-items: center; }
 /* Closed tracks are listed to be found and reopened, not worked in. */
-.closed-tracks .section-label { margin: 6px 10px 2px; color: var(--dim); }
-.closed-tracks ul { list-style: none; margin: 0; padding: 0; }
-.closed-track { display: flex; align-items: center; gap: 8px; min-width: 0; padding: 4px 10px; color: var(--dim); font-size: 13px; }
+.closed-tracks .section-label { margin: 0; padding: 0 8px; line-height: var(--rail-row); color: var(--dim); }
+.closed-tracks ul { display: flex; flex-direction: column; gap: 1px; list-style: none; margin: 0; padding: 0; }
+.closed-track { display: flex; align-items: center; gap: 8px; min-width: 0; min-height: var(--rail-row); padding: 0 8px; color: var(--dim); font-size: 13px; }
 .closed-track .track-title { flex: 1; min-width: 0; }
 .closed-track .track-creator { opacity: 0.7; }
 .closed-track button { flex: none; padding: 1px 6px; font-size: 12px; }
-.project-collapse { flex: 0 0 24px; padding: 4px; }
+.project-collapse { flex: 0 0 24px; height: 24px; padding: 0; display: grid; place-items: center; }
 /* A disclosure points right when collapsed and down when expanded; the
    button's own `aria-expanded` turns it, whoever last set it. */
 [aria-expanded="true"] > .disclosure-chevron { transform: rotate(90deg); }
