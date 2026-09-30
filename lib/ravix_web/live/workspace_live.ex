@@ -49,6 +49,9 @@ defmodule RavixWeb.WorkspaceLive do
 
   @impl true
   def mount(_params, session, socket) do
+    user = socket.assigns[:current_user]
+    workspaces = WorkspaceSwitcher.list(user)
+
     socket =
       assign(socket,
         session_token: session["session_token"],
@@ -73,7 +76,10 @@ defmodule RavixWeb.WorkspaceLive do
         # The current workspace (`Ravix.Workspaces.current/2`), nil unscoped;
         # the legacy projects shared with the viewer, drawn as "Shared with
         # you" in their personal workspace; and the Inbox items elsewhere.
-        current_workspace: nil,
+        # Resolved here, the way every rail read resolves it (`scope_rail/2`),
+        # so the disconnected render names the same workspace as the
+        # connected one rather than the switcher's first entry (RAV-67).
+        current_workspace: current_workspace(user, workspaces),
         watched_workspace: nil,
         # A project a URL named before the rail arrived, for that rail to
         # follow into its workspace; see `open_url/2`.
@@ -152,7 +158,7 @@ defmodule RavixWeb.WorkspaceLive do
         busy: false,
         # The sidebar's workspace switcher; empty while RAVIX_WORKSPACE_ACCESS
         # is off, which draws nothing. See `RavixWeb.Live.WorkspaceSwitcher`.
-        workspaces: WorkspaceSwitcher.list(socket.assigns[:current_user]),
+        workspaces: workspaces,
         # The New track repository list (RAV-10) while RAVIX_WORKSPACE_ACCESS
         # is on; nil draws today's project select. See `Ravix.Workspaces.Picker`.
         picker: nil,
@@ -212,6 +218,7 @@ defmodule RavixWeb.WorkspaceLive do
          {:ok, track} <- requested_track(user, id, params["track"]) do
       socket
       |> assign(url_project: project.id)
+      |> await_follow(project)
       |> select_project(project, params["track"], params, track)
     else
       _ -> assign(socket, pending_url: params)
@@ -239,6 +246,16 @@ defmodule RavixWeb.WorkspaceLive do
         select_project(socket, project, track_id, params)
     end
   end
+
+  # A URL naming a project in another of the viewer's workspaces moves the
+  # page there once the rail arrives (`scope_rail/2`). Until then the
+  # switcher draws a skeleton rather than naming the workspace about to be left.
+  defp await_follow(%{assigns: %{current_workspace: %{workspace: %{id: id}}}} = socket, project) do
+    home = Workspaces.home(socket.assigns.current_user, socket.assigns.workspaces, project)
+    if home in [nil, id], do: socket, else: assign(socket, current_workspace: nil)
+  end
+
+  defp await_follow(socket, _project), do: socket
 
   defp missing_message(id, kind) do
     case {Ecto.UUID.cast(id), kind} do
@@ -1610,12 +1627,7 @@ defmodule RavixWeb.WorkspaceLive do
     listed = WorkspaceSwitcher.list(user)
     all = socket.assigns.all_projects
     follow = follow || moving_here(socket)
-
-    current =
-      case Workspaces.current(user, listed) do
-        {:ok, current} -> current
-        {:error, :not_found} -> nil
-      end
+    current = current_workspace(user, listed)
 
     parts = Workspaces.partition(user, current && current.workspace, listed, all)
 
@@ -1648,6 +1660,17 @@ defmodule RavixWeb.WorkspaceLive do
           Enum.find(projects, &(&1.id == track_project_id(socket) && &1.access != :tracks))
     )
     |> derive_scope()
+  end
+
+  # The one resolution of the current workspace, for the mount and for every
+  # rail read: the session's own user, through `Access.workspace_access/2`.
+  defp current_workspace(nil, _listed), do: nil
+
+  defp current_workspace(user, listed) do
+    case Workspaces.current(user, listed) do
+      {:ok, current} -> current
+      {:error, :not_found} -> nil
+    end
   end
 
   defp moving_here(%{assigns: %{dialog: :settings, project: %{id: id}, all_projects: all}}) do

@@ -1229,6 +1229,31 @@ test('slow navigation and requests show feedback until their response arrives', 
   await page.evaluate(() => window.liveSocket.disableLatencySim());
 });
 
+test('a slow first connect shows skeletons and no request toast, never an empty inbox', async ({ page }) => {
+  await signIn(page);
+  // Whether the request toast was ever shown, however briefly: a retrying
+  // `toBeHidden` would simply wait the first join out.
+  await page.addInitScript(() => {
+    window.__requestToast = false;
+    // The document, not its root: parsing the page replaces the root element.
+    new MutationObserver(() => {
+      if (document.documentElement?.classList.contains('page-loading')) window.__requestToast = true;
+    }).observe(document, { attributes: true, subtree: true, attributeFilter: ['class'] });
+  });
+  await page.evaluate(() => window.liveSocket.enableLatencySim(1500));
+  try {
+    await page.goto('/inbox');
+    await expect(page.locator('#inbox-loading')).toBeVisible();
+    await expect(page.locator('#rail-loading .rail-row-skeleton').first()).toBeVisible();
+    await expect(page.locator('.inbox-empty')).toHaveCount(0);
+    await expect(page.locator('[data-phx-main].phx-connected')).toHaveCount(1, { timeout: 15000 });
+    await expect(page.locator('#inbox-loading')).toHaveCount(0, { timeout: 15000 });
+    expect(await page.evaluate(() => window.__requestToast)).toBe(false);
+  } finally {
+    await page.evaluate(() => window.liveSocket.disableLatencySim());
+  }
+});
+
 test('schedule Day appears only for weekly repetition without losing the draft', async ({ page }) => {
   await signIn(page);
   await page.goto('/schedules');

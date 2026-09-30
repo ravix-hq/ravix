@@ -509,9 +509,11 @@ html[data-inspector="closed"] #inspector-toggle .label-show { display: inline; }
 /* The login is `--dimmer` on the rail; on a lit row that falls under 4.5:1. */
 .yard-account:hover small, .yard:has(#account-menu:popover-open) .yard-account small { color: var(--dim); }
 .account-chevron { flex: none; color: var(--dimmer); }
-/* What's new has something unseen: a dot on the avatar's corner. */
+/* What's new has something unseen: a dot on the gear's corner. The gear is
+   round, so its box's corner is empty and the dot there covers no stroke. */
+.account-icon { position: relative; flex: none; display: grid; place-items: center; }
 .account-unseen {
-  position: absolute; left: 25px; top: 3px; width: 8px; height: 8px; border-radius: 50%;
+  position: absolute; top: -3px; right: -3px; width: 7px; height: 7px; border-radius: 50%;
   background: var(--accent); box-shadow: 0 0 0 2px var(--sidebar);
 }
 .account-menu, .project-menu {
@@ -541,9 +543,6 @@ html[data-inspector="closed"] #inspector-toggle .label-show { display: inline; }
    its menu a native popover like the account menu, dropping down instead. */
 .workspace-switcher { flex: 1; min-width: 0; display: flex; align-items: center; gap: 2px; }
 .workspace-trigger { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; padding: 4px 6px; color: var(--ink); font-weight: 600; text-align: left; }
-/* Settings and members of the current workspace, beside its name. */
-.workspace-gear { flex: none; display: grid; place-items: center; width: 28px; height: 28px; color: var(--dim); border-radius: var(--radius); }
-.workspace-gear:hover { color: var(--ink); background: var(--surface-hover); }
 .workspace-mark {
   flex: none; display: grid; place-items: center; width: 20px; height: 20px; border-radius: var(--radius);
   background: var(--surface); border: 1px solid var(--line); color: var(--ink); font-size: 11px; font-weight: 600;
@@ -564,7 +563,19 @@ html[data-inspector="closed"] #inspector-toggle .label-show { display: inline; }
 .new-workspace { display: grid; gap: 6px; padding: 6px 8px; }
 .new-workspace label { font-size: 12px; color: var(--dim); }
 html[data-yard="closed"] .workspace-trigger > :not(.workspace-mark) { display: none; }
-html[data-yard="closed"] .yard .workspace-gear { display: none; }
+/* Before the first read answers: grey shapes where the switcher, rail rows
+   and inbox cards will be, rather than text that claims anything. */
+.skeleton { display: block; border-radius: var(--radius); background: var(--line); animation: skeleton-pulse 1.4s ease-in-out infinite; }
+.workspace-trigger-skeleton { flex: 1; height: 28px; margin: 0 2px; }
+html[data-yard="closed"] .workspace-trigger-skeleton { flex: none; width: 28px; }
+.rail-row-skeleton { height: 14px; margin: 10px 8px; }
+.rail-row-skeleton:nth-child(odd) { width: 62%; }
+.inbox-item-skeleton { pointer-events: none; }
+.inbox-item-skeleton .skeleton-chip { width: 84px; height: 16px; }
+.inbox-item-skeleton .skeleton-line { width: 70%; height: 12px; }
+.inbox-item-skeleton .skeleton-line.short { width: 40%; }
+@keyframes skeleton-pulse { 50% { opacity: .55; } }
+@media (prefers-reduced-motion: reduce) { .skeleton { animation: none; } }
 .workspace-page { max-width: 720px; margin: 0 auto; padding: 24px 16px 48px; display: grid; gap: 16px; }
 .workspace-page-head { display: flex; align-items: center; gap: 12px; }
 .workspace-page-head .workspace-switcher { flex: 0 1 280px; }
