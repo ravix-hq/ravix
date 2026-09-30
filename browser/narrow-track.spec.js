@@ -12,11 +12,11 @@ async function scrollSurfaces(page) {
 test('narrow track views give the conversation space and preserve drafts', async ({ page }) => {
   test.setTimeout(120_000);
   await signIn(page, 'eli', '/home');
-  await page.getByRole('button', { name: 'Add repository', exact: true }).first().click();
+  await page.getByRole('button', { name: 'Add a repository', exact: true }).first().click();
   await page.getByLabel('Project name', { exact: true }).fill('Narrow track');
   await expect(page.locator('#project-repositories input[type=radio]')).not.toHaveCount(0);
   await page.getByRole('radio', { name: 'mockuser/atlas-api', exact: true }).check();
-  await page.getByRole('dialog', { name: 'Add repository' }).getByRole('button', { name: 'Add repository', exact: true }).click();
+  await page.getByRole('dialog', { name: 'Add a repository' }).getByRole('button', { name: 'Add repository', exact: true }).click();
   await page.locator('#yard .workspace-project.current .project-add').click();
   await page.getByRole('button', { name: 'Create track', exact: true }).click();
   const composer = page.getByRole('textbox', { name: 'Message', exact: true });

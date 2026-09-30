@@ -29,8 +29,8 @@ test('the first click after Escape closes a dialog reaches what is under it', as
   await page.setViewportSize({ width: 1280, height: 900 });
   await signIn(page, 'escaper');
   await connectClaude(page);
-  await page.getByRole('button', { name: 'Add repository', exact: true }).first().click();
-  const project = page.getByRole('dialog', { name: 'Add repository' });
+  await page.getByRole('button', { name: 'Add a repository', exact: true }).first().click();
+  const project = page.getByRole('dialog', { name: 'Add a repository' });
   await project.getByLabel('Project name', { exact: true }).fill('Escape hatch');
   await expect(project.locator('#project-repositories input[type=radio]')).not.toHaveCount(0);
   await project.getByRole('radio', { name: 'mockuser/atlas-api', exact: true }).check();

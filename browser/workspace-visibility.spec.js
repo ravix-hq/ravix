@@ -59,8 +59,8 @@ test('a private track stays out of another workspace member\'s rail, search and 
 
   await signIn(page, 'workspacecreator');
   await connectClaude(page);
-  await page.getByRole('button', { name: 'Add repository', exact: true }).first().click();
-  const project = page.getByRole('dialog', { name: 'Add repository', exact: true });
+  await page.getByRole('button', { name: 'Add a repository', exact: true }).first().click();
+  const project = page.getByRole('dialog', { name: 'Add a repository', exact: true });
   await project.getByLabel('Project name', { exact: true }).fill(projectName);
   await project.getByRole('button', { name: 'Create scratch project', exact: true }).click();
   await expect(project).toHaveCount(0);

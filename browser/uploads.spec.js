@@ -5,8 +5,8 @@ test('images upload before Send and remain visible in conversation history', asy
   test.setTimeout(90_000);
   await signIn(page, 'eli');
   await connectClaude(page);
-  await page.getByRole('button', { name: 'Add repository', exact: true }).first().click();
-  const project = page.getByRole('dialog', { name: 'Add repository' });
+  await page.getByRole('button', { name: 'Add a repository', exact: true }).first().click();
+  const project = page.getByRole('dialog', { name: 'Add a repository' });
   await project.getByLabel('Project name', { exact: true }).fill('Image uploads');
   await project.getByRole('button', { name: 'Create scratch project' }).click();
   await expect(project).not.toBeVisible();

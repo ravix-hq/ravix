@@ -164,7 +164,7 @@
           class="primary"
           data-new-track-trigger
           aria-keyshortcuts="Control+N Meta+N"
-          phx-click={JS.push_focus() |> JS.push("top-new-track")}
+          phx-click={new_track_click(@rail_loaded, @projects)}
         >
           <.icon name="plus" />New track
         </button>
@@ -180,7 +180,7 @@
           phx-click={JS.push_focus() |> JS.push("dialog")}
           phx-value-name="new-project"
         >
-          <.icon name="folder" />Add repository
+          <.icon name="folder" />Add a repository
         </button>
 
         <.link patch="/schedules" class={["yard-item", @live_action == :schedules && "on"]}>
@@ -606,11 +606,15 @@
           phx-click={JS.push_focus() |> JS.push("dialog")}
           phx-value-name="search"
         >Search</button>
+        <%!-- RAV-37: the phone's create action is New track too, the same
+          button, label and shortcut as the sidebar's and Home's. --%>
         <button
-          class="ghost"
-          phx-click={JS.push_focus() |> JS.push("dialog")}
-          phx-value-name="new-project"
-        >Add repository</button>
+          id="mobile-new-track"
+          class="primary"
+          data-new-track-trigger
+          aria-keyshortcuts="Control+N Meta+N"
+          phx-click={new_track_click(@rail_loaded, @projects)}
+        ><.icon name="plus" />New track</button>
       </nav>
       <div
         id="yard-resize"
@@ -784,9 +788,9 @@
           <% end %>
         </section>
         <%!-- Home (RAV-100): the recent tracks across the rail, in the same
-          page container as the Inbox and Schedules. Adding a repository is
-          the sidebar's "Add repository" (RAV-37); Home has no button of its
-          own for it. --%>
+          page container as the Inbox and Schedules. Its one action is New
+          track, as in the sidebar and on the phone (RAV-37); adding a
+          repository is the sidebar's "Add a repository". --%>
         <.stage_page
           :if={is_nil(@project) && @live_action == :projects}
           id="home"
@@ -804,6 +808,17 @@
           <:subtitle :if={!@rail_loaded || !fresh_start?(@projects)}>
             Pick up where you left off.
           </:subtitle>
+          <:actions>
+            <button
+              id="home-new-track"
+              class="primary"
+              data-new-track-trigger
+              aria-keyshortcuts="Control+N Meta+N"
+              phx-click={new_track_click(@rail_loaded, @projects)}
+            >
+              <.icon name="plus" />New track
+            </button>
+          </:actions>
           <section
             :if={@rail_loaded && fresh_start?(@projects)}
             id="home-start"
@@ -819,7 +834,7 @@
             />
             <QuickStart.explainer id="home-explainer" />
             <p class="hint first-prompt-alt">
-              To add a repository without starting a track yet, use Add repository in the sidebar.
+              To add a repository without starting a track yet, use Add a repository in the sidebar.
             </p>
           </section>
           <section
@@ -1165,7 +1180,7 @@
     <.dialog
       :if={@dialog == :new_project}
       id="new-project-dialog"
-      title={if @project_mode == "scratch", do: "New scratch project", else: "Add repository"}
+      title={if @project_mode == "scratch", do: "New scratch project", else: "Add a repository"}
       focus_on_mount={false}
       on_close={dismiss(@project, @track_id, @settings)}
     >
@@ -1238,6 +1253,18 @@
               </option>
             </select>
           </form>
+          <%!-- RAV-37: adding a repository from here comes back to this
+            dialog with it chosen. The workspace picker has its own. --%>
+          <button
+            :if={!@picker}
+            type="button"
+            id="new-track-add-repository"
+            class="repo-option ghost"
+            phx-click="new-track-add-repository"
+            disabled={@busy}
+          >
+            <.icon name="plus" size={13} />Add a repository…
+          </button>
         </RavixWeb.Live.ModelMenu.chip>
         <span class="spacer"></span>
         <RavixWeb.Live.ModelMenu.chip
@@ -1311,6 +1338,9 @@
         />
         <p id="new-track-prompt-hint" class="sr-only">
           Sent to the agent once setup is ready. Enter creates the track; Shift+Enter adds a line.
+        </p>
+        <p id="new-track-explainer" class="hint new-track-explainer">
+          A track is a branch with its own machine; threads are conversations in it.
         </p>
         <div id="track-advanced" class="track-advanced" hidden={!@advanced_track}>
           <div class="workspace-actions origin-options">

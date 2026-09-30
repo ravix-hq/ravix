@@ -21,7 +21,7 @@ for (const width of [1280, 500]) {
     await page.addInitScript(recordChip);
     await signIn(page, 'eli', '/home');
     await connectClaude(page);
-    await page.getByRole('button', { name: 'Add repository', exact: true }).first().first().click();
+    await page.getByRole('button', { name: 'Add a repository', exact: true }).first().first().click();
     await page.getByLabel('Project name', { exact: true }).fill(`Machine state ${width}`);
     await page.getByRole('button', { name: 'Create scratch project', exact: true }).click();
     // The track is opened, and watched, at the width under test.

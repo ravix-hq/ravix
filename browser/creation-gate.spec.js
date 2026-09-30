@@ -5,8 +5,8 @@ import { openAgentSettings } from './settings.js';
 
 test('connect Codex inline without losing the new project draft', async ({ page }) => {
   await signIn(page, 'dana', '/home');
-  await page.getByRole('button', { name: 'Add repository', exact: true }).first().click();
-  const dialog = page.getByRole('dialog', { name: 'Add repository' });
+  await page.getByRole('button', { name: 'Add a repository', exact: true }).first().click();
+  const dialog = page.getByRole('dialog', { name: 'Add a repository' });
   await dialog.getByLabel('Project name', { exact: true }).fill('Credential gate');
   await dialog.locator('#project-agent-codex').click();
   await expect(dialog.locator('#project-agent-codex')).toContainText('Not connected');
@@ -45,8 +45,8 @@ test('connect ChatGPT inline by device code and preserve the project draft', asy
   await expect(panel.locator('#agent-codex')).toBeVisible();
   await page.goto('/home');
   await expect(page.locator('[data-phx-main]')).toHaveClass(/phx-connected/);
-  await page.getByRole('button', { name: 'Add repository', exact: true }).first().click();
-  const dialog = page.getByRole('dialog', { name: 'Add repository' });
+  await page.getByRole('button', { name: 'Add a repository', exact: true }).first().click();
+  const dialog = page.getByRole('dialog', { name: 'Add a repository' });
   await dialog.getByLabel('Project name', { exact: true }).fill('ChatGPT inline');
   await dialog.locator('#project-agent-codex').click();
   await expect(dialog.getByRole('button', { name: 'Create scratch project', exact: true })).toBeDisabled();
@@ -66,8 +66,8 @@ test('connect ChatGPT inline by device code and preserve the project draft', asy
 
 test('late dialog focus never steals typing from the project name', async ({ page }) => {
   await signIn(page, 'dana', '/home');
-  await page.getByRole('button', { name: 'Add repository', exact: true }).first().click();
-  const dialog = page.getByRole('dialog', { name: 'Add repository' });
+  await page.getByRole('button', { name: 'Add a repository', exact: true }).first().click();
+  const dialog = page.getByRole('dialog', { name: 'Add a repository' });
   await expect(dialog.getByRole('searchbox', { name: 'Repository', exact: true })).toBeFocused();
   const name = dialog.getByLabel('Project name', { exact: true });
   await name.fill('Draft');

@@ -22,7 +22,7 @@ test('Ctrl+K opens quick jump from the composer, keeps every key and stays put',
   await page.setViewportSize({ width: 1440, height: 900 });
   await signIn(page, 'quickjumper', '/home');
   await connectClaude(page);
-  await page.getByRole('button', { name: 'Add repository', exact: true }).first().click();
+  await page.getByRole('button', { name: 'Add a repository', exact: true }).first().click();
   await page.getByLabel('Project name', { exact: true }).fill('Jump project');
   await page.getByRole('button', { name: 'Create scratch project', exact: true }).click();
   await expect(page.locator('#crumb-plans')).toBeVisible();

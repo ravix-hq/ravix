@@ -36,8 +36,8 @@ test('a shared track shows who sent a prompt and what they typed, not the attrib
 
   await signIn(page, 'attributor', '/home');
   await connectClaude(page);
-  await page.getByRole('button', { name: 'Add repository', exact: true }).first().click();
-  const project = page.getByRole('dialog', { name: 'Add repository', exact: true });
+  await page.getByRole('button', { name: 'Add a repository', exact: true }).first().click();
+  const project = page.getByRole('dialog', { name: 'Add a repository', exact: true });
   await project.getByLabel('Project name', { exact: true }).fill('Attributed prompts');
   await project.getByRole('button', { name: 'Create scratch project', exact: true }).click();
   await expect(project).toHaveCount(0);

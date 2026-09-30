@@ -28,7 +28,7 @@ test('stage pages share one edge; the nav, dialogs and selects hold still', asyn
   // repositories arrive, and the field under them does not move.
   await page.goto('/home');
   await connected(page);
-  await page.getByRole('button', { name: 'Add repository', exact: true }).first().click();
+  await page.getByRole('button', { name: 'Add a repository', exact: true }).first().click();
   const dialog = page.locator('#new-project-dialog-dialog');
   await expect(dialog).toBeVisible();
   const frames = await page.evaluate(() => new Promise(resolve => {

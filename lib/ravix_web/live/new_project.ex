@@ -1,6 +1,6 @@
 defmodule RavixWeb.Live.NewProject do
   @moduledoc """
-  The workspace's Add repository form (RAV-37): connecting a repository as a
+  The workspace's Add a repository form (RAV-37): connecting a repository as a
   project, apart from daily work, which starts from New track or a thread.
   It lists the repositories GitHub shows behind a search, with "No
   repository (scratch machine)" as its last choice and Configure on GitHub

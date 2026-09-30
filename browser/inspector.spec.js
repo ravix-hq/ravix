@@ -25,8 +25,8 @@ async function slowReads(request, ms) {
 async function openTrack(page, login, name) {
   await signIn(page, login);
   await connectClaude(page);
-  await page.getByRole('button', { name: 'Add repository', exact: true }).first().click();
-  const dialog = page.getByRole('dialog', { name: 'Add repository', exact: true });
+  await page.getByRole('button', { name: 'Add a repository', exact: true }).first().click();
+  const dialog = page.getByRole('dialog', { name: 'Add a repository', exact: true });
   await dialog.getByLabel('Project name', { exact: true }).fill(name);
   await expect(page.locator('#project-repositories input[type=radio]')).not.toHaveCount(0);
   await dialog.getByRole('radio', { name: 'mockuser/atlas-api', exact: true }).check();

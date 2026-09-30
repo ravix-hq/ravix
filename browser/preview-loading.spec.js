@@ -46,7 +46,7 @@ test('track logs stay open through status patches and failure still opens diagno
   // Its own agent: Add repository needs one, and relying on an earlier spec to
   // have connected it for this person breaks whenever sharding reorders them.
   await connectClaude(page);
-  await page.getByRole('button', { name: 'Add repository', exact: true }).first().click();
+  await page.getByRole('button', { name: 'Add a repository', exact: true }).first().click();
   await page.getByLabel('Project name', { exact: true }).fill('Preview disclosure');
   await page.getByRole('button', { name: 'Create scratch project', exact: true }).click();
   await page.locator('#yard .workspace-project.current .project-add').click();

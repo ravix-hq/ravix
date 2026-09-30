@@ -781,7 +781,7 @@ defmodule RavixWeb.WorkspaceLiveTest do
     assert {:error, {:live_redirect, %{to: "/"}}} = live(log_in_user(conn, user), "/login")
   end
 
-  test "Add repository opens a fresh form and Home's recent tracks stay scoped", %{conn: conn} do
+  test "Add a repository opens a fresh form and Home's recent tracks stay scoped", %{conn: conn} do
     user = insert_user()
     own = insert_project(user: user, name: "Recent work")
     track = insert_track(project: own, created_by_login: user.login, title: "Tidy the router")
@@ -798,16 +798,17 @@ defmodule RavixWeb.WorkspaceLiveTest do
 
     refute render(view) =~ hidden.name
     refute render(view) =~ "Somebody else"
-    # The sidebar's "Add repository" is the one way in; Home has no copy of it.
-    refute has_element?(view, "#home button")
-    add = element(view, "#yard button.yard-item", "Add repository")
+    # The sidebar's "Add a repository" is the one way in; Home's one action is New track.
+    refute has_element?(view, "#home button", "repository")
+    assert has_element?(view, "#home #home-new-track[data-new-track-trigger]", "New track")
+    add = element(view, "#yard button.yard-item", "Add a repository")
     render_click(add)
     view |> form("#new-project-form", new_project: [name: "Abandoned name"]) |> render_change()
     render_click(view, "dismiss")
     render_click(add)
     # A pristine form renders no `value` at all, which is how the field
     # comes up empty; the point of the assertion is that the abandoned name
-    # is not still in it. Add repository opens the repository list.
+    # is not still in it. Add a repository opens the repository list.
     assert has_element?(view, "#project-name:not([value])")
     assert has_element?(view, "#project-repo")
     refute render(view) =~ "Abandoned name"
@@ -1595,11 +1596,18 @@ defmodule RavixWeb.WorkspaceLiveTest do
     assert has_element?(view, "#yard [data-project-id='#{home.id}'].current")
   end
 
-  test "top New track offers project creation when there are no projects", %{conn: conn} do
+  test "top New track with no projects starts at Home's first prompt", %{conn: conn} do
     user = insert_user()
-    {:ok, view, _} = live(log_in_user(conn, user), "/home")
+    {:ok, view, _} = live(log_in_user(conn, user), "/inbox")
     render_async(view)
     view |> element("#top-new-track") |> render_click()
+    assert_patch(view, "/home")
+    refute has_element?(view, "#new-project-dialog")
+    assert has_element?(view, "#home-quick-start-prompt")
+
+    # Before the rail has said there are none, the server still answers the
+    # event with Add a repository rather than nothing.
+    render_click(view, "top-new-track", %{})
     assert has_element?(view, "#new-project-dialog")
   end
 
@@ -1709,7 +1717,7 @@ defmodule RavixWeb.WorkspaceLiveTest do
 
     {:ok, view, _} = live(log_in_user(conn, user), "/")
     render_async(view)
-    view |> element(".workspace-actions button", "Add repository") |> render_click()
+    view |> element(".workspace-actions button", "Add a repository") |> render_click()
 
     render_click(view, "choose-project-agent", %{"agent" => "codex"})
 
@@ -1722,6 +1730,107 @@ defmodule RavixWeb.WorkspaceLiveTest do
     # Plans are behind the project row now, not on the project's home.
     refute has_element?(view, "#plans-panel")
     assert has_element?(view, "a.project-action[aria-label='Plans in New project']")
+  end
+
+  test "New track is the one create action: sidebar, Home and phone, one label and shortcut",
+       %{conn: conn} do
+    user = insert_user()
+    {:ok, view, _} = live(log_in_user(conn, user), "/home")
+    render_async(view)
+
+    for id <- ["top-new-track", "home-new-track", "mobile-new-track"] do
+      assert has_element?(
+               view,
+               "##{id}[data-new-track-trigger][aria-keyshortcuts='Control+N Meta+N']",
+               "New track"
+             )
+    end
+
+    refute has_element?(view, ".workspace-mobile-nav button", "New project")
+    refute has_element?(view, ".workspace-mobile-nav button", "repository")
+
+    # Nothing to start a track in yet: New track goes to Home's first
+    # prompt, not to Add a repository.
+    html = view |> element("#home-new-track") |> render()
+    assert html =~ "home-quick-start-prompt"
+    refute html =~ "top-new-track"
+
+    insert_project(user: user, name: "Now there is one")
+    {:ok, view, _} = live(log_in_user(conn, user), "/home")
+    render_async(view)
+    assert view |> element("#home-new-track") |> render() =~ "top-new-track"
+    view |> element("#home-new-track") |> render_click()
+    assert has_element?(view, "#new-track-dialog")
+
+    assert has_element?(
+             view,
+             "#new-track-explainer",
+             "A track is a branch with its own machine; threads are conversations in it."
+           )
+  end
+
+  test "Add a repository from New track comes back to New track with it chosen", %{conn: conn} do
+    user = insert_user()
+    existing = insert_project(user: user, name: "Existing")
+
+    expect(Projects, :create, fn actual_user, attrs ->
+      assert actual_user.id == user.id
+      project = insert_project(user: user, name: attrs["name"])
+      {:ok, %{id: project.id}}
+    end)
+
+    {:ok, view, _} = live(log_in_user(conn, user), "/p/#{existing.id}?new=track")
+    render_async(view)
+    assert has_element?(view, "#new-track-dialog")
+    view |> element("#new-track-add-repository", "Add a repository…") |> render_click()
+    assert has_element?(view, "#new-project-dialog h2", "Add a repository")
+    refute has_element?(view, "#new-track-dialog")
+    render_async(view)
+
+    view
+    |> form("#new-project-form", new_project: [name: "Fresh", repo: ""])
+    |> render_submit()
+
+    render_async(view)
+    path = assert_patch(view)
+    [_, id] = Regex.run(~r{^/p/([^/?]+)\?new=track$}, path)
+    refute id == existing.id
+    assert has_element?(view, "#new-track-dialog")
+    assert has_element?(view, "#new-track-project option[value='#{id}'][selected]")
+
+    # Opened from the sidebar instead, it goes to the project itself.
+    view |> element(".workspace-actions button", "Add a repository") |> render_click()
+    render_async(view)
+
+    expect(Projects, :create, fn _, attrs ->
+      {:ok, %{id: insert_project(user: user, name: attrs["name"]).id}}
+    end)
+
+    view |> form("#new-project-form", new_project: [name: "Plain", repo: ""]) |> render_submit()
+    render_async(view)
+    path = assert_patch(view)
+    assert path =~ ~r{^/p/[^/?]+$}
+  end
+
+  test "Add a repository from New track is ignored outside it, and stops with the session",
+       %{conn: conn} do
+    user = insert_user()
+    project = insert_project(user: user)
+    {token, session} = insert_session(user)
+    conn = Plug.Test.init_test_session(conn, session_token: token)
+    {:ok, view, _} = live(conn, "/p/#{project.id}")
+    render_async(view)
+
+    render_click(view, "new-track-add-repository", %{})
+    refute has_element?(view, "#new-project-dialog")
+
+    render_click(view, "dialog", %{name: "new-track"})
+    assert has_element?(view, "#new-track-dialog")
+    Repo.delete!(session)
+    :sys.replace_state(view.pid, &age_session_guard/1)
+
+    assert {:error, {:redirect, %{to: "/login"}}} =
+             render_click(view, "new-track-add-repository", %{})
   end
 
   test "signing out somewhere else takes this page with it, without being poked", %{conn: conn} do
@@ -1763,7 +1872,7 @@ defmodule RavixWeb.WorkspaceLiveTest do
              render_click(view, "dialog", %{name: "new-project"})
   end
 
-  test "a revoked session cannot search or pick in Add repository", %{conn: conn} do
+  test "a revoked session cannot search or pick in Add a repository", %{conn: conn} do
     stub(Accounts, :capabilities, fn -> %{github: true} end)
 
     stub(Projects, :repos, fn _, _ ->

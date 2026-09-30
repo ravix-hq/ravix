@@ -11,8 +11,8 @@ import { connectApiKey } from './settings.js';
 // menu says "Extra high" (RAV-95).
 
 async function newTrack(page, name, agent) {
-  await page.getByRole('button', { name: 'Add repository', exact: true }).first().click();
-  const project = page.getByRole('dialog', { name: 'Add repository', exact: true });
+  await page.getByRole('button', { name: 'Add a repository', exact: true }).first().click();
+  const project = page.getByRole('dialog', { name: 'Add a repository', exact: true });
   await project.getByLabel('Project name', { exact: true }).fill(name);
   if (agent) await project.locator(`#project-agent-${agent}`).click();
   await project.getByRole('button', { name: 'Create scratch project', exact: true }).click();

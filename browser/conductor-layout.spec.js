@@ -9,8 +9,8 @@ test('conversation tabs, project picker, settings gears and inspector at desktop
   await connectClaude(page);
   const projects = [];
   for (const name of ['Layout alternate', 'Layout current']) {
-    await page.getByRole('button', { name: 'Add repository', exact: true }).first().click();
-    const dialog = page.getByRole('dialog', { name: 'Add repository', exact: true });
+    await page.getByRole('button', { name: 'Add a repository', exact: true }).first().click();
+    const dialog = page.getByRole('dialog', { name: 'Add a repository', exact: true });
     await dialog.getByLabel('Project name', { exact: true }).fill(name);
     await dialog.getByRole('button', { name: 'Create scratch project', exact: true }).click();
     await expect(dialog).not.toBeVisible();

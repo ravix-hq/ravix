@@ -210,12 +210,12 @@ defmodule RavixWeb.Live.NewProjectTest do
     |> LazyHTML.attribute("value")
   end
 
-  test "Add repository lists repositories in name order behind a search, scratch last",
+  test "Add a repository lists repositories in name order behind a search, scratch last",
        %{conn: conn, user: user} do
     view = open(conn, user)
 
     # RAV-37: its own flow, named for what it does, apart from New track.
-    assert has_element?(view, "#new-project-dialog h2", "Add repository")
+    assert has_element?(view, "#new-project-dialog h2", "Add a repository")
     assert has_element?(view, "#new-project-dialog .lede", "Start work in it from New track")
 
     assert has_element?(

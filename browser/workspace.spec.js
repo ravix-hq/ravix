@@ -351,8 +351,8 @@ test('home quick start creates a scratch project and recent navigation survives 
   // With no project yet, /home is the first-prompt form (first-run.spec.js);
   // adding a repository is the sidebar's "Add repository" (RAV-100, RAV-37).
   await expect(page.locator('#home-start')).toBeVisible();
-  await expect(page.locator('#home').getByRole('button', { name: /New project|Add repository/ })).toHaveCount(0);
-  await page.getByRole('button', { name: 'Add repository', exact: true }).first().click();
+  await expect(page.locator('#home').getByRole('button', { name: /New project|Add a repository/ })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Add a repository', exact: true }).first().click();
   await page.getByLabel('Project name', { exact: true }).fill('Quick start quality');
   // Scratch is the list's last choice, and chosen while nothing else is.
   await expect(page.getByRole('radio', { name: 'No repository (scratch machine)', exact: true })).toBeChecked();
@@ -366,7 +366,7 @@ test('home quick start creates a scratch project and recent navigation survives 
   await page.locator('#yard .workspace-project', { hasText: 'Quick start quality' })
     .getByRole('link', { name: /Quick start quality/ }).first().click();
   await openTrackHere(page);
-  await page.getByRole('button', { name: 'Add repository', exact: true }).first().click();
+  await page.getByRole('button', { name: 'Add a repository', exact: true }).first().click();
   await page.getByLabel('Project name', { exact: true }).fill('A much longer project name to verify columns and narrow screen wrapping');
   await page.getByRole('button', { name: 'Create scratch project', exact: true }).click();
   await expect(page.locator('#crumb-plans')).toBeVisible();
@@ -505,10 +505,10 @@ test('keyboard users can resize panels and close dialogs with focus restored', a
   await expect(handle).toHaveAttribute('aria-valuenow', '220');
   await handle.press('ArrowRight');
   await expect(handle).toHaveAttribute('aria-valuenow', '230');
-  const open = page.getByRole('complementary', { name: 'Projects' }).getByRole('button', { name: 'Add repository', exact: true }).first();
+  const open = page.getByRole('complementary', { name: 'Projects' }).getByRole('button', { name: 'Add a repository', exact: true }).first();
   await open.focus();
   await open.press('Enter');
-  const dialog = page.getByRole('dialog', { name: 'Add repository' });
+  const dialog = page.getByRole('dialog', { name: 'Add a repository' });
   await expect(dialog).toBeVisible();
   await expect(dialog.getByRole('searchbox', { name: 'Repository', exact: true })).toBeFocused();
   await accessible(page);
@@ -524,8 +524,8 @@ test('project, track, streaming, image upload, reconnect, and revocation', async
   page.on('pageerror', error => errors.push(error.message));
   await signIn(page);
   await connectClaude(page);
-  await page.getByRole('button', { name: 'Add repository', exact: true }).first().click();
-  const projectDialog = page.getByRole('dialog', { name: 'Add repository' });
+  await page.getByRole('button', { name: 'Add a repository', exact: true }).first().click();
+  const projectDialog = page.getByRole('dialog', { name: 'Add a repository' });
   await expect(projectDialog).toBeVisible();
   await page.getByLabel('Project name', { exact: true }).fill('Browser quality');
   await expect(page.locator('#project-repositories input[type=radio]')).not.toHaveCount(0);
@@ -922,8 +922,8 @@ test('help explains desktop connections and stays accessible on mobile', async (
 test('project settings navigate, warn before discarding, and save sections accessibly', async ({ page }) => {
   await signIn(page);
   await connectClaude(page);
-  await page.getByRole('button', { name: 'Add repository', exact: true }).first().click();
-  const create = page.getByRole('dialog', { name: 'Add repository' });
+  await page.getByRole('button', { name: 'Add a repository', exact: true }).first().click();
+  const create = page.getByRole('dialog', { name: 'Add a repository' });
   await create.getByLabel('Project name', { exact: true }).fill('Settings browser');
   await create.getByRole('button', { name: 'Create scratch project', exact: true }).click();
   await expect(create).not.toBeVisible();
@@ -1044,8 +1044,8 @@ test('composer Send stays compact and keeps its arrow after repeated submissions
   test.setTimeout(150_000);
   await signIn(page);
   await connectClaude(page);
-  await page.getByRole('button', { name: 'Add repository', exact: true }).first().click();
-  const projectDialog = page.getByRole('dialog', { name: 'Add repository', exact: true });
+  await page.getByRole('button', { name: 'Add a repository', exact: true }).first().click();
+  const projectDialog = page.getByRole('dialog', { name: 'Add a repository', exact: true });
   await projectDialog.getByLabel('Project name', { exact: true }).fill('Send regression');
   await projectDialog.getByRole('button', { name: 'Create scratch project', exact: true }).click();
   await expect(projectDialog).toHaveCount(0);
@@ -1226,7 +1226,7 @@ test('shared project prefixes stay muted and truncate across every theme', async
   await signIn(page);
   await connectClaude(page);
   await page.getByRole('link', { name: 'Home', exact: true }).first().click();
-  await page.getByRole('button', { name: 'Add repository', exact: true }).first().click();
+  await page.getByRole('button', { name: 'Add a repository', exact: true }).first().click();
   const name = 'Shared project with a deliberately long name for a narrow rail';
   await page.getByLabel('Project name', { exact: true }).fill(name);
   await page.getByRole('button', { name: 'Create scratch project', exact: true }).click();
@@ -1309,7 +1309,7 @@ test('slow navigation and requests show feedback until their response arrives', 
   await page.locator('.yard-nav a').filter({ hasText: 'Home' }).click();
   await expect(page.locator('#request-progress')).toBeVisible();
   await expect(page.locator('#request-progress')).toBeHidden();
-  await page.locator('.yard-nav button').filter({ hasText: 'Add repository' }).click();
+  await page.locator('.yard-nav button').filter({ hasText: 'Add a repository' }).click();
   await expect(page.locator('#request-progress')).toBeVisible();
   await expect(page.locator('#new-project-dialog')).toBeVisible();
   await expect(page.locator('#request-progress')).toBeHidden();

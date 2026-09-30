@@ -6,8 +6,8 @@ test('layout evidence', async ({ page }, testInfo) => {
   test.setTimeout(120_000);
   await signIn(page, 'dana');
   await connectClaude(page);
-  await page.getByRole('button', { name: 'Add repository', exact: true }).first().click();
-  const project = page.getByRole('dialog', { name: 'Add repository', exact: true });
+  await page.getByRole('button', { name: 'Add a repository', exact: true }).first().click();
+  const project = page.getByRole('dialog', { name: 'Add a repository', exact: true });
   await project.getByLabel('Project name', { exact: true }).fill('Ravix layout');
   await project.getByRole('button', { name: 'Create scratch project', exact: true }).click();
   await expect(project).not.toBeVisible();
