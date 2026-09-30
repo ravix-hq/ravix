@@ -53,6 +53,8 @@ defmodule RavixWeb.Icons do
     "copy" =>
       ~S(<rect x="8.5" y="8.5" width="12" height="12" rx="2" /><path d="M15.5 8.5V5.5a2 2 0 0 0-2-2h-8a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h3" />),
     "x" => ~S(<path d="M6 6l12 12M18 6 6 18" />),
+    "link" =>
+      ~S(<path d="M10 14a4 4 0 0 0 5.7 0l3.3-3.3a4 4 0 0 0-5.7-5.7L12 6.3" /><path d="M14 10a4 4 0 0 0-5.7 0L5 13.3A4 4 0 0 0 10.7 19l1.3-1.3" />),
     "more" =>
       ~S(<circle cx="5.5" cy="12" r="1.4" fill="currentColor" stroke="none" /><circle cx="12" cy="12" r="1.4" fill="currentColor" stroke="none" /><circle cx="18.5" cy="12" r="1.4" fill="currentColor" stroke="none" />),
     "dot" => ~S(<circle cx="12" cy="12" r="4" fill="currentColor" stroke="none" />),
@@ -92,9 +94,6 @@ defmodule RavixWeb.Icons do
     "machine" =>
       ~S(<rect x="3" y="5" width="18" height="11" rx="2" /><path d="M8.5 20h7M12 16v4" />),
     "person" => ~S(<circle cx="12" cy="8" r="3.5" /><path d="M5.5 20a6.5 6.5 0 0 1 13 0" />),
-    # A payment card: who pays for the agent (RAV-94).
-    "card" =>
-      ~S(<rect x="3" y="5.5" width="18" height="13" rx="2" /><path d="M3 10h18M7 15h4" />),
     # A door with an arrow leaving through it.
     "sign-out" =>
       ~S(<path d="M14 4h4.5A1.5 1.5 0 0 1 20 5.5v13a1.5 1.5 0 0 1-1.5 1.5H14" /><path d="m9.5 8-4 4 4 4M5.5 12H15" />),

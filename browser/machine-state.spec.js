@@ -21,9 +21,9 @@ for (const width of [1280, 500]) {
     await page.addInitScript(recordChip);
     await signIn(page, 'eli', '/home');
     await connectClaude(page);
-    await page.getByRole('button', { name: 'Add a project', exact: true }).first().first().click();
+    await page.getByRole('button', { name: 'Add a repository', exact: true }).first().first().click();
     await page.getByLabel('Project name', { exact: true }).fill(`Machine state ${width}`);
-    await page.getByRole('button', { name: 'Create project', exact: true }).click();
+    await page.getByRole('button', { name: 'Create scratch project', exact: true }).click();
     // The track is opened, and watched, at the width under test.
     await page.setViewportSize({ width, height: 900 });
     if (width < 760) await page.getByRole('button', { name: 'Menu', exact: true }).click();
@@ -34,6 +34,8 @@ for (const width of [1280, 500]) {
     await expect(chip).toHaveAttribute('role', 'status');
     await expect(chip).toHaveAttribute('aria-live', 'polite');
     await expect(chip).toHaveText('Idle', { timeout: 30_000 });
+    // Idle is normal, so the header does not draw it; the live region stays (RAV-82).
+    await expect(chip).toHaveClass(/sr-only/);
     // The chip is the one live region for the machine's state.
     await expect(page.locator('#track-machine-status')).toHaveCount(0);
     await expect(page.locator('.machine-dock-host > [role=status]')).toHaveCount(0);

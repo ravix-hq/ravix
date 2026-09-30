@@ -282,9 +282,11 @@ defmodule RavixWeb.Markdown do
       )
       # A bare URL, which is how a machine cites things. The trailing
       # punctuation class keeps the full stop at the end of a sentence out
-      # of the href.
+      # of the href. The text is escaped by now, so a quote around the URL
+      # is `&quot;`: it may open one, and it ends one rather than becoming
+      # part of the href (RAV-93).
       |> String.replace(
-        ~r/(^|[\s(])(https?:\/\/[^\s<>()]*[^\s<>().,;:!?])/,
+        ~r/(^|[\s(']|&quot;)(https?:\/\/(?:(?!&quot;)[^\s<>()])*(?!&quot;)[^\s<>().,;:!?'])/,
         ~s(\\1<a href="\\2" target="_blank" rel="noreferrer">\\2</a>)
       )
       |> String.replace(~r/\*\*([^*]+)\*\*/, "<strong>\\1</strong>")

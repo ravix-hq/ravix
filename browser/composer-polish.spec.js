@@ -11,10 +11,10 @@ test('the composer switches mode at once, keeps one row, and hides its hint whil
   await page.setViewportSize({ width: 1440, height: 800 });
   await signIn(page, 'dana');
   await connectClaude(page);
-  await page.getByRole('button', { name: 'Add a project', exact: true }).first().click();
-  const project = page.getByRole('dialog', { name: 'New project', exact: true });
+  await page.getByRole('button', { name: 'Add a repository', exact: true }).first().click();
+  const project = page.getByRole('dialog', { name: 'Add a repository', exact: true });
   await project.getByLabel('Project name', { exact: true }).fill('Composer polish');
-  await project.getByRole('button', { name: 'Create project', exact: true }).click();
+  await project.getByRole('button', { name: 'Create scratch project', exact: true }).click();
   await expect(project).toHaveCount(0);
   await page.locator('#yard .workspace-project.current .project-add').click();
   await page.getByRole('dialog', { name: 'New track', exact: true })

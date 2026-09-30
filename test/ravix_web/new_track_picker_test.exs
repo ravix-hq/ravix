@@ -158,7 +158,7 @@ defmodule RavixWeb.NewTrackPickerTest do
     refute has_element?(view, "#repo-option-#{team_project.id}")
   end
 
-  test "no scratch project yet: scratch opens New project in scratch mode", ctx do
+  test "no scratch project yet: scratch opens Add a repository in scratch mode", ctx do
     insert_project(user: ctx.user, repo_full_name: "me/app")
     view = open_top(ctx.conn, "/home")
     view |> element("#repo-option-scratch") |> render_click()

@@ -48,11 +48,11 @@ defmodule RavixWeb.ComponentsTest do
                document copy more refresh person sign-out lock moon)
 
       # Ravix's own additions, beyond the SPA's set: the in-place stop, the
-      # composer's payer card (RAV-94), and the inspector's ignored-files
-      # toggle and its kinds of file.
+      # turn menu's "Copy link to turn" (RAV-93), and the inspector's
+      # ignored-files toggle and its kinds of file.
       inspector = ~w(eye eye-off drop braces markdown hash angles list container dot-file)
 
-      assert Enum.sort(spa ++ ~w(stop card) ++ inspector) == RavixWeb.Icons.names()
+      assert Enum.sort(spa ++ ~w(stop link) ++ inspector) == RavixWeb.Icons.names()
     end
   end
 

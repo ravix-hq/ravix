@@ -95,26 +95,15 @@ defmodule RavixWeb.Live.RepoPicker do
       </ul>
 
       <div :if={@picker.mode == :add}>
-        <ul id="repo-picker-add" class="repo-picker-list" aria-label="Repositories to add">
-          <li :for={repo <- @addable}>
-            <button
-              type="button"
-              class="repo-option"
-              data-jump-result
-              data-repo={repo.repo}
-              phx-click="picker-add"
-              phx-value-repo={repo.repo}
-              disabled={not is_nil(@picker.adding)}
-            >
-              <span class="truncate">{repo.repo}</span>
-              <small :if={repo.private}>Private</small>
-              <small :if={@picker.adding == repo.repo}>Adding…</small>
-            </button>
-          </li>
-          <li :if={@addable == []} class="hint">
-            Every repository this workspace's GitHub connections reach is already here.
-          </li>
-        </ul>
+        <.repositories
+          id="repo-picker-add"
+          label="Repositories to add"
+          repos={@addable}
+          pick="picker-add"
+          busy={not is_nil(@picker.adding)}
+          adding={@picker.adding}
+          empty="Every repository this workspace's GitHub connections reach is already here."
+        />
         <button type="button" id="repo-picker-back" class="ghost" phx-click="picker-add-back">
           Back to the list
         </button>
@@ -132,6 +121,47 @@ defmodule RavixWeb.Live.RepoPicker do
         No repository (scratch)
       </button>
     </div>
+    """
+  end
+
+  attr :id, :string, required: true
+  attr :label, :string, required: true
+  attr :repos, :list, required: true, doc: "`%{repo: \"owner/repo\", private: boolean}` maps"
+  attr :pick, :string, required: true, doc: "the event a pick sends, with `repo`"
+  attr :target, :any, default: nil
+  attr :selected, :string, default: nil
+  attr :busy, :boolean, default: false
+  attr :adding, :string, default: nil
+  attr :empty, :string, required: true
+
+  @doc """
+  A list of repositories to pick one of, by name: the picker's "Add a
+  repository…" list, and the Danger zone's Change repository (RAV-76), so
+  the two look and behave alike. Inside a `data-jump-scope`, the arrow keys
+  move through it as they do through the picker's.
+  """
+  def repositories(assigns) do
+    ~H"""
+    <ul id={@id} class="repo-picker-list" aria-label={@label}>
+      <li :for={repo <- @repos}>
+        <button
+          type="button"
+          class={["repo-option", @selected == repo.repo && "on"]}
+          data-jump-result
+          data-repo={repo.repo}
+          aria-pressed={if @selected, do: to_string(@selected == repo.repo)}
+          phx-click={@pick}
+          phx-value-repo={repo.repo}
+          phx-target={@target}
+          disabled={@busy}
+        >
+          <span class="truncate">{repo.repo}</span>
+          <small :if={repo.private}>Private</small>
+          <small :if={@adding == repo.repo}>Adding…</small>
+        </button>
+      </li>
+      <li :if={@repos == []} class="hint">{@empty}</li>
+    </ul>
     """
   end
 end

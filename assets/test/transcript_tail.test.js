@@ -214,3 +214,138 @@ test("a visible turn stays anchored when earlier history and live output arrive 
   hook.updated()
   expect(el.scrollTop).toBe(400)
 })
+
+// RAV-93: the footer's ⋯ menu copies a link to the turn or its text, and
+// says so on its trigger, since the menu closes as the item is picked.
+test("the turn menu copies an absolute link or the text, and its trigger says so", async () => {
+  document.querySelector("#transcript > div").insertAdjacentHTML("beforeend", `
+    <div class="chip-menu"><button popovertarget="m" aria-label="More for this turn">⋯</button>
+      <div id="m" popover>
+        <button data-copy-link="/p/1/t/2?thread=3#turns-turn-4">Copy link to turn</button>
+        <button data-copy-text="**The** answer">Copy text</button>
+        <button data-copy-text="" disabled>Copy text</button>
+      </div></div>`)
+  const {hook} = mountHook(TranscriptTail, "#transcript")
+  const writes = []
+  Object.defineProperty(navigator, "clipboard", {configurable: true, value: {writeText: async text => writes.push(text)}})
+  const callbacks = []
+  const schedule = window.setTimeout
+  window.setTimeout = callback => { callbacks.push(callback); return 0 }
+  try {
+    const trigger = hook.el.querySelector("[popovertarget]")
+    hook.el.querySelector("[data-copy-link]").click()
+    await Promise.resolve()
+    expect(writes).toEqual([new URL("/p/1/t/2?thread=3#turns-turn-4", window.location.href).href])
+    expect(writes[0]).toStartWith("http")
+    expect(trigger.getAttribute("aria-label")).toBe("Link copied")
+    expect(trigger.classList.contains("copied")).toBe(true)
+    callbacks.shift()()
+    expect(trigger.getAttribute("aria-label")).toBe("More for this turn")
+    expect(trigger.classList.contains("copied")).toBe(false)
+
+    hook.el.querySelector('[data-copy-text="**The** answer"]').click()
+    await Promise.resolve()
+    expect(writes[1]).toBe("**The** answer")
+    expect(trigger.getAttribute("aria-label")).toBe("Text copied")
+    callbacks.shift()()
+
+    await hook.copyFromMenu(hook.el.querySelector("[data-copy-text][disabled]"), "", "Text copied")
+    expect(writes.length).toBe(2)
+
+    navigator.clipboard.writeText = async () => { throw new Error("denied") }
+    await hook.copyFromMenu(hook.el.querySelector("[data-copy-link]"), "x", "Link copied")
+    expect(trigger.getAttribute("aria-label")).toBe("Copy failed. Try again")
+    trigger.remove()
+    callbacks.shift()()
+  } finally {
+    window.setTimeout = schedule
+  }
+})
+
+test("scrolling off the top marks the scroller so the edge under the tabs fades", () => {
+  const {hook} = mountHook(TranscriptTail, "#transcript")
+  hook.el.scrollTop = 300
+  hook.el.dispatchEvent(new Event("scroll"))
+  expect(hook.el.classList.contains("scrolled")).toBe(true)
+  hook.el.scrollTop = 0
+  hook.el.dispatchEvent(new Event("scroll"))
+  expect(hook.el.classList.contains("scrolled")).toBe(false)
+})
+
+test("a printable key on the transcript is typed into the composer", () => {
+  document.body.insertAdjacentHTML("beforeend",
+    '<form id="composer-form"><textarea name="text"></textarea></form>')
+  document.querySelector("#transcript > div").insertAdjacentHTML("beforeend",
+    '<input id="inside"><div id="menu" popover><button id="item">i</button></div>')
+  const {hook} = mountHook(TranscriptTail, "#transcript")
+  const composer = document.querySelector("#composer-form textarea")
+  const inputs = []
+  composer.addEventListener("input", () => inputs.push(composer.value))
+  const press = (target, init) => {
+    const event = new KeyboardEvent("keydown", {bubbles: true, cancelable: true, ...init})
+    target.dispatchEvent(event)
+    return event
+  }
+
+  const typed = press(hook.el, {key: "h"})
+  expect(typed.defaultPrevented).toBe(true)
+  press(hook.el, {key: "i"})
+  expect(composer.value).toBe("hi")
+  expect(document.activeElement).toBe(composer)
+  expect(inputs).toEqual(["h", "hi"])
+
+  // Space scrolls; chords, named keys and a field's own keys are left alone.
+  for (const [target, init] of [
+    [hook.el, {key: " "}],
+    [hook.el, {key: "c", ctrlKey: true}],
+    [hook.el, {key: "k", metaKey: true}],
+    [hook.el, {key: "ArrowDown"}],
+    [hook.el.querySelector("#inside"), {key: "x"}],
+    [hook.el.querySelector("#item"), {key: "x"}],
+  ]) expect(press(target, init).defaultPrevented).toBe(false)
+  expect(composer.value).toBe("hi")
+
+  // A composer that cannot take text is not typed into.
+  composer.disabled = true
+  expect(press(hook.el, {key: "z"}).defaultPrevented).toBe(false)
+  expect(composer.value).toBe("hi")
+})
+
+test("a URL naming a turn scrolls to it once the turns are drawn, and only once", () => {
+  const el = document.querySelector("#transcript")
+  const original = window.location.href
+  window.history.replaceState(null, "", "#turns-turn-2")
+  try {
+    el.insertAdjacentHTML("beforeend", '<div id="transcript-turns"></div>')
+    const {hook} = mountHook(TranscriptTail, "#transcript")
+    expect(hook.pinned).toBe(true)
+    const turns = el.querySelector("#transcript-turns")
+    turns.innerHTML = '<article id="turns-turn-1">one</article><article id="turns-turn-2">two</article>'
+    const scrolled = []
+    turns.lastElementChild.scrollIntoView = options => scrolled.push(options)
+    hook.beforeUpdate()
+    hook.updated()
+    expect(scrolled).toEqual([{block: "start"}])
+    expect(hook.pinned).toBe(false)
+    expect(el.classList.contains("unpinned")).toBe(true)
+    hook.beforeUpdate()
+    hook.updated()
+    expect(scrolled.length).toBe(1)
+  } finally {
+    window.history.replaceState(null, "", original)
+  }
+})
+
+test("a fragment that names no drawn turn is given up on", () => {
+  const el = document.querySelector("#transcript")
+  const original = window.location.href
+  window.history.replaceState(null, "", "#turns-gone")
+  try {
+    el.insertAdjacentHTML("beforeend", '<div id="transcript-turns"><article id="turns-here">here</article></div>')
+    const {hook} = mountHook(TranscriptTail, "#transcript")
+    expect(hook.revealed).toBe(true)
+    expect(hook.pinned).toBe(true)
+  } finally {
+    window.history.replaceState(null, "", original)
+  }
+})
