@@ -73,9 +73,7 @@
         <span :if={@track.visibility == :private} class="chip" title="Private">
           <.icon name="lock" /><span class="chip-label" data-fit-label>Private</span>
         </span>
-        <.machine_chip machine={
-          probed(machine(@track, @turn, @setup_now), @machine_probe, @track)
-        } />
+        <.machine_chip machine={@turn.machine} />
         <span class="chip" id="track-machine-scope" title={machine_scope_title(@track)}><.icon
           name="machine"
           size={12}
@@ -484,14 +482,11 @@
             refresh={@health_refresh}
           />
           <%!-- Other people only: presence counts you too, and "@you is
-            typing…" was an `@` beside the composer's popovers (RAV-95). --%>
-          <p
-            :for={
-              person <- Enum.filter(@present, &(&1.typing and &1.login != @current_user.login))
-            }
-            class="hint"
-          >
-            @{person.login} is typing…
+            typing…" was an `@` beside the composer's popovers (RAV-95). One
+            line, always drawn and a fixed height (RAV-91), so somebody
+            starting or stopping typing never moves the composer. --%>
+          <p id="typing-notice" class="hint typing-notice" aria-live="polite">
+            {typing_notice(@present, @current_user)}
           </p>
           <%!-- `phx-change` is what `allow_upload/3` needs to see an image
             being chosen, and the textarea's own share of it is a round trip
@@ -948,7 +943,7 @@
           </button>
         </nav>
         <div class="workspace-panel">
-          <%= case inspector_state(@track, machine(@track, @turn, @setup_now), @panel) do %>
+          <%= case inspector_state(@track, @turn.machine, @panel) do %>
             <% {:setup, step} -> %>
               <%!-- The setup banner is the live region for these words. --%>
               <.empty pane busy id="panel-setup" icon="spinner" title={step} />
@@ -978,6 +973,7 @@
                 can_wake={@track.level != :read}
                 waking={:wake in @pending}
                 working={@turn.working?}
+                asleep={match?(%{asleep?: true}, @git) && @turn.machine.state == :asleep}
               />
               <p :if={@panel.error} role="alert">{@panel.error}</p>
               <.panel_body
@@ -1158,10 +1154,7 @@
           current_user={@current_user}
           session_hash={@session_hash}
           can_write={@track.level != :read}
-          asleep={
-            probed(machine(@track, @turn, @setup_now), @machine_probe, @track).state ==
-              :asleep
-          }
+          asleep={@turn.machine.state == :asleep}
         />
       </aside>
     </div>

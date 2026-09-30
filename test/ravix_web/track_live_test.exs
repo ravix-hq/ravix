@@ -4432,13 +4432,48 @@ defmodule RavixWeb.TrackLiveTest do
       assert surfaces(html, "#thread-tab-#{sibling.id}").tab == "Running"
     end
 
-    test "Checks does not call a machine asleep while a turn is working on it", ctx do
+    test "the tab, chip and Checks agree on asleep, then on working when a turn wakes it", ctx do
+      opened(ctx)
       open_checks(ctx, {:error, :machine_asleep})
+      tab = "#thread-tab-#{ctx.track.id}"
+
+      # The machine refused Checks' read as asleep: the chip says so too.
+      assert surfaces(render(ctx.view), tab) ==
+               %{tab: "Idle", stop: false, chip: "Asleep", checks: false}
+
       assert has_element?(ctx.view, "#git-asleep")
 
-      turn_stage(ctx.view, ctx.track.id, "started")
+      # A turn is the machine awake: Working everywhere, and Git status is
+      # read again rather than left to call it asleep once the turn ends.
+      expect(Tracks, :git_status, fn _, _ -> {:ok, git(1, 0)} end)
+      html = turn_stage(ctx.view, ctx.track.id, "started")
+
+      assert surfaces(html, tab) ==
+               %{tab: "Running", stop: true, chip: "Working", checks: true}
+
       refute has_element?(ctx.view, "#git-asleep")
-      assert has_element?(ctx.view, "#git-working", "The agent is taking a turn.")
+      render_async(ctx.view)
+
+      stub(Tracks, :git_status, fn _, _ -> {:ok, git(1, 0)} end)
+      html = turn_stage(ctx.view, ctx.track.id, "completed")
+      render_async(ctx.view)
+
+      assert surfaces(html, tab) ==
+               %{tab: "Idle", stop: false, chip: "Idle", checks: false}
+
+      assert has_element?(ctx.view, "#git-uncommitted", "1 uncommitted change")
+    end
+
+    test "a Files read the machine refused as asleep makes the chip Asleep too", ctx do
+      opened(ctx)
+      assert has_element?(ctx.view, "#track-machine-state .chip-label", "Idle")
+      stub(Tracks, :files, fn _, _, _ -> {:error, :machine_asleep} end)
+      render_click(ctx.view, "refresh-panel")
+      render_async(ctx.view)
+
+      assert has_element?(ctx.view, "#panel-asleep")
+      chip(ctx.view, "Asleep", "Your next message wakes it.")
+      assert has_element?(ctx.view, "#thread-tab-#{ctx.track.id}[aria-label$='· Idle']")
     end
   end
 
@@ -6272,6 +6307,37 @@ defmodule RavixWeb.TrackLiveTest do
     html = render(ctx.view)
     assert html =~ "@teammate is typing"
     refute html =~ "@#{ctx.user.login} is typing"
+  end
+
+  # RAV-91: the typing line is always there, one line, and never names you.
+  test "your own typing is not shown, and the typing line is kept when nobody types", ctx do
+    here = fn present ->
+      send(
+        ctx.view.pid,
+        {:hub, Event.new(:here, ctx.project.id, track_id: ctx.track.id, present: present)}
+      )
+
+      render(ctx.view)
+    end
+
+    here.([%{login: ctx.user.login, typing: true}])
+    assert has_element?(ctx.view, "#typing-notice.typing-notice[aria-live=polite]")
+    refute has_element?(ctx.view, "#typing-notice", "typing")
+
+    here.([%{login: ctx.user.login, typing: true}, %{login: "ana", typing: true}])
+    assert has_element?(ctx.view, "#typing-notice", "@ana is typing…")
+    refute render(ctx.view) =~ "@#{ctx.user.login} is typing"
+
+    here.([
+      %{login: "ana", typing: true},
+      %{login: "bo", typing: true},
+      %{login: "cy", typing: false}
+    ])
+
+    assert has_element?(ctx.view, "#typing-notice", "@ana and @bo are typing…")
+
+    assert Enum.count(LazyHTML.query(LazyHTML.from_document(render(ctx.view)), "#typing-notice")) ==
+             1
   end
 
   test "minute refresh makes no event requests and live output still appends", ctx do
