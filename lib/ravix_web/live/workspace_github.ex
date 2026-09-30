@@ -1,13 +1,15 @@
 defmodule RavixWeb.Live.WorkspaceGitHub do
   @moduledoc """
-  The GitHub section of a workspace's page (ADR 0009, phase 4b): its
-  connections with their standing, "Connect GitHub" for owners and admins,
-  and the repository catalog with each repository's project.
+  A workspace's GitHub (ADR 0009, phase 4b), the body of its Repositories
+  settings page (RAV-73): its connections with their standing, "Connect
+  GitHub" and "Configure on GitHub" for owners and admins, and the
+  repository catalog with the project that uses each repository, or "Add
+  project" where none does.
 
   Drawn from `Ravix.Workspaces.Repositories.catalog/2`'s cached answer;
   it never asks GitHub. Its events (`refresh-catalog`, `add-repo`,
-  `add-installation`) go to `target`, the host's component: the Members
-  section of `RavixWeb.Live.WorkspaceSettings`.
+  `add-installation`) go to `target`, the host's component: the
+  Repositories section of `RavixWeb.Live.WorkspaceSettings`.
 
   RAV-69: an owner also sees the GitHub accounts they can reach themselves
   that the workspace does not use yet (`Ravix.Workspaces.Connect.available/2`,
@@ -122,6 +124,11 @@ defmodule RavixWeb.Live.WorkspaceGitHub do
   attr :adding, :string, default: nil
   attr :available, :list, default: nil
   attr :attaching, :string, default: nil
+
+  attr :configure_url, :string,
+    default: nil,
+    doc: "the App's page on GitHub, for owners and admins"
+
   attr :target, :any, default: nil, doc: "where the section's events go"
 
   @doc "The section."
@@ -136,7 +143,7 @@ defmodule RavixWeb.Live.WorkspaceGitHub do
 
     ~H"""
     <section id="workspace-github" aria-labelledby="github-heading">
-      <h2 id="github-heading">GitHub</h2>
+      <h2 id="github-heading">GitHub accounts</h2>
       <div class="workspace-github-actions">
         <a
           :if={@connect?}
@@ -145,6 +152,17 @@ defmodule RavixWeb.Live.WorkspaceGitHub do
           href={"/w/#{@workspace.id}/github/connect"}
         >
           <.icon name="github" size={14} />Connect GitHub
+        </a>
+        <a
+          :if={(@connect? and @configure_url) && not @empty?}
+          id="configure-github"
+          class="button ghost"
+          href={@configure_url}
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          Configure on GitHub
+          <span aria-hidden="true">↗</span><span class="sr-only">(opens in a new tab)</span>
         </a>
         <button
           :if={@catalog && @catalog.installations != []}
@@ -222,14 +240,15 @@ defmodule RavixWeb.Live.WorkspaceGitHub do
       <p :if={@offered != [] and @workspace.kind == :team} class="hint">
         Every member of {@workspace.name} can then work in its repositories.
       </p>
-
-      <h3 :if={@catalog && @catalog.repos != []} id="catalog-heading">Repositories</h3>
-      <ul
-        :if={@catalog && @catalog.repos != []}
-        id="workspace-catalog"
-        class="workspace-people"
-        aria-labelledby="catalog-heading"
-      >
+    </section>
+    <section
+      :if={@catalog && @catalog.repos != []}
+      id="workspace-repositories"
+      aria-labelledby="catalog-heading"
+    >
+      <h2 id="catalog-heading">Repositories</h2>
+      <p class="hint">Each repository is one project here, which every member can work in.</p>
+      <ul id="workspace-catalog" class="workspace-people" aria-labelledby="catalog-heading">
         <li
           :for={%{repo: repo, project: project} <- @catalog.repos}
           id={"repo-#{repo.id}"}
@@ -238,7 +257,14 @@ defmodule RavixWeb.Live.WorkspaceGitHub do
           <span class="truncate">{repo.full_name}</span>
           <small :if={repo.private}>Private</small>
           <span class="spacer"></span>
-          <.link :if={project} navigate={"/p/#{project.id}"} class="ghost">Open project</.link>
+          <.link
+            :if={project}
+            navigate={"/p/#{project.id}"}
+            class="ghost"
+            aria-label={"Open project #{project.name}"}
+          >
+            <.icon name="folder" size={14} />{project.name}
+          </.link>
           <button
             :if={is_nil(project) and @admit?}
             type="button"
@@ -248,9 +274,9 @@ defmodule RavixWeb.Live.WorkspaceGitHub do
             phx-value-repo={repo.full_name}
             disabled={not is_nil(@adding)}
           >
-            {if @adding == repo.full_name, do: "Adding…", else: "Add"}
+            {if @adding == repo.full_name, do: "Adding…", else: "Add project"}
           </button>
-          <small :if={is_nil(project) and not @admit?}>Not added yet</small>
+          <small :if={is_nil(project) and not @admit?}>No project yet</small>
         </li>
       </ul>
     </section>

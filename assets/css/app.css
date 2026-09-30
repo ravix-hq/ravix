@@ -2407,6 +2407,26 @@ body:has(.phx-error) #request-progress { display: none; }
 .workspace-facts dt { color: var(--dim); }
 .workspace-facts dd { margin: 0; }
 #workspace-general-form { display: grid; gap: 6px; max-width: 420px; }
+/* RAV-73: the workspace's Members, Projects and Danger zone pages. */
+.workspace-roles { display: grid; gap: 6px; margin: 0 0 8px; }
+.workspace-roles div { display: grid; grid-template-columns: 80px minmax(0, 1fr); gap: 12px; }
+.workspace-roles dt { font-weight: 600; }
+.workspace-roles dd { margin: 0; color: var(--dim); }
+.workspace-page .workspace-invite { display: grid; grid-template-columns: minmax(0, 1fr) 160px auto; align-items: end; gap: 8px; }
+.workspace-invite .field { display: grid; gap: 4px; min-width: 0; }
+.workspace-invite > button { margin: 0; }
+@media (max-width: 640px) { .workspace-page .workspace-invite { grid-template-columns: minmax(0, 1fr); } }
+.workspace-projects { width: 100%; border-collapse: collapse; font-size: 13px; }
+.workspace-projects th, .workspace-projects td { padding: 8px; text-align: left; border-bottom: 1px solid var(--line); }
+.workspace-projects thead th { color: var(--dim); font-weight: 500; font-size: 12px; }
+.workspace-projects tbody th { font-weight: 500; }
+.workspace-projects td:last-child { width: 1%; text-align: right; }
+.workspace-projects td:last-child a { display: inline-flex; padding: 4px; }
+.danger-card { display: grid; gap: 8px; justify-items: start; padding: 14px 16px; border: 1px solid var(--danger-line); border-radius: var(--radius); }
+.danger-card h2 { margin: 0; }
+.danger-card p { margin: 0; }
+#delete-workspace-form { display: grid; gap: 6px; justify-items: start; }
+#delete-workspace-form input { width: min(320px, 100%); }
 
 .unsaved-bar {
   position: sticky; bottom: 0; z-index: 5; display: flex; align-items: center; gap: 10px;

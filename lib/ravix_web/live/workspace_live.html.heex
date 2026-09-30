@@ -131,7 +131,19 @@
         >
           <.icon name="settings" size={14} />Settings
         </button>
-        <a class="account-item" href="/api/auth/install">
+        <%!-- RAV-73: the current workspace's Repositories, where there is one. --%>
+        <button
+          :if={@current_workspace}
+          type="button"
+          class="account-item"
+          id="open-repository-access"
+          popovertarget="account-menu"
+          popovertargetaction="hide"
+          phx-click={JS.patch("/w/#{@current_workspace.workspace.id}/settings/repositories")}
+        >
+          <.icon name="github" size={14} />Repository access
+        </button>
+        <a :if={!@current_workspace} class="account-item" href="/api/auth/install">
           <.icon name="github" size={14} />Repository access
         </a>
         <button
