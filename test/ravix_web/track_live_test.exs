@@ -3621,6 +3621,36 @@ defmodule RavixWeb.TrackLiveTest do
       end
     end
 
+    # CI caught this: a stopped turn may send no stage event after the stop
+    # (the mock sends none), so whenever the turn's `started` reached the page
+    # after the prompt queue's delivery notice, nothing but the stop was left
+    # to take the tab and Stop off Running.
+    test "a stop Fountain accepts ends the turn on the page, with no further stage event",
+         ctx do
+      turn_stage(ctx.view, ctx.track.id, "started")
+      expect(Tracks, :interrupt, fn _, _, _ -> :ok end)
+      ctx.view |> element(@stop) |> render_click()
+      render_async(ctx.view)
+
+      refute has_element?(ctx.view, "#composer-stop")
+      assert has_element?(ctx.view, "#thread-tab-#{ctx.track.id}[aria-label$='· Idle']")
+      assert has_element?(ctx.view, @send <> "[disabled]")
+    end
+
+    test "a refused stop leaves the turn running, and Stop where it was", ctx do
+      turn_stage(ctx.view, ctx.track.id, "started")
+
+      expect(Tracks, :interrupt, fn _, _, _ ->
+        {:error, {:conflict, "not_open", "This track has no conversation yet."}}
+      end)
+
+      ctx.view |> element(@stop) |> render_click()
+      render_async(ctx.view)
+
+      assert has_element?(ctx.view, @stop <> ":not([disabled])")
+      assert has_element?(ctx.view, "#thread-tab-#{ctx.track.id}[aria-label$='· Running']")
+    end
+
     test "a sibling thread's running turn draws no Stop on the shown one", ctx do
       {:ok, sibling} =
         Tracks.Store.create_thread(%{

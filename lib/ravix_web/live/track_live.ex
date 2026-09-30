@@ -1274,8 +1274,18 @@ defmodule RavixWeb.TrackLive do
     end)
   end
 
+  # A stopped turn need not send another stage event, and the one that told
+  # the tab it was running may be the last this page hears. So a stop that
+  # Fountain accepted drops the shown thread's live state, as a `:turn` hub
+  # event does, and the tab and Stop (RAV-87) fall back together to the
+  # status the re-read brings. A refused stop leaves them as they were.
   defp async_result(:interrupt, {:ok, response}, socket),
-    do: result(settle(socket, :interrupt), response, fn s, _ -> refresh_detail(s) end)
+    do:
+      result(settle(socket, :interrupt), response, fn s, _ ->
+        s
+        |> update(:thread_states, &Map.delete(&1, s.assigns.thread_id))
+        |> refresh_detail()
+      end)
 
   defp async_result(:retry, {:ok, response}, socket),
     do: result(settle(socket, :retry), response, fn s, _ -> load(s) end)
