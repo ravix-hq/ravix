@@ -10,9 +10,11 @@ defmodule RavixWeb.Live.AgentPanel do
   console for any of it.
 
   Rendered in the walkthrough's agent step
-  (`RavixWeb.OnboardingLive`), and the account dialog in the workspace
-  (`RavixWeb.WorkspaceLive`), which is where somebody comes back to it
-  weeks later, and scoped to one agent inside the shared new-project form.
+  (`RavixWeb.OnboardingLive`); on Settings › Agents
+  (`RavixWeb.Live.PersonalSettings`), which is where somebody comes back to
+  it weeks later; in the account dialog a reconnect opens in the workspace
+  (`RavixWeb.WorkspaceLive`); and scoped to one agent inside the shared
+  new-project form.
   A `live_component` because the state is nobody else's --- the
   agent and kind being chosen, the credential form, the ChatGPT sign-in that
   is open --- and because the two pages would otherwise each carry a copy of
@@ -20,13 +22,16 @@ defmodule RavixWeb.Live.AgentPanel do
 
   ## Compact
 
-  The walkthrough passes `compact={true}` and gets one decision: a card per
-  agent saying Connect or Connected, and the steps for the one being
-  connected. The default choice, what is held with its Remove, the kind
-  (subscription or API key) and the warnings are the same pieces the account
-  dialog draws, behind a Manage toggle. A first connection becomes the
-  default in `Ravix.Accounts.Inference.connect/2`, so there is nothing to
-  choose until there are two.
+  The walkthrough and Settings › Agents pass `compact={true}` and get one
+  decision (RAV-41, RAV-77): a card per agent saying Connect, or ✓ Connected
+  with Make default, and the steps for the one being connected. What else
+  there is to do with an agent -- pay for it the other way, replace or
+  reconnect what is held, remove it -- is in the card's ⋯ menu, and the
+  warning that it ends open tracks is said in the steps or confirmation
+  that follow, not on the card. The default model for new threads is
+  behind a disclosure. A first connection becomes the default in
+  `Ravix.Accounts.Inference.connect/2`, so there is nothing to choose until
+  there are two.
 
   ## What the page keeps
 
@@ -214,6 +219,30 @@ defmodule RavixWeb.Live.AgentPanel do
       else: {:noreply, socket}
   end
 
+  # A card menu's "Connect with an API key", "Replace your subscription"
+  # and the like: both choices at once. Bounded by the same two tables.
+  def handle_event(
+        "connect-with",
+        %{"agent" => a, "kind" => k},
+        %{assigns: %{busy: false, scoped_agent: nil}} = socket
+      )
+      when is_map_key(@agents, a) and is_map_key(@kinds, k) do
+    {agent, kind} = {Map.fetch!(@agents, a), Map.fetch!(@kinds, k)}
+
+    if kind in Inference.kinds(agent),
+      do:
+        {:noreply,
+         socket
+         |> assign(
+           agent: agent,
+           kind: kind,
+           connecting: true,
+           credential_form: Form.new(:credential)
+         )
+         |> read_link_status()},
+      else: {:noreply, socket}
+  end
+
   def handle_event("toggle-manage", _params, socket),
     do: {:noreply, assign(socket, manage_open: !socket.assigns.manage_open)}
 
@@ -263,7 +292,7 @@ defmodule RavixWeb.Live.AgentPanel do
   # A word neither table holds is a browser saying something the form never
   # offered. Nothing to do and nothing to say.
   def handle_event(event, _params, socket)
-      when event in ["choose-agent", "choose-kind", "disconnect", "make-default"],
+      when event in ["choose-agent", "choose-kind", "connect-with", "disconnect", "make-default"],
       do: {:noreply, socket}
 
   def handle_event("connect", _params, %{assigns: %{busy: true}} = socket),
@@ -575,7 +604,7 @@ defmodule RavixWeb.Live.AgentPanel do
   defp credential_description(nil, :codex), do: "ChatGPT subscription or OpenAI API key."
 
   # A compact card's one line: what connecting it spends by default. An API
-  # key is behind Manage.
+  # key is behind the card's ⋯ menu.
   defp card_description(:claude), do: "Uses your Claude subscription."
   defp card_description(:codex), do: "Uses your ChatGPT subscription."
 
@@ -619,6 +648,8 @@ defmodule RavixWeb.Live.AgentPanel do
 
     "Remove #{what} from Ravix? This ends your open tracks in every project you own. Projects using #{agent_name(agent)} need another connected #{agent_name(agent)} credential to run again. The #{paid_by(agent, kind)} itself is untouched."
   end
+
+  defp held?(held, agent, kind), do: is_list(held) and {agent, kind} in held
 
   defp connected_agent?(held, agent) when is_list(held),
     do: Enum.any?(held, fn {a, _} -> a == agent end)
@@ -675,44 +706,17 @@ defmodule RavixWeb.Live.AgentPanel do
 
     ~H"""
     <div class={["agent-panel", @compact && "compact"]} id={@id} phx-hook="AgentConfirmation">
+      <.missing :if={@compact} held={@held} current_user={@current_user} />
       <div :if={@compact} class="agent-cards" role="group" aria-label="Agents">
-        <div
+        <.card
           :for={agent <- User.agents()}
-          id={"agent-card-#{agent}"}
-          class={[
-            "agent-card",
-            connected_agent?(@held, agent) && "connected",
-            @connecting && @agent == agent && "on"
-          ]}
-        >
-          <strong>{agent_name(agent)}</strong>
-          <small>{card_description(agent)}</small>
-          <p id={"agent-#{agent}-status"} class="agent-card-status">
-            <span :if={connected_agent?(@held, agent)} class="agent-card-connected">
-              <.icon name="check" size={13} class="ico" />Connected
-            </span>
-            <span :if={connected_agent?(@held, agent) and @current_user.agent == agent} class="chip">
-              Default for new projects
-            </span>
-            <span :if={is_nil(@held)} class="dim">Checking…</span>
-          </p>
-          <button
-            :if={not connected_agent?(@held, agent) and not (@connecting and @agent == agent)}
-            type="button"
-            class={if is_nil(@current_user.agent), do: "primary", else: "ghost"}
-            phx-click="choose-agent"
-            phx-target={@myself}
-            phx-value-agent={agent}
-            id={"agent-#{agent}"}
-            aria-label={"Connect #{agent_name(agent)}"}
-            disabled={@busy}
-          >
-            Connect
-          </button>
-          <span :if={@connecting and @agent == agent} class="dim agent-card-hint">
-            Follow the steps below
-          </span>
-        </div>
+          agent={agent}
+          held={@held}
+          current_user={@current_user}
+          connecting={@connecting and @agent == agent}
+          busy={@busy}
+          myself={@myself}
+        />
       </div>
 
       <.thread_default :if={not @compact} {thread_default_assigns(assigns)} />
@@ -788,7 +792,12 @@ defmodule RavixWeb.Live.AgentPanel do
         <.credential {credential_assigns(assigns)} />
       </div>
 
-      <div :if={@compact} class="agent-manage">
+      <div
+        :if={
+          (@compact and is_nil(@scoped_agent) and @thread_defaults) && @thread_defaults.choices != []
+        }
+        class="agent-manage"
+      >
         <button
           type="button"
           class="ghost agent-manage-toggle"
@@ -798,18 +807,10 @@ defmodule RavixWeb.Live.AgentPanel do
           phx-click="toggle-manage"
           phx-target={@myself}
         >
-          <.icon name="chevron" size={12} open={@manage_open} />Manage
+          <.icon name="chevron" size={12} open={@manage_open} />Default model for new threads
         </button>
         <div id="agent-manage" hidden={!@manage_open}>
-          <p class="hint">
-            Your default agent, what is connected, and API keys. The same settings are in your account menu later.
-          </p>
           <.thread_default {thread_default_assigns(assigns)} />
-          <div :if={@agent} class="agent-manage-kind">
-            <span class="label">Pay for {agent_name(@agent)} with</span>
-            <.kinds agent={@agent} kind={@kind} busy={@busy} myself={@myself} />
-          </div>
-          <.held {held_assigns(assigns)} make_default={true} />
         </div>
       </div>
     </div>
@@ -909,7 +910,6 @@ defmodule RavixWeb.Live.AgentPanel do
   attr :current_user, User
   attr :busy, :boolean
   attr :myself, :any
-  attr :make_default, :boolean, default: false, doc: "compact: the cards have no Make default"
 
   defp held(assigns) do
     ~H"""
@@ -921,12 +921,7 @@ defmodule RavixWeb.Live.AgentPanel do
       id="agent-held"
       aria-label="What you have connected"
     >
-      <p :if={missing?(@current_user, @held)} class="welcome-warning" id="held-missing">
-        <.icon name="info" size={14} class="ico" />
-        <span>
-          Nothing is stored for {agent_name(@current_user.agent)} any more: its subscription or API key was removed outside this page. Projects using this agent need a connected credential to run.
-        </span>
-      </p>
+      <.missing held={@held} current_user={@current_user} />
       <ul :if={@held != []} class="agent-held-list">
         <li :for={{agent, kind} <- @held} id={"held-#{agent}-#{kind}"}>
           <span class="agent-held-name">
@@ -934,21 +929,6 @@ defmodule RavixWeb.Live.AgentPanel do
             <span class="dim">{paid_by(agent, kind)}</span>
             <span :if={in_use?(@current_user, agent, kind)} class="chip ok">Default for new projects</span>
           </span>
-          <button
-            :if={
-              @make_default and @current_user.agent != agent and
-                List.keyfind(@held, agent, 0) == {agent, kind}
-            }
-            type="button"
-            class="ghost"
-            id={"make-default-#{agent}"}
-            phx-click="make-default"
-            phx-value-agent={agent}
-            phx-target={@myself}
-            disabled={@busy}
-          >
-            Make default
-          </button>
           <button
             type="button"
             class="ghost"
@@ -968,6 +948,153 @@ defmodule RavixWeb.Live.AgentPanel do
       </p>
     </section>
     """
+  end
+
+  attr :held, :any
+  attr :current_user, User
+
+  defp missing(assigns) do
+    ~H"""
+    <p :if={missing?(@current_user, @held)} class="welcome-warning" id="held-missing">
+      <.icon name="info" size={14} class="ico" />
+      <span>
+        Nothing is stored for {agent_name(@current_user.agent)} any more: its subscription or API key was removed outside this page. Projects using this agent need a connected credential to run.
+      </span>
+    </p>
+    """
+  end
+
+  attr :agent, :atom, required: true
+  attr :held, :any, required: true
+  attr :current_user, User, required: true
+  attr :connecting, :boolean, required: true
+  attr :busy, :boolean, required: true
+  attr :myself, :any, required: true
+
+  # One compact card (RAV-77): Connect, or ✓ Connected with Make default,
+  # and the rest -- another way to pay, replacing, removing -- behind its
+  # ⋯ menu. Nothing here warns about open tracks: replacing says so in the
+  # steps it opens, and removing in its confirmation, which is when it is
+  # about to happen.
+  defp card(assigns) do
+    assigns =
+      assign(assigns,
+        connected: connected_agent?(assigns.held, assigns.agent),
+        default: assigns.current_user.agent == assigns.agent,
+        kinds: Inference.kinds(assigns.agent)
+      )
+
+    ~H"""
+    <div
+      id={"agent-card-#{@agent}"}
+      class={[
+        "agent-card",
+        @connected && "connected",
+        @connected && @default && "default",
+        @connecting && "on"
+      ]}
+    >
+      <div class="agent-card-head">
+        <strong>{agent_name(@agent)}</strong>
+        <RavixWeb.Live.ModelMenu.chip
+          id={"agent-menu-#{@agent}"}
+          label={"More for #{agent_name(@agent)}"}
+          menu_label={agent_name(@agent)}
+          class="ghost agent-card-more"
+          menu_class="chip-popover-below chip-popover-end agent-card-menu"
+          disabled={@busy}
+        >
+          <:trigger><.icon name="more" size={16} /></:trigger>
+          <%= for kind <- @kinds do %>
+            <button
+              type="button"
+              role="menuitem"
+              class="account-item"
+              id={"connect-#{@agent}-#{kind}"}
+              phx-click="connect-with"
+              phx-value-agent={@agent}
+              phx-value-kind={kind}
+              phx-target={@myself}
+              data-chip-close
+            >
+              {connect_label(@held, @agent, kind)}
+            </button>
+            <button
+              :if={held?(@held, @agent, kind)}
+              type="button"
+              role="menuitem"
+              class="account-item danger"
+              id={"remove-#{@agent}-#{kind}"}
+              phx-click="disconnect"
+              phx-value-agent={@agent}
+              phx-value-kind={kind}
+              phx-target={@myself}
+              data-chip-close
+            >
+              Remove your {paid_by(@agent, kind)}
+            </button>
+          <% end %>
+        </RavixWeb.Live.ModelMenu.chip>
+      </div>
+      <small>
+        {if @connected, do: credential_description(@held, @agent), else: card_description(@agent)}
+      </small>
+      <p id={"agent-#{@agent}-status"} class="agent-card-status">
+        <span :if={@connected} class="agent-card-connected">
+          <.icon name="check" size={13} class="ico" />Connected
+        </span>
+        <span :if={@connected and @default} class="chip">Default for new projects</span>
+        <span :if={is_nil(@held)} class="dim">Checking…</span>
+      </p>
+      <button
+        :if={not @connected and not @connecting}
+        type="button"
+        class={if is_nil(@current_user.agent), do: "primary", else: "ghost"}
+        phx-click="choose-agent"
+        phx-target={@myself}
+        phx-value-agent={@agent}
+        id={"agent-#{@agent}"}
+        aria-label={"Connect #{agent_name(@agent)}"}
+        disabled={@busy}
+      >
+        Connect
+      </button>
+      <button
+        :if={@connected and not @default}
+        type="button"
+        class="ghost"
+        id={"make-default-#{@agent}"}
+        phx-click="make-default"
+        phx-value-agent={@agent}
+        phx-target={@myself}
+        aria-label={"Make #{agent_name(@agent)} the default for new projects"}
+        disabled={@busy}
+      >
+        Make default
+      </button>
+      <span :if={@connecting} class="dim agent-card-hint">
+        Follow the steps below
+      </span>
+    </div>
+    """
+  end
+
+  # A card menu's item for one way of paying: connect with it, or replace
+  # the one held. Replacing ends open tracks; the steps it opens say so.
+  defp connect_label(held, agent, kind) do
+    cond do
+      held?(held, agent, kind) and Inference.pasted?(agent, kind) ->
+        "Replace your #{paid_by(agent, kind)}"
+
+      held?(held, agent, kind) ->
+        "Reconnect your #{paid_by(agent, kind)}"
+
+      kind == :api_key ->
+        "Connect with an API key"
+
+      true ->
+        "Connect with a subscription"
+    end
   end
 
   defp kinds(assigns) do

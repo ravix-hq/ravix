@@ -190,7 +190,7 @@ test.describe.serial('first visit, then the account dialog', () => {
     await expect(page).toHaveURL(/\/welcome\/agent$/);
     await expect(page).toHaveTitle('Connect your agent · Ravix');
     // One decision: a card per agent, each offering Connect, and the rest
-    // (default, what is held, API keys) behind Manage.
+    // (API keys, replacing, removing) behind each card's ⋯ menu.
     await expect(page.getByRole('button', { name: 'Connect Claude Code', exact: true })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Connect Codex', exact: true })).toBeVisible();
     await expect(page.locator('#agent-manage')).toBeHidden();
@@ -230,12 +230,14 @@ test.describe.serial('first visit, then the account dialog', () => {
     await page.getByLabel('Subscription token', { exact: true }).fill('sk-ant-oat01-mock');
     await page.getByRole('button', { name: 'Connect Claude Code', exact: true }).click();
     await expect(page.locator('#agent-claude-status')).toContainText('Connected');
-    // Adding Claude leaves the first connected agent (Codex) as the default,
-    // which Manage can change.
+    // Adding Claude leaves the first connected agent (Codex) as the default;
+    // Claude's card offers to be it.
     await expect(page.locator('#agent-codex-status')).toContainText('Default for new projects');
-    await page.locator('#agent-manage-toggle').click();
-    await expect(page.locator('#agent-manage')).toBeVisible();
+    await page.locator('#agent-menu-claude-trigger').click();
+    await expect(page.getByRole('menu', { name: 'Claude Code' })).toBeVisible();
     await accessible(page);
+    await page.keyboard.press('Escape');
+    await expect(page.getByRole('menu', { name: 'Claude Code' })).toBeHidden();
     await page.locator('#make-default-claude').click();
     await expect(page.locator('#agent-claude-status')).toContainText('Default for new projects');
     await page.getByRole('link', { name: 'Continue', exact: true }).click();
@@ -278,7 +280,7 @@ test.describe.serial('first visit, then the account dialog', () => {
     await expect(page.getByRole('heading', { name: /Inbox/ })).toBeVisible();
   });
 
-  test('the account dialog is where the agent lives after the walkthrough', async ({ page }) => {
+  test('Settings › Agents is where the agent lives after the walkthrough', async ({ page }) => {
     await signIn(page);
     const trigger = page.locator('#account-trigger');
     await trigger.click();
@@ -300,15 +302,17 @@ test.describe.serial('first visit, then the account dialog', () => {
     await trigger.click();
     await page.locator('#workspace-stage').click({ position: { x: 400, y: 300 } });
     await expect(menu).toBeHidden();
+    // Settings opens the person's own pages (RAV-77); the agent is Agents.
     await trigger.click();
-    await menu.getByRole('button', { name: 'Account', exact: true }).click();
+    await menu.getByRole('button', { name: 'Settings', exact: true }).click();
     await expect(menu).toBeHidden();
-    const account = page.getByRole('dialog', { name: 'Your account' });
-    await expect(account).toBeVisible();
-    await expect(account).toContainText('Each project uses its selected agent');
-    await expect(account.getByRole('link', { name: 'Manage connected applications' })).toHaveAttribute('href', '/settings/connected-apps');
+    await expect(page).toHaveURL(/\/settings\/profile$/);
+    await page.locator('#settings-nav-agents').click();
+    await expect(page).toHaveURL(/\/settings\/agents$/);
+    const agents = page.locator('#settings-agents');
+    await expect(agents).toContainText('Each project uses its selected agent');
 
-    await expect(page.getByRole('group', { name: 'Agent' })).toBeVisible();
+    await expect(page.getByRole('group', { name: 'Agents' })).toBeVisible();
     await accessible(page);
     await expect(page.locator('#agent-claude-status')).toContainText('Connected');
     await expect(page.locator('#agent-codex-status')).toContainText('Connected');
@@ -316,8 +320,11 @@ test.describe.serial('first visit, then the account dialog', () => {
     await expect(page.locator('#agent-codex-status')).toContainText('Default for new projects');
     await page.locator('#make-default-claude').click();
     await expect(page.locator('#agent-claude-status')).toContainText('Default for new projects');
+    // Removing is in the card's ⋯ menu, and asks in the page, not the browser.
+    const more = page.locator('#agent-menu-claude-trigger');
     const remove = page.locator('#remove-claude-subscription');
-    await expect(account.locator('[data-confirm]')).toHaveCount(0);
+    await expect(agents.locator('[data-confirm]')).toHaveCount(0);
+    await more.click();
     await remove.click();
     const confirmation = page.getByRole('group', { name: 'Confirm agent removal' });
     await expect(confirmation).toBeVisible();
@@ -327,11 +334,8 @@ test.describe.serial('first visit, then the account dialog', () => {
     await accessible(page);
     await confirmation.getByRole('button', { name: 'Cancel', exact: true }).click();
     await expect(confirmation).toHaveCount(0);
-    await expect(remove).toBeFocused();
-    await capture(page, 'account-dialog');
-    await page.keyboard.press('Escape');
-    await expect(page.getByRole('dialog', { name: 'Your account' })).toHaveCount(0);
-    await expect(trigger).toBeFocused();
+    await expect(more).toBeFocused();
+    await capture(page, 'settings-agents');
   });
 });
 
@@ -484,7 +488,7 @@ test('find a track focuses its search field and explains no matches', async ({ p
   await open.press('Enter');
   await expect(query).toBeFocused();
   await page.keyboard.type('no-track-could-match-this-query');
-  await expect(dialog.getByRole('status')).toHaveText('No projects, tracks or plans match');
+  await expect(dialog.getByRole('status')).toHaveText("No tracks match 'no-track-could-match-this-query'");
   await expect(dialog.locator('a')).toHaveCount(0);
   await expect(query).toBeFocused();
   await page.keyboard.press('Escape');

@@ -1,23 +1,14 @@
 import { test, expect } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
 import { signIn } from './sign-in.js';
+import { connectApiKey } from './settings.js';
 
 const mock = `http://localhost:${process.env.MOCK_PORT || 8893}`;
 
 test('cohort threads attach the other runtime to the home disk and reuse its project agent', async ({ page, request }) => {
   test.setTimeout(120_000);
   await signIn(page, 'threadruntime');
-  for (const agent of ['Claude Code']) {
-    await page.locator('#account-trigger').click();
-    await page.locator('#open-account').click();
-    const account = page.getByRole('dialog', { name: 'Your account', exact: true });
-    await account.getByRole('button', { name: new RegExp(`^${agent}`) }).click();
-    await account.getByRole('button', { name: 'API key', exact: true }).click();
-    await account.getByLabel('API key', { exact: true }).fill('mock-thread-runtime-key');
-    await account.getByRole('button', { name: `Connect ${agent}`, exact: true }).click();
-    await expect(account.locator(`#held-${agent === 'Codex' ? 'codex' : 'claude'}-api_key`)).toBeVisible();
-    await account.getByRole('button', { name: 'Close', exact: true }).click();
-  }
+  await connectApiKey(page, 'Claude Code', 'mock-thread-runtime-key');
   const list = async path => {
     const response = await request.get(`${mock}/api/${path}`);
     expect(response.ok()).toBe(true);

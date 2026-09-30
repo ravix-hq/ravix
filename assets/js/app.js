@@ -23,11 +23,13 @@
 //   Terminal        the Commands panel: history, Ctrl+L, output that follows itself
 //   Shell           an interactive terminal tab: xterm.js over the page's socket
 //   Notify          desktop notifications when a track needs you and you are not looking
+//   NotifyToggle    the switch for them, on the Notifications settings page
 //   SettingsSections a project settings section's own Save, Discard and agent choice
 //   UnsavedChanges  a settings page's unsaved-changes bar and leave confirmation
 //   SettingsFrame   a settings page opens each section at its top
 //   ProjectTree     viewer-local collapse preferences for project and section rows
 //   QuickJump       Cmd/Ctrl-K, Cmd/Ctrl-N and keyboard selection in navigation search
+//   QuickJumpQuery  search's query: focused as it mounts, with the keys typed on the way
 //   ProjectSections drag a sidebar project onto one of your sections
 //   ProjectFormFocus synchronous dialog focus that never steals later typing
 //   CopyCode        copy a Help example exactly, with success or failure feedback
@@ -46,6 +48,7 @@ import {clearTransportFallback, LONG_POLL_FALLBACK_MS} from "./transport"
 import {trackPageLoading} from "./page_loading"
 import {watchDialogs} from "./dialog_escape"
 import {browserTimeZone} from "./timezone"
+import {macPlatform} from "./platform"
 import {Socket} from "phoenix"
 import {LiveSocket} from "phoenix_live_view"
 import {ThreadTabs} from "./hooks/thread_tabs"
@@ -56,9 +59,9 @@ import {TranscriptTail} from "./hooks/transcript_tail"
 import {Composer} from "./hooks/composer"
 import {Terminal} from "./hooks/terminal"
 import {Shell} from "./hooks/shell"
-import {Notify} from "./hooks/notify"
+import {Notify, NotifyToggle} from "./hooks/notify"
 import {ProjectTree} from "./hooks/project_tree"
-import {QuickJump} from "./hooks/quick_jump"
+import {QuickJump, QuickJumpQuery} from "./hooks/quick_jump"
 import {AgentConfirmation} from "./hooks/agent_confirmation"
 import {SettingsSections} from "./hooks/settings_sections"
 import {UnsavedChanges} from "./hooks/unsaved_changes"
@@ -76,14 +79,14 @@ import {ChipMenu} from "./hooks/chip_menu"
 
 
 
-const hooks = {ThreadTabs, AgentConfirmation, Theme, PanelResize, PanelToggle, TranscriptTail, Composer, Terminal, Notify, SettingsSections, UnsavedChanges, SettingsFrame, ProjectTree, QuickJump, ProjectSections, CopyCode, ProjectFormFocus, ShareMention, TurnTimer, RelativeTime, SubmitOnEnter, Shell, HeaderFit, LocalTime, ChipMenu}
+const hooks = {ThreadTabs, AgentConfirmation, Theme, PanelResize, PanelToggle, TranscriptTail, Composer, Terminal, Notify, NotifyToggle, SettingsSections, UnsavedChanges, SettingsFrame, ProjectTree, QuickJump, QuickJumpQuery, ProjectSections, CopyCode, ProjectFormFocus, ShareMention, TurnTimer, RelativeTime, SubmitOnEnter, Shell, HeaderFit, LocalTime, ChipMenu}
 
 const csrfToken = document.querySelector("meta[name='csrf-token']").getAttribute("content")
 clearTransportFallback(window)
 const dialogs = watchDialogs(window)
 const liveSocket = new LiveSocket("/live", Socket, {
   longPollFallbackMs: LONG_POLL_FALLBACK_MS,
-  params: {_csrf_token: csrfToken, timezone: browserTimeZone()},
+  params: {_csrf_token: csrfToken, timezone: browserTimeZone(), platform: macPlatform() ? "mac" : "other"},
   hooks,
   metadata: {keydown: dialogs.keydown},
 })

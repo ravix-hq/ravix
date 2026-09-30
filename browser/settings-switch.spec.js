@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { signIn, connectClaude } from './sign-in.js';
-import { openProjectSettings } from './settings.js';
+import { openProjectSettings, connectApiKey } from './settings.js';
 
 const mock = `http://localhost:${process.env.MOCK_PORT || 8893}`;
 
@@ -28,17 +28,7 @@ test('settings explicitly rebuilds when switching agents and the next track work
   test.setTimeout(120_000);
   await signIn(page, 'dana');
   // Connect through the real account form; mock values never leave this fixture.
-  for (const agent of ['Claude Code', 'Codex']) {
-    await page.locator('#account-trigger').click();
-    await page.locator('#open-account').click();
-    const account = page.getByRole('dialog', { name: 'Your account', exact: true });
-    await account.getByRole('button', { name: new RegExp(`^${agent}`) }).click();
-    await account.getByRole('button', { name: 'API key', exact: true }).click();
-    await account.getByLabel('API key', { exact: true }).fill('mock-settings-switch-key');
-    await account.getByRole('button', { name: `Connect ${agent}`, exact: true }).click();
-    await expect(account.locator(`#held-${agent === 'Codex' ? 'codex' : 'claude'}-api_key`)).toBeVisible();
-    await account.getByRole('button', { name: 'Close', exact: true }).click();
-  }
+  for (const agent of ['Claude Code', 'Codex']) await connectApiKey(page, agent, 'mock-settings-switch-key');
   await page.getByRole('button', { name: 'Add a project', exact: true }).first().click();
   const create = page.getByRole('dialog', { name: 'New project' });
   await create.getByLabel('Project name', { exact: true }).fill('Agent switch browser');

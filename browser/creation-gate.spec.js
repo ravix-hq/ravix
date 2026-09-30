@@ -1,6 +1,7 @@
 import { test, expect } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
 import { signIn } from './sign-in.js';
+import { openAgentSettings } from './settings.js';
 
 test('connect Codex inline without losing the new project draft', async ({ page }) => {
   await signIn(page, 'dana', '/home');
@@ -31,21 +32,19 @@ test('connect ChatGPT inline by device code and preserve the project draft', asy
   await signIn(page, 'dana', '/home');
   // Clear any existing Codex connection through the real UI so this scenario
   // also exercises the device flow when run independently.
-  await page.locator('#account-trigger').click();
-  await page.locator('#open-account').click();
-  const account = page.getByRole('dialog', { name: 'Your account' });
-  await expect(account.locator('#agent-codex-status')).toContainText(/(Connected|Not connected)/);
+  const panel = await openAgentSettings(page);
   for (const kind of ['api_key', 'subscription']) {
-    const remove = account.locator(`#remove-codex-${kind}`);
+    const remove = panel.locator(`#remove-codex-${kind}`);
     if (await remove.count()) {
+      await panel.locator('#agent-menu-codex-trigger').click();
       await remove.click();
-      await account.locator('#confirm-agent-disconnect').click();
+      await panel.locator('#confirm-agent-disconnect').click();
       await expect(remove).toHaveCount(0);
-      await expect(account.locator('#agent-codex-status')).toContainText(/(Connected|Not connected)/);
     }
   }
-  await page.keyboard.press('Escape');
-  await expect(account).not.toBeVisible();
+  await expect(panel.locator('#agent-codex')).toBeVisible();
+  await page.goto('/home');
+  await expect(page.locator('[data-phx-main]')).toHaveClass(/phx-connected/);
   await page.getByRole('button', { name: 'Add a project', exact: true }).first().click();
   const dialog = page.getByRole('dialog', { name: 'New project' });
   await dialog.getByLabel('Project name', { exact: true }).fill('ChatGPT inline');

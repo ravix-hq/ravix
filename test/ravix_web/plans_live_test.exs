@@ -77,7 +77,7 @@ defmodule RavixWeb.PlansLiveTest do
     render_click(view, "dialog", %{name: "search"})
     refute has_element?(view, "#search-plan-link-#{plan.id}")
     view |> form("#search-form", q: "launch") |> render_change()
-    assert has_element?(view, "#search-dialog", "No projects, tracks or plans match")
+    assert has_element?(view, "#search-dialog", "No tracks match")
     refute has_element?(view, "#project-plans-#{ctx.project.id}")
 
     # The page itself refuses a track guest too.

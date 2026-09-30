@@ -1518,6 +1518,8 @@ const PEOPLE = [
     { id: 9061, login: "firstrun", name: "First Run", avatar_url: `${BASE}/ghweb/avatar.svg` },
     { id: 9086, login: "attributor", name: "Attributed Sender", avatar_url: `${BASE}/ghweb/avatar.svg` },
     { id: 9087, login: "attributecolleague", name: "Attribute Colleague", avatar_url: `${BASE}/ghweb/avatar.svg` },
+    { id: 9088, login: "personalsettings", name: "Personal Settings", avatar_url: `${BASE}/ghweb/avatar.svg` },
+    { id: 9099, login: "quickjumper", name: "Quick Jumper", avatar_url: `${BASE}/ghweb/avatar.svg` },
     { id: 9100, login: "stagepages", name: "Stage Pages", avatar_url: `${BASE}/ghweb/avatar.svg` },
     { id: 9101, login: "homerecent", name: "Home Recent", avatar_url: `${BASE}/ghweb/avatar.svg` },
   ] : []),

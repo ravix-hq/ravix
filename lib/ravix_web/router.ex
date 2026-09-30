@@ -98,7 +98,7 @@ defmodule RavixWeb.Router do
     # Settings that moved into the settings frame (RAV-72), and the bare
     # addresses of it; each lands on a section.
     get "/settings", SettingsRedirectController, :personal
-    get "/settings/connections", SettingsRedirectController, :personal
+    get "/settings/connections", SettingsRedirectController, :connections
     get "/w/:workspace", SettingsRedirectController, :workspace
     get "/w/:workspace/settings", SettingsRedirectController, :workspace
     get "/p/:project/settings", SettingsRedirectController, :project
