@@ -46,6 +46,8 @@ const STYLE_WAIT_MS = 3_000
 /** How long a pane that was in front is remembered across its page remounting. */
 const FRONT_MS = 15_000
 const FRONT_KEY = "ravix.shell.front"
+/** How many frames a shown pane tries to put its view back before giving up. */
+const SCROLL_FRAMES = 30
 
 let loading = null
 
@@ -245,13 +247,36 @@ export const Shell = {
   restoreScroll() {
     const saved = this.hiddenAt
     this.hiddenAt = null
-    this.term.write("", () =>
-      requestAnimationFrame(() => {
-        if (this.gone || !this.term) return
-        if (saved && !saved.atBottom) this.term.scrollToLine(saved.line)
-        else this.term.scrollToBottom()
-      }),
-    )
+    this.term.write("", () => this.settleScroll(saved, SCROLL_FRAMES))
+  },
+
+  // xterm scrolls by moving its viewport's scroll area, which is clamped to
+  // the height that area last took. A pane opened behind another tab starts
+  // at xterm's default 24 rows and is fitted to its own when shown, but xterm
+  // does not render a hidden terminal, and its viewport can keep the 24-row
+  // height: taller than what it holds, so every scroll is clamped to the top
+  // and silently lost (RAV-105). The pane opened on a reload's first
+  // replayed rows with its prompt out of view. A resize makes xterm take the
+  // height again, so a scroll that did not land resizes the terminal through
+  // one row more and back --- the shell is told nothing, since the size ends
+  // where it was sent --- and tries again next frame, for a few frames.
+  settleScroll(saved, frames, nudged = false) {
+    requestAnimationFrame(() => {
+      if (this.gone || !this.term) return
+      const term = this.term
+      const buffer = term.buffer.active
+      const back = saved && !saved.atBottom
+      if (back) term.scrollToLine(saved.line)
+      else term.scrollToBottom()
+      const landed = back ? buffer.viewportY === saved.line : buffer.viewportY >= buffer.baseY
+      if (landed || frames <= 1) return
+      if (!nudged) {
+        const {cols, rows} = term
+        term.resize(cols, rows + 1)
+        term.resize(cols, rows)
+      }
+      this.settleScroll(saved, frames - 1, true)
+    })
   },
 
   attach(select = false) {
