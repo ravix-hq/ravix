@@ -1187,6 +1187,12 @@ test('composer Send stays compact and keeps its arrow after repeated submissions
     await expect(async () => {
       await page.reload();
       await expect(page.locator('[data-phx-main]')).toHaveClass(/phx-connected/);
+      // RAV-104: a reloaded page draws the composer before the track's detail
+      // lands, and until then nothing is running as far as it knows, so "no
+      // Stop" proved nothing and a memo's stale Running could follow it. The
+      // shown tab names the status that Stop is drawn from, so wait for it.
+      await expect(page.locator('#thread-tablist .thread-tab[aria-selected="true"]'))
+        .toHaveAttribute('aria-label', status === 'running' ? / · Running$/ : / · (Idle|Queued|Failed)$/, { timeout: 1_000 });
       await expect(page.locator('#composer-form').getByRole('button', { name: 'Stop agent', exact: true })).toHaveCount(status === 'running' ? 1 : 0, { timeout: 1_000 });
       await expect(page.locator('#composer-form').getByRole('button', { name: 'Wake / retry', exact: true })).toHaveCount(['opening', 'failed'].includes(status) ? 1 : 0, { timeout: 1_000 });
     }).toPass({ timeout: 15_000 });
