@@ -86,7 +86,7 @@ defmodule RavixWeb.WorkspaceRailAgeTest do
 
     # Private is a lock with a tooltip, and a word only a reader hears; the
     # row's name says it too (RAV-96).
-    assert has_element?(view, "#{tab.(quiet)} .track-private[title^='Private'] svg")
+    assert has_element?(view, "#{tab.(quiet)} .track-private[data-tip^='Private'] svg")
     assert has_element?(view, "#{tab.(quiet)} .track-private .sr-only", "Private")
     assert has_element?(view, "#{tab.(quiet)}[data-label*=', private']")
     refute has_element?(view, "#{tab.(prompted)}[data-label*=', private']")

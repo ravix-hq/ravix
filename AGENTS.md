@@ -146,9 +146,11 @@ default theme; manual checks still matter for other themes and assistive devices
 
 An icon-only control is `<.icon_button>`, or carries `aria-label` and
 `data-tip` itself: `data-tip` is the app's one tooltip (`assets/js/tooltip.js`,
-with `data-tip-kbd` for a shortcut), not the native `title`.
-`scripts/icon_labels.mjs` reads every template and fails `bun test` on one
-without both; `assets/test/icon_labels.test.js` proves it rejects and accepts.
+with `data-tip-kbd="Mod+K"` for a shortcut), not the native `title`. Focus
+rings are `:focus-visible` only, and none after pointer input
+(`assets/js/focus_ring.js`). `RavixWeb.IconLabels` (`test/support`) reads
+every template, and `test/ravix_web/icon_labels_test.exs` fails on an
+icon-only control without both and proves the scan rejects and accepts.
 `bun scripts/quality.mjs` checks pinned runtimes/actions and shared agent files.
 `python3 scripts/coverage-self-test.py` runs disposable negative coverage fixtures.
 The secret scanner has a `self-test` command; `.gitleaksignore` allows only exact,

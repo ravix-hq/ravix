@@ -68,9 +68,12 @@
           :if={@track.visibility == :private}
           id="track-private"
           class="track-private"
-          title="Private: only its creator and the people they invite"
+          role="img"
+          tabindex="0"
+          aria-label="Private"
+          data-tip="Private: only its creator and the people they invite"
         >
-          <.icon name="lock" size={12} /><span class="sr-only">Private</span>
+          <.icon name="lock" size={12} />
         </span>
       </div>
       <span class="spacer"></span>

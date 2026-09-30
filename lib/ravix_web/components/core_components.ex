@@ -35,7 +35,7 @@ defmodule RavixWeb.CoreComponents do
       role={if @label, do: "img"}
       aria-label={@label}
       aria-hidden={if is_nil(@label), do: "true"}
-      title={@title || @label}
+      data-tip={@title || @label}
     ></span>
     """
   end
@@ -237,14 +237,15 @@ defmodule RavixWeb.CoreComponents do
 
   `label` is its accessible name and its tooltip, so the two cannot drift;
   `tip` replaces the tooltip when it should say more than the name.
-  `shortcut` is the key the tooltip shows beside it ("⌘K"), and `keys` the
-  same key for assistive technology (`aria-keyshortcuts`, "Meta+K"). The
+  `shortcut` is the key the tooltip shows beside it, `Mod+` being ⌘ on a Mac
+  and Ctrl+ elsewhere ("Mod+K"), and `keys` the same key for assistive
+  technology (`aria-keyshortcuts`, "Control+K Meta+K"). The
   tooltip itself is `assets/js/tooltip.js`, which every `data-tip` shares;
-  `scripts/icon_labels.mjs` fails the build on an icon-only control that has
+  `test/ravix_web/icon_labels_test.exs` fails on an icon-only control that has
   no name or no tooltip.
 
       <.icon_button icon="x" label="Close" class="x" phx-click={@close} />
-      <.icon_button icon="search" label="Search" shortcut="⌘K" keys="Meta+K" />
+      <.icon_button icon="search" label="Search" shortcut="Mod+K" keys="Control+K Meta+K" />
   """
   attr :icon, :string, required: true
   attr :label, :string, required: true

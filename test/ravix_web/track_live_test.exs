@@ -2168,14 +2168,14 @@ defmodule RavixWeb.TrackLiveTest do
       if detail do
         assert has_element?(
                  view,
-                 "#track-machine-state[aria-describedby=track-machine-detail][title=\"#{detail}\"]"
+                 "#track-machine-state[aria-describedby=track-machine-detail][data-tip=\"#{detail}\"]"
                )
 
         assert has_element?(view, "#track-machine-detail.sr-only", detail)
       else
         refute has_element?(view, "#track-machine-detail")
         # The word is its tooltip too.
-        assert has_element?(view, "#track-machine-state[title=\"#{label}\"]")
+        assert has_element?(view, "#track-machine-state[data-tip=\"#{label}\"]")
       end
     end
 
@@ -6337,7 +6337,11 @@ defmodule RavixWeb.TrackLiveTest do
     assert Repo.get!(Track, ctx.track.id).visibility == :private
     settle(ctx.view)
     # A lock after the title rather than a chip (RAV-82).
-    assert has_element?(ctx.view, ".track-crumbs #track-private .sr-only", "Private")
+    assert has_element?(
+             ctx.view,
+             ".track-crumbs #track-private[role=img][aria-label=Private][data-tip^=Private]"
+           )
+
     token = Plug.Conn.get_session(ctx.conn, :session_token)
     session = Repo.get_by!(Session, token_hash: Ravix.Crypto.sha256(token))
     Repo.delete!(session)

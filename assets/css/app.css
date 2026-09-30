@@ -506,7 +506,9 @@ html[data-inspector="closed"] #inspector-toggle .label-show { display: inline; }
 /* ── the yard (left rail) ──────────────────────────────────────────────── */
 
 .yard { display: flex; flex-direction: column; min-width: 0; min-height: 0; background: var(--sidebar); border-right: 1px solid var(--line); }
+/* Drawn first, tabbed to after the nav (RAV-98): see the template. */
 .yard-top {
+  order: -1;
   display: flex; align-items: center; gap: 4px; flex: none;
   height: var(--pane-head); padding: 0 8px; border-bottom: 1px solid var(--line);
 }
@@ -2868,7 +2870,8 @@ body:has(.phx-error) #request-progress { display: none; }
 .track-private { flex: none; display: inline-flex; align-items: center; color: var(--dim); }
 .rail-scope { display: flex; gap: 2px; margin: 0 8px 6px; padding: 2px; background: var(--surface); border-radius: var(--radius); }
 .rail-scope button { flex: 1; padding: 2px 8px; font-size: 12px; border: none; border-radius: var(--radius); }
-.rail-scope button.on { color: var(--ink); background: var(--panel); box-shadow: 0 1px 2px var(--shadow); }
+/* Selected by its fill and a hairline, not a shadow that reads as a focus ring (RAV-98). */
+.rail-scope button.on { color: var(--ink); background: var(--panel); box-shadow: inset 0 0 0 1px var(--line); }
 .project-menu { bottom: auto; top: 64px; width: min(220px, calc(100vw - 16px)); }
 @supports (position-area: bottom) {
   .project-menu { top: auto; position-area: bottom span-left; margin-top: 4px; }
@@ -3019,3 +3022,10 @@ html[data-yard="closed"] .workspace-gear { display: none; }
 }
 .tooltip[hidden] { display: none; }
 .tooltip kbd { flex: none; padding: 0 4px; font-size: 11px; }
+
+/* A pointer came last (`assets/js/focus_ring.js`): focus a script hands
+   back, to Share after its popover closes, say, draws no ring. The next
+   Tab or arrow key brings rings back. Last in the file so it outranks
+   every control's own ring. */
+html[data-input="pointer"] :focus-visible,
+html[data-input="pointer"] .model-option:has(input:focus-visible) { outline: none; }

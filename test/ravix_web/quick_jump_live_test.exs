@@ -24,18 +24,19 @@ defmodule RavixWeb.QuickJumpLiveTest do
     %{user: user, project: project}
   end
 
-  test "the trigger names ⌘K on a Mac and Ctrl K elsewhere", ctx do
-    for {params, label, keys} <- [
-          {%{"platform" => "mac"}, "⌘K", "Meta+K"},
-          {%{"platform" => "other"}, "Ctrl K", "Control+K"},
-          {%{}, "Ctrl K", "Control+K"}
+  # The tooltip writes Mod+K as ⌘K or Ctrl+K in the browser (RAV-98).
+  test "the trigger's shortcut is ⌘K on a Mac and Ctrl K elsewhere", ctx do
+    for {params, keys} <- [
+          {%{"platform" => "mac"}, "Meta+K"},
+          {%{"platform" => "other"}, "Control+K"},
+          {%{}, "Control+K"}
         ] do
       conn = ctx.conn |> log_in_user(ctx.user) |> put_connect_params(params)
       {:ok, view, _} = live(conn, "/inbox")
 
       assert has_element?(
                view,
-               "#quick-jump-trigger[data-tip='Search projects, tracks and plans'][data-tip-kbd='#{label}'][aria-keyshortcuts='#{keys}']"
+               "#quick-jump-trigger[data-tip='Search projects, tracks and plans'][data-tip-kbd='Mod+K'][aria-keyshortcuts='#{keys}']"
              )
     end
   end

@@ -1,5 +1,5 @@
 import {afterEach, expect, test} from "bun:test"
-import {HOVER_DELAY_MS, WARM_MS, installTooltips, place} from "../js/tooltip"
+import {HOVER_DELAY_MS, WARM_MS, installTooltips, keysLabel, place} from "../js/tooltip"
 
 let tips
 afterEach(() => {
@@ -12,10 +12,10 @@ const wait = ms => new Promise(resolve => setTimeout(resolve, ms))
 const tip = () => document.getElementById("tooltip")
 const shown = () => (tip() && !tip().hidden ? tip().textContent : null)
 
-function setup(html = `<button id="a" aria-label="Search" data-tip="Search" data-tip-kbd="⌘K">s</button>
-  <button id="b" aria-label="Close" data-tip="Close">x</button><p id="plain">text</p>`) {
+function setup(html = `<button id="a" aria-label="Search" data-tip="Search" data-tip-kbd="Mod+K">s</button>
+  <button id="b" aria-label="Close" data-tip="Close">x</button><p id="plain">text</p>`, {mac = true} = {}) {
   document.body.innerHTML = html
-  tips = installTooltips(window)
+  tips = installTooltips(window, {mac})
   return id => document.getElementById(id)
 }
 
@@ -30,9 +30,10 @@ test("hovering a control shows its tip and shortcut after a pause, and leaving h
   expect(shown()).toBe("Search⌘K")
   expect(tip().querySelector("kbd").textContent).toBe("⌘K")
   expect(tip().getAttribute("role")).toBe("tooltip")
-  expect(tip().getAttribute("aria-hidden")).toBe("true")
+  expect($("a").getAttribute("aria-describedby")).toBe("tooltip")
   leave($("a"))
   expect(shown()).toBeNull()
+  expect($("a").hasAttribute("aria-describedby")).toBe(false)
 })
 
 test("leaving before the pause ends shows nothing", async () => {
@@ -160,4 +161,36 @@ test("the tip sits under its control, over it at the bottom edge, and inside the
   rect(anchor, {left: 0, top: 50, width: 20, height: 20})
   place(t, anchor, win)
   expect(t.style.left).toBe("4px")
+})
+
+test("a shortcut reads ⌘ on a Mac and Ctrl+ elsewhere", () => {
+  expect(keysLabel("Mod+K", true)).toBe("⌘K")
+  expect(keysLabel("Mod+K", false)).toBe("Ctrl+K")
+  expect(keysLabel("F2", false)).toBe("F2")
+  const $ = setup(undefined, {mac: false})
+  $("a").focus()
+  expect(shown()).toBe("SearchCtrl+K")
+})
+
+test("the tip describes its control unless it only repeats the name, and keeps other descriptions", () => {
+  const $ = setup(`<button id="a" aria-label="Close" data-tip="Close">x</button>
+    <button id="b" aria-label="More for this turn" data-tip="More" aria-describedby="hint">y</button>`)
+  $("a").focus()
+  expect(shown()).toBe("Close")
+  expect($("a").hasAttribute("aria-describedby")).toBe(false)
+  $("b").focus()
+  expect($("b").getAttribute("aria-describedby")).toBe("hint tooltip")
+  $("b").blur()
+  expect($("b").getAttribute("aria-describedby")).toBe("hint")
+})
+
+test("focus after pointer input shows no tip", () => {
+  const $ = setup()
+  document.documentElement.dataset.input = "pointer"
+  try {
+    $("a").focus()
+    expect(shown()).toBeNull()
+  } finally {
+    delete document.documentElement.dataset.input
+  }
 })

@@ -57,7 +57,7 @@ test('icon-only controls are named and tipped, and only the keyboard draws a rin
   await search.hover();
   await expect(tooltip).toBeVisible();
   await expect(tooltip).toContainText('Search projects, tracks and plans');
-  await expect(tooltip.locator('kbd')).toHaveText(/^(⌘K|Ctrl K)$/);
+  await expect(tooltip.locator('kbd')).toHaveText(/^(⌘K|Ctrl\+K)$/);
   const [anchor, tip] = await Promise.all([search.boundingBox(), tooltip.boundingBox()]);
   expect(tip.y).toBeGreaterThanOrEqual(anchor.y + anchor.height);
   await page.screenshot({ path: test.info().outputPath('tooltip-hover.png') });
@@ -89,12 +89,52 @@ test('icon-only controls are named and tipped, and only the keyboard draws a rin
   await page.keyboard.press('Escape');
   await expect(tooltip).toBeHidden();
 
+  // Sharing opened and closed with the mouse, by Escape or its ×: focus goes
+  // back to the button with no ring. Opened from the keyboard, the ring stays.
+  const share = page.getByRole('button', { name: /^Track sharing/ });
+  const people = page.getByRole('dialog');
+  for (const close of [() => page.keyboard.press('Escape'), () => people.getByRole('button', { name: 'Close', exact: true }).click()]) {
+    await share.click();
+    await expect(people).toBeVisible();
+    await page.mouse.move(640, 700);
+    await close();
+    await expect(people).toBeHidden();
+    await expect(share).toBeFocused();
+    expect((await ring(share)).style).toBe('none');
+    await expect(tooltip).toBeHidden();
+  }
+  await page.keyboard.press('Shift+Tab');
+  await page.keyboard.press('Tab');
+  await expect(share).toBeFocused();
+  await page.keyboard.press('Enter');
+  await expect(people).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(share).toBeFocused();
+  expect(await ring(share)).toEqual({ style: 'solid', width: '2px' });
+
+  // A click in the transcript's empty space outlines nothing.
+  const scroller = page.locator('#transcript-scroll');
+  const box = await scroller.boundingBox();
+  await page.mouse.click(box.x + box.width / 2, box.y + 40);
+  expect((await ring(scroller)).style).toBe('none');
+
   // Every theme draws the ring in its accent, never transparent.
   for (const theme of ['daylight', 'github-light']) {
     await page.evaluate(t => { document.documentElement.dataset.theme = t; }, theme);
     const color = await more.evaluate(el => getComputedStyle(el).outlineColor);
     expect(color).not.toMatch(/rgba\(0, 0, 0, 0\)|transparent/);
   }
+
+  // New track is the first tab stop, though the rail's top row is drawn above it.
+  await page.goto('/home');
+  await expect(page.locator('[data-phx-main]')).toHaveClass(/phx-connected/);
+  await page.keyboard.press('Tab');
+  await expect(page.locator('#top-new-track')).toBeFocused();
+  const [first, top] = await Promise.all([
+    page.locator('#top-new-track').boundingBox(),
+    page.locator('#quick-jump-trigger').boundingBox(),
+  ]);
+  expect(top.y).toBeLessThan(first.y);
 
   // The other pages' icon-only controls, and the open account menu's.
   for (const path of ['/home', '/inbox', '/schedules']) {

@@ -54,6 +54,39 @@
     >
     </div>
     <aside id="yard" class={["yard", @yard_open && "forced"]} aria-label="Projects">
+      <%!-- New track is the first tab stop (RAV-98): the nav comes first in
+        the document, and `.yard-top` is drawn above it with `order`. --%>
+      <div class="workspace-actions yard-nav">
+        <button
+          id="top-new-track"
+          class="primary"
+          data-new-track-trigger
+          aria-keyshortcuts="Control+N Meta+N"
+          data-tip="New track"
+          data-tip-kbd="Mod+N"
+          phx-click={new_track_click(@rail_loaded, @projects)}
+        >
+          <.icon name="plus" />New track
+        </button>
+        <.link patch="/inbox" class={["yard-item", @live_action in [:home, :inbox] && "on"]}>
+          <.icon name="terminal" />Inbox<span class="spacer"></span>
+          <span :if={@attention > 0} class="badge">{@attention}</span>
+        </.link>
+        <.link patch="/home" class={["yard-item", @live_action == :projects && "on"]}>
+          <.icon name="home" />Home
+        </.link>
+        <button
+          class="yard-item"
+          phx-click={JS.push_focus() |> JS.push("dialog")}
+          phx-value-name="new-project"
+        >
+          <.icon name="folder" />Add a repository
+        </button>
+
+        <.link patch="/schedules" class={["yard-item", @live_action == :schedules && "on"]}>
+          <.icon name="clock" />Schedules
+        </.link>
+      </div>
       <%!-- Account preferences live in the sidebar footer; the native popover
         retains light dismiss, Escape and focus return. --%>
       <div class="yard-top">
@@ -66,7 +99,7 @@
           type="button"
           class="ghost"
           data-tip="Search projects, tracks and plans"
-          data-tip-kbd={if @mac, do: "⌘K", else: "Ctrl K"}
+          data-tip-kbd="Mod+K"
           aria-keyshortcuts={if @mac, do: "Meta+K", else: "Control+K"}
           data-quick-jump-trigger
           phx-click={JS.push_focus() |> JS.push("dialog")}
@@ -88,7 +121,7 @@
           aria-expanded="true"
           aria-keyshortcuts={if @mac, do: "Meta+B", else: "Control+B"}
           data-tip="Hide sidebar"
-          data-tip-kbd={sidebar_shortcut(@mac)}
+          data-tip-kbd="Mod+B"
         >
           <.icon name="panel-left" size={16} />
           <span class="sr-only label-hide">Hide sidebar</span>
@@ -162,35 +195,6 @@
         <hr />
         <.link href="/auth/signout" method="post" class="account-item">
           <.icon name="sign-out" size={14} />Sign out
-        </.link>
-      </div>
-      <div class="workspace-actions yard-nav">
-        <button
-          id="top-new-track"
-          class="primary"
-          data-new-track-trigger
-          aria-keyshortcuts="Control+N Meta+N"
-          phx-click={new_track_click(@rail_loaded, @projects)}
-        >
-          <.icon name="plus" />New track
-        </button>
-        <.link patch="/inbox" class={["yard-item", @live_action in [:home, :inbox] && "on"]}>
-          <.icon name="terminal" />Inbox<span class="spacer"></span>
-          <span :if={@attention > 0} class="badge">{@attention}</span>
-        </.link>
-        <.link patch="/home" class={["yard-item", @live_action == :projects && "on"]}>
-          <.icon name="home" />Home
-        </.link>
-        <button
-          class="yard-item"
-          phx-click={JS.push_focus() |> JS.push("dialog")}
-          phx-value-name="new-project"
-        >
-          <.icon name="folder" />Add a repository
-        </button>
-
-        <.link patch="/schedules" class={["yard-item", @live_action == :schedules && "on"]}>
-          <.icon name="clock" />Schedules
         </.link>
       </div>
       <div class="yard-scroll">
@@ -620,6 +624,8 @@
           class="primary"
           data-new-track-trigger
           aria-keyshortcuts="Control+N Meta+N"
+          data-tip="New track"
+          data-tip-kbd="Mod+N"
           phx-click={new_track_click(@rail_loaded, @projects)}
         ><.icon name="plus" />New track</button>
       </nav>
@@ -821,6 +827,8 @@
               class="primary"
               data-new-track-trigger
               aria-keyshortcuts="Control+N Meta+N"
+              data-tip="New track"
+              data-tip-kbd="Mod+N"
               phx-click={new_track_click(@rail_loaded, @projects)}
             >
               <.icon name="plus" />New track

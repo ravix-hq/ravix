@@ -34,7 +34,7 @@ test('Ctrl+K opens quick jump from the composer, keeps every key and stays put',
 
   // Linux Chrome: the hint says Ctrl K, and the key works from the composer.
   const trigger = page.locator('#quick-jump-trigger');
-  await expect(trigger).toHaveAttribute('data-tip-kbd', 'Ctrl K');
+  await expect(trigger).toHaveAttribute('data-tip-kbd', 'Mod+K');
   const composer = page.locator('textarea').first();
   await composer.focus();
   const dialog = page.getByRole('dialog', { name: 'Search', exact: true });

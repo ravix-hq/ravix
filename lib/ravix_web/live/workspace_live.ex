@@ -1634,9 +1634,6 @@ defmodule RavixWeb.WorkspaceLive do
   defp need_you(1), do: "1 track needs you"
   defp need_you(count), do: "#{count} tracks need you"
 
-  defp sidebar_shortcut(true), do: "⌘B"
-  defp sidebar_shortcut(_mac), do: "Ctrl+B"
-
   # Whether every track the rail shows has one creator (RAV-96). Then an
   # avatar on each row says nothing, as under Mine, and the rail leaves it
   # out; each row's name still says who created it.
@@ -2609,7 +2606,7 @@ defmodule RavixWeb.WorkspaceLive do
   # takes the title's room. The row's accessible name says "private".
   defp private_mark(assigns) do
     ~H"""
-    <span class="track-private" title="Private: only its creator and the people they invite">
+    <span class="track-private" data-tip="Private: only its creator and the people they invite">
       <.icon name="lock" size={12} /><span class="sr-only">Private</span>
     </span>
     """
@@ -2630,7 +2627,7 @@ defmodule RavixWeb.WorkspaceLive do
         class="loading-spinner track-spinner"
         role="img"
         aria-label="Working"
-        title={tab_status_title(@track)}
+        data-tip={tab_status_title(@track)}
       ></span>
       <.age :if={!@working} id={"track-age-#{@track.id}"} at={@track.activity_at} />
     </span>

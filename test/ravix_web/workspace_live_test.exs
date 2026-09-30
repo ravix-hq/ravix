@@ -1202,7 +1202,7 @@ defmodule RavixWeb.WorkspaceLiveTest do
         ] do
       assert has_element?(
                view,
-               "#{tab.(track)} .dot.#{class}[role=img][aria-label='#{label}'][title=\"#{tooltip}\"]"
+               "#{tab.(track)} .dot.#{class}[role=img][aria-label='#{label}'][data-tip=\"#{tooltip}\"]"
              )
 
       assert has_element?(
@@ -1244,7 +1244,7 @@ defmodule RavixWeb.WorkspaceLiveTest do
 
     assert has_element?(
              view,
-             "#{tab.(busy)} > .track-meta > .track-spinner[role=img][aria-label=Working][title=\"Working: The agent is taking a turn.\"]"
+             "#{tab.(busy)} > .track-meta > .track-spinner[role=img][aria-label=Working][data-tip=\"Working: The agent is taking a turn.\"]"
            )
 
     refute has_element?(view, "#{tab.(busy)} .dot")
@@ -1626,7 +1626,7 @@ defmodule RavixWeb.WorkspaceLiveTest do
     # It hides the whole sidebar, and says so with its shortcut (RAV-96).
     assert has_element?(
              view,
-             ~s|#yard-toggle[phx-hook=PanelToggle][aria-controls=yard][aria-expanded=true][data-shortcut=b][aria-keyshortcuts="Control+B"][data-tip="Hide sidebar"][data-tip-kbd="Ctrl+B"][data-show-label="Show sidebar"]|,
+             ~s|#yard-toggle[phx-hook=PanelToggle][aria-controls=yard][aria-expanded=true][data-shortcut=b][aria-keyshortcuts="Control+B"][data-tip="Hide sidebar"][data-tip-kbd="Mod+B"][data-show-label="Show sidebar"]|,
              "Hide sidebar"
            )
 

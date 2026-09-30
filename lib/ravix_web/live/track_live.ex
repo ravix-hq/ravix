@@ -2645,6 +2645,7 @@ defmodule RavixWeb.TrackLive do
           aria-controls="thread-add-menu"
           aria-label="Add thread"
           data-tip="Add thread"
+          data-tip-kbd="Mod+T"
           disabled={@adding}
           phx-mounted={JS.ignore_attributes(["aria-expanded"])}
           style="anchor-name: --thread-add"
@@ -3430,7 +3431,7 @@ defmodule RavixWeb.TrackLive do
       role="status"
       aria-live="polite"
       aria-describedby={@machine.detail && "track-machine-detail"}
-      title={@machine.detail || MachineState.label(@machine.state)}
+      data-tip={@machine.detail || MachineState.label(@machine.state)}
     ><.status_dot status={to_string(@machine.state)} /><span class="chip-label">{MachineState.label(
       @machine.state
     )}</span></span>

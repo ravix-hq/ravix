@@ -2,26 +2,36 @@
 //
 // Any element with `data-tip` gets it: after a short pause under the
 // pointer, or at once when the keyboard focuses it. `data-tip-kbd` adds the
-// shortcut beside the text ("Search  ⌘K"). `<.icon_button>` writes both,
-// and `scripts/icon_labels.mjs` fails the build on an icon-only control
-// without one, so the native `title` (mouse only, slow, and unstyled) is not
-// used for controls.
+// shortcut beside the text; `Mod+` in it is ⌘ on a Mac and Ctrl+ elsewhere
+// ("Mod+K" reads ⌘K or Ctrl+K), so a template names a shortcut once for
+// every platform. `<.icon_button>` writes both, and
+// `test/ravix_web/icon_labels_test.exs` fails on an icon-only control
+// without one, so the native `title` (mouse only, slow, unstyled, and
+// without the shortcut) is not used for controls.
 //
 // There is one element, `#tooltip`, made the first time it is needed. It is
 // a manual popover so it is drawn in the top layer, over menus and dialogs,
-// and never clipped by a scroller; it is `aria-hidden` because what it says
-// is already the control's accessible name and `aria-keyshortcuts`. It sits
-// under the control, or over it when there is no room below, kept inside
-// the viewport. A press, Escape, a scroll or the control leaving the page
-// hides it; it does not come back until the pointer or focus moves on.
+// and never clipped by a scroller. While it shows, the control is
+// `aria-describedby` it, unless it would only repeat the control's name.
+// It sits under the control, or over it when there is no room below, kept
+// inside the viewport. A press, Escape, a scroll or the control leaving
+// the page hides it; it does not come back until the pointer or focus
+// moves on.
+import {macPlatform} from "./platform"
 
-export const HOVER_DELAY_MS = 450
+export const HOVER_DELAY_MS = 300
 // Moving from one tipped control to the next shows the next at once.
 export const WARM_MS = 600
+export const TIP_ID = "tooltip"
 const GAP = 6
 const MARGIN = 4
 
-export function installTooltips(win = window) {
+/** A `data-tip-kbd` for this platform: `Mod+K` is ⌘K on a Mac, Ctrl+K elsewhere. */
+export function keysLabel(keys, mac = macPlatform()) {
+  return keys.replace(/\bMod\+/g, mac ? "⌘" : "Ctrl+")
+}
+
+export function installTooltips(win = window, {mac = macPlatform(win.navigator)} = {}) {
   const doc = win.document
   let tip = null
   let anchor = null
@@ -32,29 +42,41 @@ export function installTooltips(win = window) {
   const element = () => {
     if (tip && tip.isConnected) return tip
     tip = doc.createElement("div")
-    tip.id = "tooltip"
+    tip.id = TIP_ID
     tip.className = "tooltip"
     tip.setAttribute("role", "tooltip")
-    tip.setAttribute("aria-hidden", "true")
     tip.setAttribute("popover", "manual")
+    tip.hidden = true
     doc.body.appendChild(tip)
     return tip
   }
 
   const target = node => (node instanceof win.Element ? node.closest("[data-tip]") : null)
 
+  const describe = (el, on) => {
+    const ids = (el.getAttribute("aria-describedby") || "").split(/\s+/).filter(id => id && id !== TIP_ID)
+    if (on) ids.push(TIP_ID)
+    if (ids.length) el.setAttribute("aria-describedby", ids.join(" "))
+    else el.removeAttribute("aria-describedby")
+  }
+
   const show = el => {
     clearTimeout(timer)
+    timer = null
     const text = el.dataset.tip
     if (!text || !el.isConnected) return hide()
+    if (anchor && anchor !== el) describe(anchor, false)
     const t = element()
     t.replaceChildren(doc.createTextNode(text))
-    if (el.dataset.tipKbd) {
+    const keys = el.dataset.tipKbd
+    if (keys) {
       const kbd = doc.createElement("kbd")
-      kbd.textContent = el.dataset.tipKbd
+      kbd.textContent = keysLabel(keys, mac)
       t.appendChild(kbd)
     }
     anchor = el
+    // A tip that only repeats the name would be read twice.
+    describe(el, Boolean(keys) || text !== el.getAttribute("aria-label"))
     t.hidden = false
     if (t.showPopover && !t.matches(":popover-open")) t.showPopover()
     place(t, el, win)
@@ -62,7 +84,11 @@ export function installTooltips(win = window) {
 
   const hide = () => {
     clearTimeout(timer)
-    if (anchor) warmUntil = Date.now() + WARM_MS
+    timer = null
+    if (anchor) {
+      warmUntil = Date.now() + WARM_MS
+      describe(anchor, false)
+    }
     anchor = null
     if (!tip) return
     if (tip.hidePopover && tip.matches(":popover-open")) tip.hidePopover()
@@ -80,7 +106,7 @@ export function installTooltips(win = window) {
     if (el === anchor) return
     if (!el) return hide()
     if (el === dismissed) return
-    if (anchor) { hide(); return show(el) }
+    if (anchor) return show(el)
     soon(el)
   }
 
@@ -96,8 +122,9 @@ export function installTooltips(win = window) {
   const focusIn = e => {
     const el = target(e.target)
     if (!el || el === dismissed) return
-    // Only keyboard focus: a click already focused it under the pointer.
-    if (!focusVisible(el)) return
+    // Only keyboard focus: a click, or focus handed back after a dialog a
+    // pointer closed, draws no ring and shows no tip (see focus_ring.js).
+    if (doc.documentElement.dataset.input === "pointer" || !focusVisible(el)) return
     show(el)
   }
 
@@ -107,12 +134,6 @@ export function installTooltips(win = window) {
     if (el && el === anchor) hide()
   }
 
-  const dismiss = () => {
-    if (!anchor && !timer) return
-    dismissed = anchor || dismissed
-    hide()
-  }
-
   const press = e => {
     const el = target(e.target)
     if (el) dismissed = el
@@ -120,7 +141,9 @@ export function installTooltips(win = window) {
   }
 
   const key = e => {
-    if (e.key === "Escape" && anchor) dismiss()
+    if (e.key !== "Escape" || !anchor) return
+    dismissed = anchor
+    hide()
   }
 
   // A patch that removes the control, or rewrites its tip, is followed.

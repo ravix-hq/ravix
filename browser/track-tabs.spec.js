@@ -60,7 +60,7 @@ test('project track links scroll vertically and preserve the mobile drawer', asy
   const more = header.getByRole('button', { name: 'More for this track', exact: true });
   const close = header.getByRole('button', { name: 'Close track', exact: true });
   await expect(header.getByRole('button', { name: 'Project settings', exact: true })).toHaveCount(0);
-  await expect(header.getByRole('button', { name: /^Track sharing/ })).toHaveAttribute('title', /viewing now/);
+  await expect(header.getByRole('button', { name: /^Track sharing/ })).toHaveAttribute('data-tip', /viewing now/);
   await expect(close).toBeHidden();
   await more.click();
   await expect(close).toBeVisible();
