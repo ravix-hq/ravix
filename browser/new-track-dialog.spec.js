@@ -33,12 +33,12 @@ test('New track fits 1280×720 with Create in view, and its chips are keyboard m
   test.setTimeout(150_000);
   await signIn(page, 'newtrackfit', '/home');
   await connectClaude(page);
-  await page.getByRole('button', { name: 'Add a project', exact: true }).first().click();
-  const project = page.getByRole('dialog', { name: 'New project', exact: true });
+  await page.getByRole('button', { name: 'Add a repository', exact: true }).first().click();
+  const project = page.getByRole('dialog', { name: 'Add a repository', exact: true });
   await project.getByLabel('Project name', { exact: true }).fill('Atlas API');
-  await expect(page.locator('#project-repositories option')).not.toHaveCount(0);
-  await project.getByLabel('Repository', { exact: true }).fill('mockuser/atlas-api');
-  await project.getByRole('button', { name: 'Create project', exact: true }).click();
+  await expect(page.locator('#project-repositories input[type=radio]')).not.toHaveCount(0);
+  await project.getByRole('radio', { name: 'mockuser/atlas-api', exact: true }).check();
+  await project.getByRole('button', { name: 'Add repository', exact: true }).click();
   await expect(project).toHaveCount(0);
 
   const dialog = page.getByRole('dialog', { name: 'New track', exact: true });

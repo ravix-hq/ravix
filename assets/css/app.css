@@ -611,6 +611,15 @@ html[data-yard="closed"] .workspace-trigger-skeleton { flex: none; width: 28px; 
 .repo-option.on { border-color: var(--line); background: var(--surface); }
 .repo-option small { color: var(--dim); }
 .repo-scratch { border-top: 1px solid var(--line); border-radius: 0; margin-top: 2px; padding-top: 8px; }
+/* Add repository (RAV-37): the same rows, as radios in the project form. */
+.repo-choice { margin: 0 0 12px; padding: 0; border: 0; min-width: 0; display: grid; gap: 6px; }
+.repo-choice label.repo-option { cursor: pointer; font-weight: normal; margin: 0; }
+.repo-choice label.repo-option:hover { background: var(--surface-hover); }
+.repo-choice input[type="radio"] { flex: none; width: auto; margin: 0; accent-color: var(--accent); }
+.repo-choice .repo-picker-list { max-height: min(32vh, 220px); }
+.repo-choice .hint { margin: 0; }
+#project-repo-search { margin-bottom: 6px; }
+#project-repo-search input[type="search"] { width: 100%; }
 .workspace-github-actions { display: flex; align-items: center; gap: 12px; margin-bottom: 8px; }
 .workspace-github-actions a { display: inline-flex; align-items: center; gap: 6px; }
 .workspace-page h3 { margin: 12px 0 6px; font-size: 13px; }
@@ -1924,6 +1933,8 @@ section.first-prompt#project-start { align-self: center; padding: 32px 24px; }
 .new-track-chips > .pick-chip, .new-track-chips > .chip-menu > .pick-chip { max-width: 60%; }
 #new-track-form .field { margin-bottom: 0; }
 .new-track-prompt { min-height: 116px; font-size: 14px; line-height: 1.5; }
+.new-track-explainer { margin: 6px 0 0; }
+.repo-popover #new-track-add-repository { margin-top: 6px; gap: 6px; }
 #new-track-dialog .dialog-foot { flex-wrap: nowrap; }
 #new-track-dialog .dialog-foot .chip-menu > .pick-chip { max-width: min(280px, 50vw); }
 .chip-options { display: inline-flex; align-items: center; gap: 5px; height: 28px; padding: 0 8px; font-size: 12.5px; }
@@ -1990,6 +2001,7 @@ section.first-prompt#project-start { align-self: center; padding: 32px 24px; }
 .stage-page-header h1 { margin: 0; font-size: 23px; font-weight: 600; line-height: 1.25; display: flex; align-items: center; gap: 8px; }
 .stage-page-sub { color: var(--dim); line-height: 1.55; }
 .stage-page-actions { display: flex; align-items: center; gap: 8px; flex: none; }
+.stage-page-actions > button { display: inline-flex; align-items: center; gap: 6px; }
 .page-more { margin-top: 4px; }
 .page-more summary { width: fit-content; cursor: pointer; color: var(--accent-ink); font-size: 12.5px; }
 .page-more p { margin: 8px 0 0; max-width: 72ch; }
@@ -2174,6 +2186,10 @@ section.first-prompt#project-start { align-self: center; padding: 32px 24px; }
   .workspace-mobile-nav { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; padding: 10px; border-bottom: 1px solid var(--line); }
   .workspace-mobile-nav > :is(a, button) { display: inline-flex; align-items: center; padding: 6px 10px; border: 1px solid transparent; border-radius: var(--radius); color: var(--dim); white-space: nowrap; }
   .workspace-mobile-nav a:hover { color: var(--ink); background: var(--surface-hover); }
+  /* RAV-37: New track, the phone's create action, looks like the sidebar's;
+     it is the one on screen, so Home's own is not repeated under it. */
+  .workspace-mobile-nav > button.primary { gap: 4px; background: var(--accent-soft); border-color: var(--accent-line); color: var(--accent-ink); }
+  #home-new-track { display: none; }
   .workspace-mobile-nav a[aria-current="page"] { color: var(--ink); background: var(--surface-active); border-color: var(--line-strong); font-weight: 600; }
   .crumbs { flex-wrap: wrap; row-gap: 6px; height: auto; min-height: 44px; padding: 8px 12px; }
   /* A phone has no room for the desktop floors; the same order holds. */

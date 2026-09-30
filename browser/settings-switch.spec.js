@@ -29,11 +29,11 @@ test('settings explicitly rebuilds when switching agents and the next track work
   await signIn(page, 'dana');
   // Connect through the real account form; mock values never leave this fixture.
   for (const agent of ['Claude Code', 'Codex']) await connectApiKey(page, agent, 'mock-settings-switch-key');
-  await page.getByRole('button', { name: 'Add a project', exact: true }).first().click();
-  const create = page.getByRole('dialog', { name: 'New project' });
+  await page.getByRole('button', { name: 'Add a repository', exact: true }).first().click();
+  const create = page.getByRole('dialog', { name: 'Add a repository' });
   await create.getByLabel('Project name', { exact: true }).fill('Agent switch browser');
   await create.locator('#project-agent-claude').click();
-  await create.getByRole('button', { name: 'Create project', exact: true }).click();
+  await create.getByRole('button', { name: 'Create scratch project', exact: true }).click();
   await expect(create).not.toBeVisible();
   const projectUrl = page.url();
   const projectId = new URL(projectUrl).pathname.split('/')[2];
@@ -89,11 +89,11 @@ test('settings explicitly rebuilds when switching agents and the next track work
 test('settings connects an unavailable agent inline, retains the draft, and can discard before leaving', async ({ page }) => {
   await signIn(page, 'eli', '/home');
   await connectClaude(page);
-  await page.getByRole('button', { name: 'Add a project', exact: true }).first().click();
-  const create = page.getByRole('dialog', { name: 'New project' });
+  await page.getByRole('button', { name: 'Add a repository', exact: true }).first().click();
+  const create = page.getByRole('dialog', { name: 'Add a repository' });
   await create.getByLabel('Project name', { exact: true }).fill('Inline settings connection');
   await create.locator('#project-agent-claude').click();
-  await create.getByRole('button', { name: 'Create project', exact: true }).click();
+  await create.getByRole('button', { name: 'Create scratch project', exact: true }).click();
   await expect(create).not.toBeVisible();
   const settings = await openProjectSettings(page, 'agent');
   await settings.locator('#settings-agent-codex').click();

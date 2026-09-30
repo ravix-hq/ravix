@@ -145,6 +145,7 @@ defmodule RavixWeb.WorkspaceLive do
         changes: [],
         changes_unseen: 0,
         project_form: Form.new(:new_project),
+        project_then: nil,
         project_generation: 0,
         project_agents: nil,
         project_agent_error: nil,
@@ -178,7 +179,7 @@ defmodule RavixWeb.WorkspaceLive do
         # Scratch projects in their own rail group, with the same switch.
         scratch_group: Workspaces.enabled?(),
         # Whether `/home`'s first-prompt form has asked GitHub what it may
-        # offer; once per page, like the New project dialog's read.
+        # offer; once per page, like the Add a repository dialog's read.
         quick_repos: false
       )
       |> QuickStart.init()
@@ -713,7 +714,7 @@ defmodule RavixWeb.WorkspaceLive do
          socket
          |> assign(picker: nil)
          |> open_dialog(:new_project)
-         |> assign(project_mode: "scratch")}
+         |> assign(project_mode: "scratch", project_then: :new_track)}
     end
   end
 
@@ -803,6 +804,18 @@ defmodule RavixWeb.WorkspaceLive do
 
   def handle_event("edit", %{"new_project" => params}, socket),
     do: {:noreply, NewProject.edit(socket, params)}
+
+  def handle_event(
+        "new-track-add-repository",
+        _params,
+        %{assigns: %{dialog: :new_track}} = socket
+      ),
+      do: {:noreply, socket |> open_dialog(:new_project) |> assign(project_then: :new_track)}
+
+  def handle_event("new-track-add-repository", _params, socket), do: {:noreply, socket}
+
+  def handle_event("project-repo-first", %{"new_project" => params}, socket),
+    do: {:noreply, NewProject.pick_first(socket, Map.take(params, ["query"]))}
 
   def handle_event("connect-thread-agent", %{"runtime" => runtime}, socket) do
     connection =
@@ -999,7 +1012,7 @@ defmodule RavixWeb.WorkspaceLive do
      result(
        assign(socket, busy: false),
        response,
-       fn s, {p, rail} -> s |> apply_rail(rail) |> push_patch(to: "/p/#{p.id}") end,
+       fn s, {p, rail} -> s |> apply_rail(rail) |> push_patch(to: project_path(s, p)) end,
        :project_form
      )}
   end
@@ -2110,7 +2123,7 @@ defmodule RavixWeb.WorkspaceLive do
   defp open_dialog(socket, :new_project),
     do:
       socket
-      |> assign(dialog: :new_project)
+      |> assign(dialog: :new_project, project_then: nil)
       |> NewProject.init()
       |> load_repos(nil)
 
@@ -2136,6 +2149,13 @@ defmodule RavixWeb.WorkspaceLive do
   defp open_dialog(socket, :help), do: assign(socket, dialog: :help)
   defp open_dialog(socket, :changes), do: assign(socket, dialog: :changes)
   defp open_dialog(socket, :new_workspace), do: assign(socket, dialog: :new_workspace)
+
+  # A repository added from the New track dialog goes back to it, with the
+  # new project chosen (`?new=track`); from anywhere else, to the project.
+  defp project_path(%{assigns: %{project_then: :new_track}}, project),
+    do: "/p/#{project.id}?new=track"
+
+  defp project_path(_socket, project), do: "/p/#{project.id}"
 
   # What the gear's dot means, for its button's name and tooltip.
   defp unseen_note(0, _separator), do: ""
@@ -2226,6 +2246,16 @@ defmodule RavixWeb.WorkspaceLive do
   # the same form on its own page.
   defp fresh_start?(projects), do: projects == []
 
+  # New track (RAV-37): one action, in the sidebar, on Home and on the phone.
+  # It opens the New track dialog; with no project to start one in yet, the
+  # prompt that starts one is Home's first-prompt form, so it goes there
+  # rather than into Add a repository.
+  defp new_track_click(rail_loaded, projects) do
+    if rail_loaded and fresh_start?(projects),
+      do: JS.patch("/home") |> JS.focus(to: "#home-quick-start-prompt"),
+      else: JS.push_focus() |> JS.push("top-new-track")
+  end
+
   # The only repository is the one somebody means.
   defp quick_preselect(%{assigns: %{project: nil, quick_form: form}} = socket) do
     case {form.params["target"], QuickStart.preselect(quick_targets(socket))} do
@@ -2285,7 +2315,7 @@ defmodule RavixWeb.WorkspaceLive do
 
   # RAV-10: the current workspace's repositories, the anchor (or the most
   # recently used) preselected. Nothing to preselect at all is today's
-  # answer to a person with no project: the New project dialog.
+  # answer to a person with no project: the Add a repository dialog.
   defp picker_dialog(socket, anchor) do
     # A deep link (`?new=track`) can open this before the rail has arrived;
     # the project it names is listed meanwhile, and `refresh_picker/1` fills
