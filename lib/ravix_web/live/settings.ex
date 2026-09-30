@@ -30,7 +30,13 @@ defmodule RavixWeb.Live.Settings do
   """
   use RavixWeb, :html
 
-  @personal [{"connected-apps", "Connected apps"}]
+  @personal [
+    {"profile", "Profile"},
+    {"agents", "Agents"},
+    {"notifications", "Notifications"},
+    {"appearance", "Appearance"},
+    {"connected-apps", "Connected apps"}
+  ]
   @workspace [{"general", "General"}, {"members", "Members"}]
   @project [
     {"general", "General"},

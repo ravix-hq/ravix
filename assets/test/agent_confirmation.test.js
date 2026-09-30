@@ -34,3 +34,15 @@ test('a removed trigger does not break focus restoration and teardown releases l
   hook.destroyed()
   expect(key(window, 'Escape').defaultPrevented).toBe(false)
 })
+
+test('a Remove from a closed card menu gives focus back to the menu button (RAV-77)', () => {
+  document.body.innerHTML = `<div id="panel"><button id="agent-menu-codex-trigger" popovertarget="agent-menu-codex-menu">More</button>
+    <div id="agent-menu-codex-menu" popover><button id="remove-codex-api_key">Remove</button></div></div>`
+  const {hook} = mountHook(AgentConfirmation, '#panel')
+  document.querySelector('#remove-codex-api_key').click()
+  hook.el.insertAdjacentHTML('beforeend', '<div id="agent-disconnect-confirmation"><button id="confirm-agent-disconnect">Remove connection</button></div>')
+  hook.updated()
+  document.querySelector('#agent-disconnect-confirmation').remove()
+  hook.updated()
+  expect(document.activeElement.id).toBe('agent-menu-codex-trigger')
+})
