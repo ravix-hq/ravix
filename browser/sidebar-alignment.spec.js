@@ -98,7 +98,14 @@ test('the sidebar tree steps in per level and its chevrons follow their state', 
   const turned = locator => locator.evaluate(el => getComputedStyle(el).transform !== 'none');
   for (const width of [1440, 390]) {
     await page.setViewportSize({ width, height: 900 });
-    if (width < 760) await page.getByRole('button', { name: 'Menu', exact: true }).click();
+    if (width < 760) {
+      // RAV-104: the narrow rail is `display: none` until the server's answer
+      // to Menu lands, and a box measured before then is all zeros. The
+      // button's `aria-expanded` comes in the same render that opens it.
+      const menu = page.getByRole('button', { name: 'Menu', exact: true });
+      await menu.click();
+      await expect(menu).toHaveAttribute('aria-expanded', 'true');
+    }
     // Section and project chevrons in one column, then the track further in.
     const section = await x(filed.locator('.section-toggle svg'));
     const projectX = await x(projectToggle.locator('svg'));

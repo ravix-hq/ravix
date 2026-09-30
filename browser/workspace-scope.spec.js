@@ -85,7 +85,7 @@ test('the switcher scopes the app to the current workspace, and remembers it', a
 
   // The workspace menu opens its settings, at Members, in the shell.
   await page.locator('#workspace-switcher-trigger').click();
-  await page.getByRole('button', { name: 'Workspace settings', exact: true }).click();
+  await page.locator('#workspace-menu').getByRole('button', { name: 'Workspace settings', exact: true }).click();
   await expect(page).toHaveURL(new RegExp(`/w/${teamId}/settings/members$`));
   await expect(page.getByRole('heading', { level: 1 })).toHaveText('Members');
   await expect(page.getByRole('navigation', { name: 'Breadcrumb' })).toContainText('Scope Team');
