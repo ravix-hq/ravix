@@ -1360,6 +1360,13 @@ html[data-yard="closed"] .workspace-trigger-skeleton { flex: none; width: 28px; 
 }
 .workspace-tabs .panel-toggle:hover:not(:disabled) { background: var(--surface-hover); color: var(--ink); }
 .workspace-tabs .panel-refresh.busy svg { animation: request-spin 900ms linear infinite; }
+/* Files' "Show ignored files", the refresh's neighbour: an icon that reads as
+   pressed (`aria-pressed`) by its ground as well as by its open eye. */
+.workspace-tabs .panel-ignored { margin-left: auto; display: inline-grid; place-items: center; width: 26px; height: 26px; padding: 0; border-radius: var(--radius); color: var(--dim); }
+.workspace-tabs .panel-ignored:hover:not(:disabled) { color: var(--ink); background: var(--surface-hover); }
+.workspace-tabs .panel-ignored[aria-pressed="true"],
+.workspace-tabs .panel-ignored[aria-pressed="true"]:hover:not(:disabled) { color: var(--ink); background: var(--surface-active); }
+.workspace-tabs .panel-ignored + .panel-refresh { margin-left: 0; }
 @media (prefers-reduced-motion: reduce) { .workspace-tabs .panel-refresh.busy svg { animation: none; } }
 .tab-count {
   display: inline-block; min-width: 18px; margin-left: 6px; padding: 0 5px; border-radius: 9px;
@@ -1370,10 +1377,17 @@ html[data-yard="closed"] .workspace-trigger-skeleton { flex: none; width: 28px; 
 /* An empty tab or dock pane is the shared `.empty`, sized for a side panel
    rather than a page. */
 .panel-empty .empty, .dock-empty .empty { min-height: 0; padding: 24px 12px; }
+/* The dock is 240px, and its empty state has to fit whole beneath the tab
+   strip and the command line: a tighter mark and gap, and a wider measure so
+   the sentence takes three lines rather than five. It is centred by its
+   margins in a column rather than by the pane's `justify-content`, so a pane
+   too short for it scrolls to its top instead of cutting that off. */
 .dock-empty { font-family: var(--sans); }
-.dock-empty .empty { padding: 14px 12px; gap: 6px; }
-.dock-empty .empty .mark { width: 30px; height: 30px; margin-bottom: 0; }
-.dock-empty .empty p { font-size: 12px; }
+.workspace-terminal .term-scroll:has(> .dock-empty) { display: flex; flex-direction: column; padding: 8px 12px; }
+.term-scroll > .dock-empty { margin-block: auto; }
+.dock-empty .empty { padding: 8px 12px; gap: 4px; }
+.dock-empty .empty .mark { width: 28px; height: 28px; margin-bottom: 0; }
+.dock-empty .empty p { font-size: 12px; max-width: 60ch; }
 /* The preview is somebody else's page in a frame; the panel colour is the
    ground it paints over, so the wait for it is not a hole in the inspector. */
 .workspace-preview { width: 100%; height: 360px; background: var(--panel); border: 0; margin: 12px 0; }
@@ -1452,9 +1466,6 @@ html[data-yard="closed"] .workspace-trigger-skeleton { flex: none; width: 28px; 
 .workspace-terminal { height: 210px; min-height: 140px; flex-shrink: 0; display: flex; flex-direction: column; }
 .workspace-terminal .term-scroll { flex: 1; min-height: 0; overflow: auto; padding: 12px; }
 .term-input { display: flex; align-items: baseline; gap: 6px; padding: 6px 10px; border-top: 1px solid var(--line); font-family: var(--mono); font-size: 12px; }
-/* Whose machine an open pane runs on: a quiet line at the top of the pane,
-   not a heading, since the header's badge is where that is said first. */
-.dock-context { margin: 0; padding: 6px 12px 0; font-family: var(--sans); font-size: 11px; color: var(--dim); }
 .term-input .ps1 { color: var(--accent); flex: none; }
 .term-input input { border: none; background: transparent; padding: 0; font-family: var(--mono); font-size: 12px; }
 .term-input input:focus { box-shadow: none; }
@@ -2007,6 +2018,12 @@ section.first-prompt#project-start { align-self: center; padding: 32px 24px; }
     width: var(--inspector-span);
   }
   .split:has(.inspector) { grid-template-columns: minmax(0, 1fr); }
+  /* One file's diff wants room: while one is open the inspector takes about
+     half the stage, or more if it was already dragged wider, and still
+     leaves the conversation its 420px. Closing the diff gives it back. */
+  .stage:has(.inspector.diff-open) {
+    --inspector-span: min(max(clamp(280px, var(--inspector-width, max(340px, 30vw)), min(800px, calc(100% - 420px))), 50%), calc(100% - 420px));
+  }
   html[data-inspector="closed"] .stage:has(.inspector) { --inspector-span: 44px; }
   html[data-inspector="closed"] #inspector { align-items: center; }
   html[data-inspector="closed"] #inspector > :not(.workspace-tabs) { display: none; }
@@ -2087,7 +2104,7 @@ section.first-prompt#project-start { align-self: center; padding: 32px 24px; }
 
 @media (prefers-reduced-motion: reduce) {
   .dot.running, .dot.opening, .dot.queued, .dot.working, .dot.starting, .dot.restarting { animation: none; }
-  .toast, .live-disconnected, .scrim, .yard-scrim { animation: none; }
+  .toast, .live-disconnected, .scrim, .yard-scrim, .share-popover { animation: none; }
 }
 
 /* Desktop tooling instructions stay readable inside the shared dialog shell. */
@@ -2219,16 +2236,19 @@ section.first-prompt#project-start { align-self: center; padding: 32px 24px; }
 #diff-filter-form { margin-bottom: 4px; }
 .change-file { border: 0; border-radius: var(--radius); background: transparent; color: inherit; cursor: pointer; font-size: 13px; }
 .change-file:hover { background: var(--surface); }
-.file-diff { overflow-x: auto; max-width: 100%; font-family: var(--font-mono, monospace); font-size: .75rem; border: 1px solid var(--line); }
-.diff-hunk { min-width: max-content; }
-.diff-hunk-header { background: var(--surface); color: var(--dim); padding: .4rem; white-space: pre; }
-.diff-line { display: flex; white-space: pre; min-height: 1.5em; }
+/* Long lines wrap rather than scroll: every character of a line is on
+   screen, and the gutter stays beside the first row of a wrapped line. */
+.file-diff { max-width: 100%; font-family: var(--font-mono, monospace); font-size: .75rem; border: 1px solid var(--line); }
+.diff-hunk { min-width: 0; }
+.diff-hunk-header { background: var(--surface); color: var(--dim); padding: .4rem; white-space: pre-wrap; overflow-wrap: anywhere; }
+.diff-line { display: flex; white-space: pre-wrap; min-height: 1.5em; }
+.diff-line code { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .diff-number { width: 5ch; flex: 0 0 5ch; text-align: right; padding-right: 1ch; user-select: none; }
 .diff-marker { width: 2ch; flex: 0 0 2ch; }
 .diff-line.diff-add { background: color-mix(in srgb, var(--ok) 10%, transparent); }
 .diff-line.diff-del { background: color-mix(in srgb, var(--bad) 10%, transparent); }
 .diff-line code { font: inherit; }
-.diff-no-newline { padding-left: 12ch; white-space: pre; }
+.diff-no-newline { padding-left: 12ch; white-space: pre-wrap; }
 
 
 /* Nested disclosures keep the explorer rooted in the track worktree. */
@@ -2239,7 +2259,24 @@ section.first-prompt#project-start { align-self: center; padding: 32px 24px; }
 .file-explorer .workspace-file { display: flex; align-items: center; gap: 6px; padding: 4px 6px; font-size: 12px; border-radius: 3px; }
 .file-explorer .workspace-file:hover, .file-explorer .workspace-file.selected { background: var(--line); }
 .file-disclosure { width: 12px; flex: none; }
-.file-kind { flex: none; color: var(--dim); }
+/* A kind of file is a shape and a colour (`TrackLive.file_icon/1`). Every
+   colour is a palette token or a mix of two, so each theme recolours the
+   set, and `theme_contrast_test.exs` holds each one to 3:1 against
+   the panel and the selected row in every palette. */
+.file-kind { flex: none; display: inline-grid; place-items: center; color: var(--dim); }
+.file-kind.kind-elixir { color: color-mix(in oklab, var(--accent) 50%, var(--bad)); }
+.file-kind.kind-script { color: color-mix(in oklab, var(--warn) 35%, var(--ink)); }
+.file-kind.kind-typescript { color: var(--accent); }
+.file-kind.kind-json { color: color-mix(in oklab, var(--bad) 60%, var(--warn)); }
+.file-kind.kind-markdown { color: var(--accent-ink); }
+.file-kind.kind-style { color: color-mix(in oklab, var(--accent) 60%, var(--ok)); }
+.file-kind.kind-markup { color: var(--bad); }
+.file-kind.kind-yaml { color: color-mix(in oklab, var(--bad) 65%, var(--ink)); }
+.file-kind.kind-lock { color: var(--dimmer); }
+.file-kind.kind-image { color: color-mix(in oklab, var(--ok) 70%, var(--ink)); }
+.file-kind.kind-docker { color: var(--accent); }
+.file-kind.kind-shell { color: color-mix(in oklab, var(--ok) 70%, var(--ink)); }
+.file-kind.kind-dotfile { color: color-mix(in oklab, var(--dim) 60%, var(--ink)); }
 .file-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .file-note { padding: 4px 12px; font-size: 12px; color: var(--dim); }
 /* Keep the current page usable while a request or navigation is in flight.
@@ -2411,13 +2448,10 @@ body:has(.phx-error) #request-progress { display: none; }
 .access-summary strong { color: var(--ink); font-weight: 500; }
 .composer-read-only { color: var(--dim); }
 
-/* The Share dialog (ADR 0009 phase 5): visibility, the @-mention box over
-   workspace members, and the track's own link. */
+/* The Share popover (ADR 0009 phase 5, RAV-84): the @-mention box over
+   workspace members, who has access, general access and the track's link. */
 .share-dialog { display: flex; flex-direction: column; gap: 14px; }
 .share-dialog h3 { margin: 0 0 6px; font-size: 13px; }
-.share-visibility { display: flex; flex-direction: column; gap: 6px; margin: 0; padding: 0; border: 0; }
-.share-visibility legend { margin-bottom: 6px; font-weight: 600; }
-.share-visibility label { display: flex; align-items: center; gap: 8px; }
 .share-consent { padding: 10px 12px; border: 1px solid var(--line); border-left: 3px solid var(--warn); border-radius: var(--radius); }
 .share-consent p { margin: 0 0 6px; }
 .share-mention { position: relative; display: flex; flex-direction: column; gap: 4px; }
@@ -2429,8 +2463,38 @@ body:has(.phx-error) #request-progress { display: none; }
 .share-mention [role="listbox"][hidden] { display: none; }
 .share-mention [role="option"] { display: flex; gap: 8px; align-items: baseline; padding: 5px 8px; border-radius: var(--radius); cursor: pointer; }
 .share-mention [role="option"][aria-selected="true"], .share-mention [role="option"]:hover { background: var(--surface-hover); }
-.share-link { display: flex; align-items: center; gap: 8px; min-width: 0; }
-.share-link code { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* RAV-84: a popover under the Share button, with no scrim; the
+   `SharePopover` hook sets `top` and `left`. Narrower than 640px it is the
+   centred dialog it was. */
+.share-layer { position: fixed; z-index: 40; top: 56px; right: 16px; }
+.share-layer[data-placed] { right: auto; }
+.share-layer[hidden] { display: none; }
+.share-popover {
+  width: min(440px, calc(100vw - 16px)); max-height: min(78vh, 640px); display: flex; flex-direction: column;
+  background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius-lg);
+  box-shadow: 0 12px 40px var(--shadow); overflow: hidden; animation: fade 120ms ease;
+}
+.share-popover .dialog-head { padding: 10px 14px; }
+.share-popover .dialog-head h2 { font-size: 14px; }
+.share-popover .dialog-body { padding: 12px 14px 14px; }
+.share-popover .people-list { margin: 0; }
+.share-popover .people-row { min-height: 40px; padding: 6px 0; gap: 8px; }
+.share-popover .people-row:last-child { border-bottom: 0; }
+.share-popover .hint { margin: 4px 0 0; font-size: 12px; }
+@media (max-width: 639px) {
+  .share-layer { inset: 0; display: grid; place-items: center; padding: 24px; background: var(--scrim); }
+  .share-popover { width: min(620px, 100%); }
+}
+.share-general-row { display: flex; align-items: center; gap: 8px; min-height: 32px; }
+.share-general-row select { flex: 1; min-width: 0; }
+.share-general-scope { flex: 1; min-width: 0; }
+.share-link {
+  display: grid; grid-template-columns: auto auto 1fr; align-items: center; gap: 4px 8px;
+  padding-top: 12px; border-top: 1px solid var(--line);
+}
+.share-link button { display: inline-flex; align-items: center; gap: 6px; }
+.share-link [role="status"] { font-size: 12px; color: var(--dim); }
+.share-link .hint { grid-column: 1 / -1; margin: 0; }
 .account-connections { display: flex; flex-direction: column; gap: 4px; }
 .account-connections a { text-decoration: underline; text-underline-offset: 2px; }
 .workspace-hint a { text-decoration: underline; text-underline-offset: 2px; }

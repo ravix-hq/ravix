@@ -465,6 +465,8 @@ defmodule Ravix.People do
          workspace: name,
          visibility: track.visibility,
          private_allowed: track.sandbox_layout == :dedicated,
+         # The workspace's default, as `workspace_base/2` has it.
+         general_level: if(track.visibility == :project, do: :write),
          set_visibility: creator?,
          manage_people:
            track.visibility == :private and
