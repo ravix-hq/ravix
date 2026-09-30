@@ -5,6 +5,7 @@ import AxeBuilder from '@axe-core/playwright';
 import { signIn, connectClaude } from './sign-in.js';
 import { expectInlineChoice } from './controls.js';
 import { chooseSharing } from './new-track.js';
+import { spoken } from './track-label.js';
 
 // ADR 0009 phase 5, with RAVIX_WORKSPACE_ACCESS on (`bun run
 // test:browser:workspace-access`): the track header's Share dialog shares a
@@ -33,7 +34,7 @@ async function openTrack(page, visibility, branch) {
   await track.getByRole('button', { name: 'Options', exact: true }).click();
   await track.getByLabel('Branch name', { exact: true }).fill(branch);
   await track.getByRole('button', { name: 'Create track', exact: true }).click();
-  await expect(page.locator('.track-crumbs')).toContainText(branch);
+  await expect(page.locator('.track-crumbs')).toContainText(spoken(branch));
   return new URL(page.url()).pathname;
 }
 
@@ -111,13 +112,13 @@ test('the Share dialog shares a private track with one member, and nobody else l
 
     // The colleague it was shared with opens it.
     await colleague.goto(secretPath);
-    await expect(colleague.locator('.track-crumbs')).toContainText('share-secret');
+    await expect(colleague.locator('.track-crumbs')).toContainText('Share secret');
 
     // The bystander, in the same workspace, learns nothing of it.
     await bystander.goto(projectPath);
     await expect(bystander.locator('#project-sections[aria-busy="false"]')).toBeAttached();
     await expect(bystander.locator(`#project-track-tab-${secretId}`)).toHaveCount(0);
-    await expect(bystander.locator('body')).not.toContainText('share-secret');
+    await expect(bystander.locator('body')).not.toContainText('Share secret');
     await expect(bystander.locator(`#project-link-${projectId} .badge`)).toHaveCount(0);
     await bystander.locator('#quick-jump-trigger').click();
     await bystander.getByLabel('Search projects, tracks and plans').fill('share-secret');
@@ -125,7 +126,7 @@ test('the Share dialog shares a private track with one member, and nobody else l
     await bystander.keyboard.press('Escape');
     await bystander.goto('/inbox');
     await expect(bystander.locator('#project-sections[aria-busy="false"]')).toBeAttached();
-    await expect(bystander.locator('body')).not.toContainText('share-secret');
+    await expect(bystander.locator('body')).not.toContainText('Share secret');
     await bystander.goto(secretPath);
     await expect(bystander).toHaveURL(new RegExp(`${projectPath}$`));
 
@@ -134,7 +135,7 @@ test('the Share dialog shares a private track with one member, and nobody else l
     await share.getByRole('button', { name: 'Remove @sharecolleague', exact: true }).click();
     await expect(share).toContainText('Not shared with anyone yet.');
     await expect(colleague.locator('.track-crumbs')).toHaveCount(0);
-    await expect(colleague.locator('body')).not.toContainText('share-secret');
+    await expect(colleague.locator('body')).not.toContainText('Share secret');
   } finally {
     await colleagueContext.close();
     await bystanderContext.close();
