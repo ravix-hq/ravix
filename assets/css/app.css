@@ -1370,6 +1370,10 @@ html[data-yard="closed"] .workspace-trigger-skeleton { flex: none; width: 28px; 
   border-bottom: 1px solid var(--line); font-family: var(--sans); font-size: 12px; color: var(--dim);
 }
 .shell-status button { font-size: 12px; padding: 2px 8px; }
+/* Waking, or asleep: the pane's whole content, laid over the terminal rather
+   than in place of it, so xterm goes on measuring the size it will attach at. */
+.shell-pane { position: relative; }
+.shell-pane > .empty.pane { position: absolute; inset: 0; z-index: 2; background: var(--code-bg); }
 
 .machine-stats { display: grid; gap: 10px; max-width: 480px; margin: 0; }
 .machine-stats > div { display: grid; grid-template-columns: 100px minmax(0, 1fr); gap: 16px; }

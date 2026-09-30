@@ -1041,6 +1041,10 @@
           current_user={@current_user}
           session_hash={@session_hash}
           can_write={@track.level != :read}
+          asleep={
+            probed(machine(@track, @threads, @thread_states, @setup_now), @machine_probe, @track).state ==
+              :asleep
+          }
         />
       </aside>
     </div>
