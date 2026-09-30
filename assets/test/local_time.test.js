@@ -69,6 +69,27 @@ test('the hook rewrites the server fallback in the browser\'s zone, with a title
   expect(older.textContent).toMatch(/^9:05/)
 })
 
+// RAV-93: a turn's footer names the last six days by weekday.
+test('with weekday, the six days before today are named by weekday', () => {
+  const ny = {...en, timeZone: 'America/New_York', weekday: true}
+  // Wednesday the 30th, 08:00 in New York.
+  expect(localTime(Date.parse('2026-09-30T13:05:00Z'), ny)).toBe('9:05 AM')
+  expect(localTime(Date.parse('2026-09-27T01:49:00Z'), ny)).toBe('Sat 9:49 PM')
+  expect(localTime(Date.parse('2026-09-29T20:00:00Z'), ny)).toBe('Tue 4:00 PM')
+  expect(localTime(Date.parse('2026-09-24T16:00:00Z'), ny)).toBe('Thu 12:00 PM')
+  // Seven days back is a date again, so "Wed" never means two days.
+  expect(localTime(Date.parse('2026-09-23T16:00:00Z'), ny)).toBe('Sep 23, 12:00 PM')
+  // Without the option nothing changes.
+  expect(localTime(Date.parse('2026-09-27T01:49:00Z'), {...en, timeZone: 'America/New_York'})).toBe('Sep 26, 9:49 PM')
+})
+
+test('the hook uses the weekday form when the element asks for it', () => {
+  process.env.TZ = 'America/New_York'
+  document.body.innerHTML = '<time id="t-week" datetime="2026-09-27T01:49:00Z" data-weekday>Sep 27, 1:49 AM</time>'
+  mountHook(LocalTime, '#t-week')
+  expect(document.getElementById('t-week').textContent).toMatch(/^Sat 9:49/)
+})
+
 test('an unparseable datetime keeps what the server wrote', () => {
   document.body.innerHTML = '<time id="bad" datetime="soon" title="server">soon</time>'
   mountHook(LocalTime, '#bad')

@@ -269,7 +269,11 @@
             />
           </div>
           <div :if={!@thread_draft[:selected?]} id="transcript-turns" phx-update="stream">
-            <article :for={{dom_id, turn} <- @streams.turns} id={dom_id} class="workspace-turn">
+            <article
+              :for={{dom_id, turn} <- @streams.turns}
+              id={dom_id}
+              class={["workspace-turn", !turn.settled? && "running"]}
+            >
               <.prompt_message
                 :if={turn.prompt || turn.image_count > 0}
                 prompt={turn.prompt || ""}
@@ -310,6 +314,7 @@
                   :if={turn.settled?}
                   id={dom_id}
                   turn={turn}
+                  link={turn_link(@track, @thread_id, dom_id)}
                   workdir={@track.workdir}
                   options={@track.session_options}
                   zone={@timezone}

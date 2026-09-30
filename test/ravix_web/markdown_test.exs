@@ -87,6 +87,19 @@ defmodule RavixWeb.MarkdownTest do
              ~s(<p><a href="https://example.com/d" target="_blank" rel="noreferrer">docs</a></p>)
   end
 
+  # RAV-93: the autolinker took the closing quote into the href.
+  test "a quote around a bare URL is not part of it" do
+    link =
+      ~s(<a href="http://localhost:4000/" target="_blank" rel="noreferrer">http://localhost:4000/</a>)
+
+    assert render(~s(open http://localhost:4000/" now)) == ~s(<p>open #{link}&quot; now</p>)
+    assert render(~s(at "http://localhost:4000/" once)) == ~s(<p>at &quot;#{link}&quot; once</p>)
+    assert render("at 'http://localhost:4000/' once") == "<p>at '#{link}' once</p>"
+
+    assert render("https://example.com/?a=1&b=2") ==
+             ~s(<p><a href="https://example.com/?a=1&amp;b=2" target="_blank" rel="noreferrer">https://example.com/?a=1&amp;b=2</a></p>)
+  end
+
   test "emphasis, strikethrough and a half-arrived pair" do
     assert render("a *word* and ~~gone~~") == "<p>a <em>word</em> and <del>gone</del></p>"
     assert render("partial **bo") == "<p>partial **bo</p>"

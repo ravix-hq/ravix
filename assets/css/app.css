@@ -885,14 +885,29 @@ html[data-yard="closed"] .workspace-trigger-skeleton { flex: none; width: 28px; 
 
 /* `position: relative` is for the jump-to-latest button, see the runtime section. */
 .transcript-scroll { position: relative; display: flex; flex-direction: column; flex: 1; min-height: 0; overflow: auto; padding: 8px 20px 20px; }
+/* The scroller takes focus so the keyboard can scroll it; a click into it
+   draws no ring, only keyboard focus does (RAV-93). */
+.transcript-scroll:focus:not(:focus-visible) { outline: none; }
+.transcript-scroll:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+/* Once scrolled, text fades out under the tab strip over 12px instead of
+   being cut off at its edge. `TranscriptTail` sets `scrolled`. The negative
+   margins take the fade out of the flow and out to the scroller's edges. */
+.transcript-scroll::before {
+  content: ""; position: sticky; top: -8px; z-index: 4; flex: none; display: block;
+  height: 12px; margin: -8px -20px -4px; pointer-events: none;
+  background: linear-gradient(var(--bg), transparent); opacity: 0; transition: opacity 120ms;
+}
+.transcript-scroll.scrolled::before { opacity: 1; }
 .workspace-turn { margin: 0 0 18px; max-width: none; line-height: 1.6; overflow-wrap: anywhere; }
 .workspace-turn pre, .workspace-panel pre, .term-scroll pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; }
 .workspace-panel #preview-logs { margin-block: 16px; }
 .workspace-panel #preview-logs summary { cursor: pointer; }
 .workspace-panel #preview-logs pre { max-height: 320px; overflow: auto; }
 /* Prose is set in the sans face at a readable measure; mono is for code,
-   commands and tool output, which the fold below keeps in it. */
-.workspace-turn .md { font-size: 13.5px; }
+   commands and tool output, which the fold below keeps in it. 15/24 with
+   14px between blocks is the reading size (RAV-93); the fold's own prose
+   stays small and tight (`.workspace-work-body .md`). */
+.workspace-turn .md { font-size: 15px; line-height: 1.6; --md-gap: 14px; }
 .agent-terminal .md { max-width: 80ch; }
 
 /* A person's message sits at the right as a bubble, the agent's reply at
@@ -902,12 +917,14 @@ html[data-yard="closed"] .workspace-trigger-skeleton { flex: none; width: 28px; 
 .said { display: flex; flex-direction: column; align-items: flex-end; align-self: flex-end; max-width: 80%; min-width: 0; gap: 2px; margin-bottom: 14px; }
 .speaker { font-size: 11.5px; color: var(--dimmer); }
 /* The prompt is markdown (`RavixWeb.Markdown`, newlines kept as breaks).
-   `max-width` holds the bubble to its column however long a code line is:
+   The bubble is as wide as what it holds (RAV-93), so "Thanks" is a short
+   bubble; `max-width` holds it to its column however long a code line is:
    the fence scrolls sideways inside it rather than widening it. */
 .workspace-prompt {
-  padding: 8px 12px; margin: 0; max-width: 100%; min-width: 0; color: var(--ink);
-  background: var(--surface); border: 1px solid var(--line);
-  border-radius: 12px 12px 3px 12px;
+  width: fit-content; padding: 8px 12px; margin: 0; max-width: 100%; min-width: 0; color: var(--ink);
+  background: color-mix(in srgb, var(--accent) 8%, var(--surface));
+  border: 1px solid color-mix(in srgb, var(--accent) 14%, var(--line));
+  border-radius: 8px;
 }
 .workspace-prompt pre, .queue-prompt pre { white-space: pre; overflow-wrap: normal; overflow-x: auto; }
 .prompt-images { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; max-width: 100%; margin-top: 6px; }
@@ -917,53 +934,77 @@ html[data-yard="closed"] .workspace-trigger-skeleton { flex: none; width: 28px; 
 .agent-terminal { min-width: 0; line-height: 1.6; }
 .agent-terminal-output { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
 
-/* Under a finished turn: how long, when, a copy of the answer, and the
-   files it touched. Quiet until pointed at. */
+/* Under a finished turn: a copy of the answer and the ⋯ menu, how long,
+   when, and the files it touched. Quiet until pointed at. A running turn's
+   line is the same height with its spinner where the copy icon will be, so
+   settling swaps the one for the other in place (RAV-93). */
 .turn-footer {
   display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; margin-top: 8px;
-  color: var(--dimmer); font-size: 12px;
+  min-height: 22px; color: var(--dimmer); font-size: 12px;
 }
+.turn-footer .turn-actions { display: inline-flex; align-items: center; gap: 2px; }
 .turn-footer .turn-elapsed { font-variant-numeric: tabular-nums; }
-.turn-footer .turn-copy { padding: 3px; line-height: 0; color: var(--dimmer); }
-.turn-footer .turn-copy:hover, .turn-footer .turn-copy.copied { color: var(--ink); }
+.turn-footer .turn-copy, .turn-footer .turn-more { padding: 3px; line-height: 0; color: var(--dimmer); }
+.turn-footer .turn-copy:hover, .turn-footer .turn-copy.copied,
+.turn-footer .turn-more:hover, .turn-footer .turn-more.copied,
+.turn-footer .turn-more[aria-expanded="true"] { color: var(--ink); }
+.turn-running .turn-spinner {
+  display: inline-grid; place-items: center; width: 21px; height: 21px; color: var(--accent);
+}
+.turn-running .turn-spinner svg { animation: request-spin 0.9s linear infinite; }
+@media (prefers-reduced-motion: reduce) { .turn-running .turn-spinner svg { animation: none; } }
+.turn-running .turn-elapsed { font-family: var(--mono); font-size: 12px; color: var(--dim); }
+/* What a running turn has said before its latest message is interim: the
+   next call folds it away, so it reads as secondary until the turn ends. */
+.workspace-turn.running .agent-terminal-output > :not(:last-child) .md { color: var(--dim); }
+.turn-menu { width: min(200px, calc(100vw - 32px)); }
+.workspace-turn:target .workspace-prompt { outline: 2px solid var(--accent); outline-offset: 2px; }
 .turn-footer .turn-file {
   display: inline-flex; gap: 5px; align-items: baseline; padding: 1px 7px;
   border: 1px solid var(--line); border-radius: 5px; color: var(--dim);
 }
 .turn-footer .turn-file .diff-add, .turn-footer .turn-file .diff-del { font-family: var(--mono); font-size: 11px; }
-.agent-terminal .md h1, .agent-terminal .md h2,
+/* A reply's headings step up only a little from 15px body text. */
+.agent-terminal .md h1 { font-size: 1.2em; letter-spacing: 0; }
+.agent-terminal .md h2 { font-size: 1.1em; letter-spacing: 0; }
 .agent-terminal .md h3, .agent-terminal .md h4 { font-size: 1em; letter-spacing: 0; }
 .agent-terminal .md pre { border-radius: 2px; }
-.agent-terminal .md code { font-size: 1em; }
 
 /* The reply, rendered (`RavixWeb.Markdown`). The margins are tight on purpose:
    this is one bubble in a scrollback, not a document, and prose spacing here
-   makes a three-line answer occupy a screen. */
+   makes a three-line answer occupy a screen. `--md-gap` is the space between
+   blocks; the transcript sets its own. */
 .md > :first-child { margin-top: 0; }
 .md > :last-child { margin-bottom: 0; }
-.md p { margin: 0 0 8px; }
+.md p { margin: 0 0 var(--md-gap, 8px); }
 .md h1, .md h2, .md h3, .md h4 { margin: 14px 0 6px; font-weight: 600; line-height: 1.3; }
 .md h1 { font-size: 16px; }
 .md h2 { font-size: 14.5px; }
 .md h3, .md h4 { font-size: 13.5px; color: var(--dim); }
-.md ul, .md ol { margin: 0 0 8px; padding-left: 22px; }
-.md li { margin: 2px 0; }
-.md li > ul, .md li > ol { margin: 2px 0; }
+.md ul, .md ol { margin: 0 0 var(--md-gap, 8px); padding-left: 22px; }
+/* A muted marker, and 6px between items rather than a paragraph's gap. */
+.md li::marker { color: var(--dimmer); }
+.md li { margin: 0; }
+.md li + li { margin-top: 6px; }
+.md li > ul, .md li > ol { margin: 6px 0 0; }
 .md blockquote {
-  margin: 0 0 8px; padding: 1px 0 1px 11px; color: var(--dim);
+  margin: 0 0 var(--md-gap, 8px); padding: 1px 0 1px 11px; color: var(--dim);
   border-left: 2px solid var(--line);
 }
 .md hr { margin: 12px 0; border: none; border-top: 1px solid var(--line); }
+/* An inline code chip is raised off the page, a little lighter than the
+   surface with a hairline, rather than a darker hole in it (RAV-93). */
 .md code {
-  font-family: var(--mono); font-size: 0.92em; padding: 1px 4px; border-radius: 4px;
-  background: var(--code-bg); color: var(--ink); word-break: break-word;
+  font-family: var(--mono); font-size: 0.87em; padding: 2px 5px; border-radius: 4px;
+  background: color-mix(in srgb, var(--ink) 6%, var(--surface));
+  border: 1px solid var(--line); color: var(--ink); word-break: break-word;
 }
 .md pre {
-  margin: 0 0 8px; padding: 9px 11px; border: 1px solid var(--line); border-radius: var(--radius);
+  margin: 0 0 var(--md-gap, 8px); padding: 9px 11px; border: 1px solid var(--line); border-radius: var(--radius);
   background: var(--code-bg); overflow-x: auto;
 }
 .md .code-block {
-  margin: 0 0 8px; border: 1px solid var(--line); border-radius: var(--radius);
+  margin: 0 0 var(--md-gap, 8px); border: 1px solid var(--line); border-radius: var(--radius);
   background: var(--code-bg); overflow: hidden;
 }
 .md .code-block-toolbar { display: flex; justify-content: flex-end; padding: 5px 8px; }
@@ -974,8 +1015,19 @@ html[data-yard="closed"] .workspace-trigger-skeleton { flex: none; width: 28px; 
 .md .code-copy:hover { background: var(--code-bg); }
 .md .code-copy:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .md .code-block pre { margin: 0; border: 0; border-radius: 0; }
-.md pre code { padding: 0; background: none; font-size: 12px; line-height: 1.55; }
-.md a { color: var(--accent-ink); text-decoration: underline; text-underline-offset: 2px; }
+.md pre code { padding: 0; border: 0; background: none; font-size: 12px; line-height: 1.55; }
+/* Links are the accent colour. Every link the renderer writes opens in a
+   new tab, off this page, and a muted ↗ after it says so; the arrow is
+   decoration, with empty alternative text for a reader. */
+.md a {
+  color: var(--accent); text-decoration: underline; text-underline-offset: 2px;
+  text-decoration-color: color-mix(in srgb, var(--accent) 45%, transparent);
+}
+.md a:hover { text-decoration-color: currentColor; }
+.md a[target="_blank"]::after {
+  content: "↗" / ""; display: inline-block; margin-left: 2px;
+  color: var(--dimmer); font-size: 0.8em; text-decoration: none;
+}
 .md strong { font-weight: 600; color: var(--ink); }
 .md del { color: var(--dimmer); }
 
@@ -1017,7 +1069,7 @@ html[data-yard="closed"] .workspace-trigger-skeleton { flex: none; width: 28px; 
   display: flex; flex-direction: column; gap: 4px; margin: 4px 0 6px 4px; min-width: 0;
   padding-left: 10px; border-left: 1px solid var(--line);
 }
-.workspace-work-body .md { font-size: 12.5px; color: var(--dim); }
+.workspace-work-body .md { font-size: 12.5px; color: var(--dim); --md-gap: 8px; }
 .workspace-tool, .workspace-thinking { padding: 0; border: 0; margin: 0; min-width: 0; font-size: 12px; }
 .workspace-thinking > summary {
   display: flex; align-items: center; gap: 7px;
@@ -2101,6 +2153,10 @@ section.first-prompt#project-start { align-self: center; padding: 32px 24px; }
   z-index: 5;
 }
 .jump-latest .ico { color: var(--dim); }
+/* In the transcript it sits 12px above the composer's box (RAV-93), not
+   over the text 40px up: sticky offsets count from inside the scroller's
+   20px bottom padding, and the composer adds its own 8px above the box. */
+.transcript-scroll .jump-latest { bottom: calc(12px - 20px - 8px); }
 .scroll.unpinned .jump-latest, .transcript-scroll.unpinned .jump-latest { display: flex; }
 
 /* The mobile nav only exists once the rail is gone; see `narrow`. */
@@ -2215,6 +2271,7 @@ section.first-prompt#project-start { align-self: center; padding: 32px 24px; }
   .workspace-welcome { padding: 24px; }
   .said { max-width: 100%; }
   .transcript-scroll { padding-inline: 12px; }
+  .transcript-scroll::before { margin-inline: -12px; }
   .workspace-composer { padding: 12px; }
   /* The rail goes, and with it the picker's home; on the sign-in page it
      moves under the card instead, where the card has left room for it. */
