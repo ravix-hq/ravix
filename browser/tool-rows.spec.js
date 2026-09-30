@@ -46,6 +46,26 @@ test('tool calls stream in as one labelled line each, with the thoughts in one t
   await expect(turn.locator('.turn-footer time')).toBeVisible({ timeout: 30_000 });
   await expect(rows).toHaveCount(6);
   await expect(turn.locator('.workspace-work > summary')).toContainText('6 tool calls');
+  await expect(turn.locator('.workspace-work > summary')).not.toContainText('thought');
+
+  // The line shows the kinds of work done, first used first, as icons with
+  // the words for a screen reader.
+  const kinds = turn.locator('.workspace-work > summary .work-kinds > svg');
+  expect(await kinds.evaluateAll(els => els.map(el => el.dataset.kind))).toEqual(['shell', 'read', 'edit']);
+  await expect(turn.locator('.work-kinds .sr-only')).toHaveText('Used: shell, read, edit');
+
+  // No native disclosure triangle: each toggle draws the app's chevron,
+  // turned a quarter while open, and the row takes a hover background.
+  const markers = await turn.locator('summary').evaluateAll(els => els.map(el => getComputedStyle(el).display));
+  expect(markers).not.toContain('list-item');
+  const turned = el => getComputedStyle(el).transform;
+  const chevron = turn.locator('.workspace-work > summary > .disclosure-chevron');
+  await expect.poll(() => chevron.evaluate(turned)).toMatch(/^matrix\(0, 1, -1, 0/);
+  const background = () => summary.evaluate(el => getComputedStyle(el).backgroundColor);
+  await page.mouse.move(0, 0);
+  const resting = await background();
+  await summary.hover();
+  await expect.poll(background).not.toBe(resting);
 
   // Every row is one line however long its command, and names its tool.
   const heights = await rows.evaluateAll(els => els.map(el => el.getBoundingClientRect().height));
@@ -65,4 +85,8 @@ test('tool calls stream in as one labelled line each, with the thoughts in one t
   // Five thoughts, one toggle, not a row between every call.
   await expect(turn.locator('.workspace-thinking')).toHaveCount(1);
   await expect(turn.locator('.workspace-thinking > summary')).toHaveText('5 thoughts');
+  const thoughts = turn.locator('.workspace-thinking > summary > .disclosure-chevron');
+  expect(await thoughts.evaluate(turned)).toBe('none');
+  await turn.locator('.workspace-thinking > summary').click();
+  await expect.poll(() => thoughts.evaluate(turned)).toMatch(/^matrix\(0, 1, -1, 0/);
 });

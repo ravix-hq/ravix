@@ -15,6 +15,7 @@ defmodule RavixWeb.Live.PeopleDialogTest do
   alias Ravix.{People, Projects, Repo, Tracks, Workspaces}
   alias Ravix.Projects.{Project, ProjectLink}
   alias Ravix.Tracks.{Track, Transcript}
+  alias Ravix.Workspaces.Membership
   alias Ravix.Workspaces.Store, as: WorkspaceStore
 
   setup %{conn: conn} do
@@ -417,15 +418,19 @@ defmodule RavixWeb.Live.PeopleDialogTest do
       open_people(view)
     end
 
-    test "offers no invitation and no link, and points to the workspace and Share", ctx do
+    test "offers no invitation and no link, and says where access comes from", ctx do
       view = project_people(ctx.conn, ctx.owner, ctx.project)
 
       refute has_element?(view, "#people-invite-form")
       refute has_element?(view, "button[phx-click=invite-link]")
       refute render(view) =~ "invite link"
-      assert has_element?(view, "#people-workspace-hint a[href='/w/#{ctx.workspace.id}']")
-      assert has_element?(view, "#people-workspace-hint", "use Share on a track")
-      refute has_element?(view, "#people-workspace-hint", "Ask the project's owner")
+      # RAV-75: the dialog explains access itself rather than sending people
+      # to the workspace's members page to understand it.
+      refute render(view) =~ "members page"
+      refute has_element?(view, "#people-workspace-hint a")
+      assert has_element?(view, "#people-summary", "Base role: Write")
+      assert has_element?(view, "#people-person-#{ctx.owner.login}", "Admin")
+      assert has_element?(view, "#people-person-#{ctx.owner.login} .people-source", "owner")
 
       # The member who came in before stays, and is still the owner's to remove.
       assert has_element?(view, "#people-dialog", "@#{ctx.legacy.login}")
@@ -441,12 +446,7 @@ defmodule RavixWeb.Live.PeopleDialogTest do
       assert has_element?(view, "#people-workspace-hint")
       refute has_element?(view, "#people-workspace-hint a")
       refute render(view) =~ "/w/#{ctx.workspace.id}"
-
-      assert has_element?(
-               view,
-               "#people-workspace-hint",
-               "Ask the project's owner to invite people to the workspace."
-             )
+      assert has_element?(view, "#people-person-#{ctx.legacy.login} .people-source", "direct")
 
       refute has_element?(view, "#people-invite-form")
       assert has_element?(view, "button[phx-value-login='#{ctx.legacy.login}']", "Leave project")
@@ -511,6 +511,106 @@ defmodule RavixWeb.Live.PeopleDialogTest do
       assert has_element?(view, "#people-invite-form")
       assert has_element?(view, "button[phx-value-action=create]", "Create invite link")
       refute has_element?(view, "#people-workspace-hint")
+    end
+  end
+
+  describe "where each person's access comes from (RAV-75)" do
+    setup ctx do
+      stub(Ravix.Config, :workspace_access?, fn -> true end)
+      {:ok, workspace} = WorkspaceStore.create_team_workspace(ctx.owner.id, "Ravi")
+      Repo.update_all(where(Project, id: ^ctx.project.id), set: [workspace_id: workspace.id])
+      [alice, carol] = for _ <- 1..2, do: insert_user()
+
+      for user <- [alice, carol] do
+        %Membership{}
+        |> Membership.changeset(%{
+          workspace_id: workspace.id,
+          user_id: user.id,
+          role: :member
+        })
+        |> Repo.insert!()
+      end
+
+      insert_project_member(ctx.project, alice, role: :write)
+      %{workspace: workspace, alice: alice, carol: carol}
+    end
+
+    defp open_project_people(conn, user, project) do
+      {:ok, view, _} = live(log_in_user(conn, user), "/p/#{project.id}")
+      render_async(view)
+      open_people(view)
+    end
+
+    test "the modal lists everyone under a summary, and gives a member a different role", ctx do
+      view = open_project_people(ctx.conn, ctx.owner, ctx.project)
+      carol = "#people-person-#{ctx.carol.login}"
+
+      assert has_element?(view, "#people-summary", "Base role: Write (all Ravi members)")
+      assert has_element?(view, "#people-summary", "Direct access: 1 person")
+      assert has_element?(view, "#people-summary", "3 Ravi members get Write by default")
+      assert has_element?(view, "#people-person-#{ctx.owner.login} .people-source", "owner")
+      assert has_element?(view, "#people-person-#{ctx.alice.login} .people-source", "direct")
+      # The member nobody named is listed, with where their Write comes from.
+      assert has_element?(view, carol, "Write")
+      assert has_element?(view, "#{carol} .people-source", "from workspace")
+      assert has_element?(view, "#people-role-#{ctx.carol.login}", "Give a different role")
+
+      view
+      |> element("#people-role-menu-#{ctx.carol.login} button[phx-value-role=read]")
+      |> render_click()
+
+      assert has_element?(view, "#{carol} .people-source", "direct")
+      assert has_element?(view, "#people-role-#{ctx.carol.login}", "Read")
+      assert has_element?(view, "#people-summary", "Direct access: 2 people")
+      assert {:ok, %{level: :read}} = Access.project_access(ctx.carol, ctx.project.id)
+
+      # Taking the direct role away falls back to the workspace's.
+      view
+      |> element(
+        "#people-role-menu-#{ctx.carol.login} button[phx-click=clear-role]",
+        "Use workspace role (Write)"
+      )
+      |> render_click()
+
+      assert has_element?(view, "#{carol} .people-source", "from workspace")
+      assert {:ok, %{level: :write}} = Access.project_access(ctx.carol, ctx.project.id)
+    end
+
+    test "a member sees every source and is offered no role control", ctx do
+      view = open_project_people(ctx.conn, ctx.carol, ctx.project)
+
+      assert has_element?(
+               view,
+               "#people-person-#{ctx.carol.login} .people-source",
+               "from workspace"
+             )
+
+      assert has_element?(view, "#people-person-#{ctx.alice.login} .people-source", "direct")
+      refute has_element?(view, "#people-role-#{ctx.alice.login}")
+      refute render(view) =~ "Give a different role"
+
+      # Nor does the server take one from the browser.
+      view
+      |> with_target("div[data-phx-component]:has(> #people-dialog)")
+      |> render_click("set-role", %{"login" => ctx.alice.login, "role" => "read"})
+
+      assert {:ok, %{level: :write}} = Access.project_access(ctx.alice, ctx.project.id)
+    end
+
+    test "a revoked session cannot give a role through the dialog", ctx do
+      {token, session} = insert_session(ctx.owner)
+      conn = Plug.Test.init_test_session(ctx.conn, session_token: token)
+      {:ok, view, _} = live(conn, "/p/#{ctx.project.id}")
+      render_async(view)
+      open_people(view)
+      Repo.delete!(session)
+
+      assert {:error, {:redirect, %{to: "/login"}}} =
+               view
+               |> with_target("div[data-phx-component]:has(> #people-dialog)")
+               |> render_click("set-role", %{"login" => ctx.carol.login, "role" => "read"})
+
+      refute Ravix.People.Store.project_member?(ctx.project.id, ctx.carol.id)
     end
   end
 
