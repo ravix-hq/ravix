@@ -41,16 +41,20 @@ test('sidebar avatars line up whether or not a row shows a status dot', async ({
   await expect(dot).toHaveAttribute('title', "Error: This track's machine failed.");
   for (const index of [0, 2]) await expect(rows[index].locator('.dot')).toHaveCount(0);
 
+  // Avatars are left out while one person made every track shown (RAV-96),
+  // so the columns are the status slot, and the avatar when there is one.
   const x = async (row, selector) => (await row.locator(selector).boundingBox()).x;
-  for (const selector of ['.track-status', '.track-creator', '.track-title']) {
+  const avatars = await page.locator('#project-tree[data-one-creator]').count() === 0;
+  for (const selector of ['.track-status', ...(avatars ? ['.track-creator'] : []), '.track-title']) {
     const xs = await Promise.all(rows.map(row => x(row, selector)));
     expect(new Set(xs).size, `${selector} x-positions ${xs}`).toBe(1);
   }
   expect((await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa']).analyze()).violations).toEqual([]);
 });
 
-// RAV-44/45: one indent step per level, a chevron that follows each
-// disclosure's state (mouse and keyboard), and a quiet empty section.
+// RAV-44/45: a chevron that follows each disclosure's state (mouse and
+// keyboard), and a quiet empty section. RAV-96: a section's chevron and its
+// projects' are one column; tracks step in from their project.
 test('the sidebar tree steps in per level and its chevrons follow their state', async ({ page }) => {
   test.setTimeout(120_000);
   await page.setViewportSize({ width: 1440, height: 900 });
@@ -95,11 +99,11 @@ test('the sidebar tree steps in per level and its chevrons follow their state', 
   for (const width of [1440, 390]) {
     await page.setViewportSize({ width, height: 900 });
     if (width < 760) await page.getByRole('button', { name: 'Menu', exact: true }).click();
-    // Section label, then project, then track: each a step further in.
+    // Section and project chevrons in one column, then the track further in.
     const section = await x(filed.locator('.section-toggle svg'));
     const projectX = await x(projectToggle.locator('svg'));
     const track = await x(project.locator('.track-status').first());
-    expect(section).toBeLessThan(projectX);
+    expect(Math.round(section)).toBe(Math.round(projectX));
     expect(projectX).toBeLessThan(track);
     // The empty line's words start where its projects' names would.
     expect(await shelf.locator('.section-empty').evaluate(el => el.getBoundingClientRect().x + parseFloat(getComputedStyle(el).paddingLeft))).toBeGreaterThan(projectX);

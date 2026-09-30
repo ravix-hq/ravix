@@ -211,6 +211,9 @@ defmodule RavixWeb.WorkspaceSettingsLiveTest do
       assert page_title(view) == "Members · Acme · Ravix"
       assert view |> element("#workspace-switcher-trigger") |> render() =~ "Acme"
       assert has_element?(view, "#workspace-select-#{ctx.team.id}[aria-current=true]")
+      # The current one is ticked, and only it (RAV-96).
+      assert has_element?(view, "#workspace-select-#{ctx.team.id} .menu-check svg")
+      refute has_element?(view, "#workspace-select-#{ctx.personal.id} .menu-check svg")
       assert Ravix.Repo.reload!(ctx.owner).current_workspace_id == ctx.team.id
     end
 

@@ -102,7 +102,11 @@ defmodule RavixWeb.WorkspaceVisibilityLiveTest do
       assert has_element?(view, "#project-track-tab-#{ctx.open.id}")
       refute has_element?(view, "#project-track-tab-#{ctx.secret.id}")
       refute render(view) =~ "Private investigation"
-      assert has_element?(view, "#project-link-#{ctx.project.id} .badge[aria-label='1 unread']")
+
+      assert has_element?(
+               view,
+               "#project-link-#{ctx.project.id} .badge[aria-label='1 track needs you'][title='1 track needs you']"
+             )
 
       search(view, "investigation")
       refute has_element?(view, "#search-track-link-#{ctx.secret.id}")
@@ -115,7 +119,12 @@ defmodule RavixWeb.WorkspaceVisibilityLiveTest do
       view = open_page(ctx.creator, "/p/#{ctx.project.id}")
 
       assert has_element?(view, "#project-track-tab-#{ctx.secret.id}")
-      assert has_element?(view, "#project-link-#{ctx.project.id} .badge[aria-label='2 unread']")
+
+      assert has_element?(
+               view,
+               "#project-link-#{ctx.project.id} .badge[aria-label='2 tracks need you'][title='2 tracks need you']"
+             )
+
       search(view, "investigation")
       assert has_element?(view, "#search-track-link-#{ctx.secret.id}")
     end

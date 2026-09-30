@@ -1595,13 +1595,14 @@ defmodule RavixWeb.WorkspaceLiveTest do
              "@menuuser"
            )
 
+    # It hides the whole sidebar, and says so with its shortcut (RAV-96).
     assert has_element?(
              view,
-             "#yard-toggle[phx-hook=PanelToggle][aria-controls=yard][aria-expanded=true]",
-             "Hide projects"
+             ~s|#yard-toggle[phx-hook=PanelToggle][aria-controls=yard][aria-expanded=true][data-shortcut=b][aria-keyshortcuts="Control+B"][title="Hide sidebar (Ctrl+B)"][data-show-label="Show sidebar (Ctrl+B)"]|,
+             "Hide sidebar"
            )
 
-    assert has_element?(view, "#yard-toggle .label-show", "Show projects")
+    assert has_element?(view, "#yard-toggle .label-show", "Show sidebar")
 
     refute has_element?(view, ".workspace-account")
 
