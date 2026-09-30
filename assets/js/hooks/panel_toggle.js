@@ -19,6 +19,8 @@
 //   data-panel       `yard` or `inspector`: the attribute set on `<html>`
 //   data-hide-label  the tooltip while that sidebar is open
 //   data-show-label  the tooltip while it is closed
+//   data-shortcut    optional: a letter that, with Ctrl or ⌘, clicks the
+//                    button while it is on screen (the yard's is B, RAV-96)
 //
 // The accessible name is the visually hidden label the stylesheet swaps.
 // This hook only has to keep the tooltip and `aria-expanded` honest after
@@ -42,6 +44,21 @@ export const PanelToggle = {
       this.sync(closed)
       this.remember(closed)
     })
+    const letter = this.el.dataset.shortcut
+    if (!letter) return
+    this.onKey = event => {
+      if (!(event.metaKey || event.ctrlKey) || event.altKey || event.shiftKey || event.repeat) return
+      if (event.defaultPrevented || event.key.toLowerCase() !== letter) return
+      // A phone's drawer has its own Menu button; the toggle is not drawn.
+      if (this.el.getClientRects().length === 0) return
+      event.preventDefault()
+      this.el.click()
+    }
+    window.addEventListener("keydown", this.onKey)
+  },
+
+  destroyed() {
+    if (this.onKey) window.removeEventListener("keydown", this.onKey)
   },
 
   updated() {
