@@ -709,9 +709,6 @@ defmodule RavixWeb.WorkspaceLiveTest do
   test "home actions open fresh project forms and recent projects stay scoped", %{conn: conn} do
     user = insert_user()
     own = insert_project(user: user, name: "Recent work")
-    # Somebody with work to pick up; with none, /home is the first-prompt
-    # form instead (see `RavixWeb.FirstRunTest`).
-    insert_track(project: own)
     hidden = insert_project(user: insert_user(), name: "Private work")
     {:ok, view, _} = live(log_in_user(conn, user), "/home")
     render_async(view)

@@ -15,7 +15,7 @@ defmodule RavixWeb.Live.QuickStart do
   ## What the page keeps
 
   The page holds the form (`quick_form`), whether a start is in flight
-  (`quick_busy`) and what may be chosen (`targets/2`). It routes the three
+  (`quick_busy`) and what may be chosen (`targets/1`). It routes the three
   `quick-start-*` events here and runs `run/4` in its own task, because the
   page is what knows where to go afterwards: the walkthrough navigates and
   finishes itself, the workspace reads its rail first so the patch lands on
@@ -24,7 +24,7 @@ defmodule RavixWeb.Live.QuickStart do
   ## A target
 
   A string the form round-trips: `"project:<id>"`, `"repo:<owner/name>"` or
-  `"scratch"`. Only a value `targets/2` offered is ever acted on --- the
+  `"scratch"`. Only a value `targets/1` offered is ever acted on --- the
   same rule `RavixWeb.Live.NewProject.create/3` keeps for its repository
   field --- and a project id is only a lookup key: `Ravix.Tracks.open/3`
   asks the person's access to it again.
@@ -66,35 +66,22 @@ defmodule RavixWeb.Live.QuickStart do
   end
 
   @doc """
-  What may be chosen, as `{label, value}` pairs in groups.
-
-  Projects the person may open tracks in come first, then repositories
-  GitHub shows that are not a project yet, then scratch. `repos` are what
-  `Ravix.Projects.repos/2` answered.
+  What may be chosen, as `{label, value}` pairs in groups: the repositories
+  GitHub shows (what `Ravix.Projects.repos/2` answered), then scratch. A
+  project page offers only itself, as `"project:<id>"`, and draws no picker.
   """
-  @spec targets([map()], [map()]) :: [{String.t(), [{String.t(), String.t()}]}]
-  def targets(projects, repos) do
-    known = MapSet.new(projects, & &1.repo)
-
-    projects =
-      for p <- projects, p.access != :tracks, do: {p.repo || p.name, "project:" <> p.id}
-
-    repos =
-      for r <- repos,
-          not MapSet.member?(known, r.full_name),
-          do: {r.full_name, "repo:" <> r.full_name}
-
+  @spec targets([map()]) :: [{String.t(), [{String.t(), String.t()}]}]
+  def targets(repos) do
     [
-      {"Projects", projects},
-      {"GitHub repositories", repos},
+      {"GitHub repositories", for(r <- repos, do: {r.full_name, "repo:" <> r.full_name})},
       {"Other", [{"No repository (scratch machine)", "scratch"}]}
     ]
     |> Enum.reject(fn {_group, options} -> options == [] end)
   end
 
   @doc """
-  The one target worth preselecting: the only project, or else the only
-  repository GitHub shows. Nothing when there is a real choice to make.
+  The one target worth preselecting: the only repository GitHub shows, or
+  scratch when it shows none. Nothing when there is a real choice to make.
   """
   @spec preselect([{String.t(), [{String.t(), String.t()}]}]) :: String.t() | nil
   def preselect(groups) do
@@ -280,6 +267,7 @@ defmodule RavixWeb.Live.QuickStart do
   attr :agent, :boolean, default: true, doc: "whether to offer the agent for a new project"
   attr :label, :string, default: "What do you want to work on?"
   attr :submit, :string, default: "Start"
+  attr :submit_class, :string, default: "primary"
   attr :class, :string, default: nil
   slot :notice
 
@@ -353,7 +341,7 @@ defmodule RavixWeb.Live.QuickStart do
           <.loading_status :if={@busy}>Starting…</.loading_status>
           <button
             type="submit"
-            class="primary quick-start-submit"
+            class={[@submit_class, "quick-start-submit"]}
             id={"#{@id}-submit"}
             disabled={@busy or @disabled}
           >

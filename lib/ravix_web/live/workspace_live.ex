@@ -2015,8 +2015,8 @@ defmodule RavixWeb.WorkspaceLive do
   end
 
   # What the empty states' first-prompt form may start in: the project on
-  # screen, or on `/home` any project the rail lists, a repository GitHub
-  # shows, or scratch.
+  # screen, or on `/home` (which has none) a repository GitHub shows, or
+  # scratch.
   defp quick_targets(%{assigns: %{project: %{} = project}}) do
     if project.access != :tracks,
       do: [{"Projects", [{project.repo || project.name, "project:" <> project.id}]}],
@@ -2024,7 +2024,7 @@ defmodule RavixWeb.WorkspaceLive do
   end
 
   defp quick_targets(socket),
-    do: QuickStart.targets(socket.assigns.projects, socket.assigns.repos)
+    do: QuickStart.targets(socket.assigns.repos)
 
   # Somebody on `/home` with nothing started yet is offered repositories
   # they have not made a project of, which is a GitHub read. Asked once,
@@ -2032,20 +2032,19 @@ defmodule RavixWeb.WorkspaceLive do
   defp quick_repos(
          %{assigns: %{live_action: :projects, rail_loaded: true, quick_repos: false}} = socket
        ) do
-    if fresh_start?(socket.assigns.projects, socket.assigns.tracks, socket.assigns.closed_tracks),
+    if fresh_start?(socket.assigns.projects),
       do: socket |> assign(quick_repos: true) |> load_repos(nil),
       else: socket
   end
 
   defp quick_repos(socket), do: socket
 
-  # Nothing to pick up where one left off: no track, open or closed, in any
-  # project the rail lists.
-  defp fresh_start?(projects, tracks, closed) do
-    Enum.all?(projects, fn p -> (tracks[p.id] || []) == [] and (closed[p.id] || []) == [] end)
-  end
+  # Nothing to pick up where one left off: no project in the rail. Somebody
+  # with projects keeps their Recent list, and a project with no tracks has
+  # the same form on its own page.
+  defp fresh_start?(projects), do: projects == []
 
-  # The only repository or project is the one somebody means.
+  # The only repository is the one somebody means.
   defp quick_preselect(%{assigns: %{project: nil, quick_form: form}} = socket) do
     case {form.params["target"], QuickStart.preselect(quick_targets(socket))} do
       {blank, value} when blank in [nil, ""] and is_binary(value) ->

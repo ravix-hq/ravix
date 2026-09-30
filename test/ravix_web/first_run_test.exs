@@ -143,28 +143,6 @@ defmodule RavixWeb.FirstRunTest do
       assert has_element?(child, "#track-setup-steps li[aria-current=step]")
     end
 
-    test "a project with no tracks yet is offered, and Start opens a track in it", %{conn: conn} do
-      user = user()
-      repos([])
-      project = insert_project(user: user, repo_full_name: "acme/site", name: "site")
-      reject(&Projects.create/2)
-
-      view = home(conn, user)
-      assert has_element?(view, "#home-quick-start-target option[value='project:#{project.id}']")
-      track = opens(user, project)
-
-      view
-      |> form("#home-quick-start-form",
-        quick_start: [target: "project:#{project.id}", prompt: "Explain the build"]
-      )
-      |> render_submit()
-
-      render_async(view, 1_000)
-      assert_patch(view, "/p/#{project.id}/t/#{track.id}")
-      assert [%{track_id: track_id}] = Repo.all(PromptQueue.Item)
-      assert track_id == track.id
-    end
-
     test "somebody else's project cannot be named as the target", %{conn: conn} do
       repos([])
       foreign = insert_project(user: insert_user(login: "elsewhere"))
@@ -202,10 +180,9 @@ defmodule RavixWeb.FirstRunTest do
       assert Repo.all(PromptQueue.Item) == []
     end
 
-    test "somebody with work to pick up gets their recent projects instead", %{conn: conn} do
+    test "somebody with a project gets their recent projects instead", %{conn: conn} do
       user = user()
       project = insert_project(user: user, name: "Busy")
-      insert_track(project: project)
       reject(&Projects.repos/2)
       view = home(conn, user)
 

@@ -716,7 +716,7 @@
         </section>
         <div :if={is_nil(@project) && @live_action == :projects} class="centred workspace-home">
           <section
-            :if={@rail_loaded && fresh_start?(@projects, @tracks, @closed_tracks)}
+            :if={@rail_loaded && fresh_start?(@projects)}
             id="home-start"
             class="first-prompt"
             aria-labelledby="home-start-h"
@@ -728,14 +728,14 @@
             <QuickStart.composer
               id="home-quick-start"
               form={@quick_form}
-              groups={QuickStart.targets(@projects, @repos)}
+              groups={QuickStart.targets(@repos)}
               loading={@repos_loading}
               busy={@quick_busy}
             />
             <QuickStart.explainer id="home-explainer" />
           </section>
           <div
-            :if={!@rail_loaded || !fresh_start?(@projects, @tracks, @closed_tracks)}
+            :if={!@rail_loaded || !fresh_start?(@projects)}
             class="hero"
           >
             <div class="home-heading">

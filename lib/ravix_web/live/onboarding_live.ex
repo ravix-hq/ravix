@@ -326,7 +326,7 @@ defmodule RavixWeb.OnboardingLive do
 
   # Somebody here has no project of their own yet, or chose to come back
   # here; either way a repository is what they are choosing.
-  defp targets(repos), do: QuickStart.targets([], repos)
+  defp targets(repos), do: QuickStart.targets(repos)
 
   defp path(step), do: Map.fetch!(@paths, step)
 
