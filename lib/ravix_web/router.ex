@@ -145,13 +145,16 @@ defmodule RavixWeb.Router do
   # plain 404 that falls back cleanly. Runs before `accepts`, which would
   # otherwise answer such a client 406.
   defp unknown_page_format(%{path_params: %{"unknown_path" => _}} = conn, _opts) do
-    Phoenix.Controller.accepts(conn, ["html"])
-  rescue
-    Phoenix.NotAcceptableError ->
-      raise Phoenix.Router.NoRouteError, conn: conn, router: __MODULE__
+    if wants_html?(Plug.Conn.get_req_header(conn, "accept")),
+      do: conn,
+      else: raise(Phoenix.Router.NoRouteError, conn: conn, router: __MODULE__)
   end
 
   defp unknown_page_format(conn, _opts), do: conn
+
+  # As `accepts/2` reads it: no Accept, or one naming HTML or anything.
+  defp wants_html?([]), do: true
+  defp wants_html?(accept), do: Enum.any?(accept, &(&1 =~ ~r{text/html|\*/\*}))
 
   # A stranger has no shell to be shown and gets the static 404 page
   # (`RavixWeb.ErrorHTML`); somebody signed in gets the shell's, still as a
