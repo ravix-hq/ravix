@@ -1519,19 +1519,23 @@ defmodule RavixWeb.WorkspaceLiveTest do
 
     menu = "#yard #account-menu[popover]"
 
+    # Quick toggles, then a short menu (RAV-77): Account and Repository
+    # access are Settings' pages now.
     for item <- [
           "#theme-picker",
           "#notify",
-          "a[href='/api/auth/install']",
+          "button#open-personal-settings",
           "a[href='/auth/signout']"
         ] do
       assert has_element?(view, "#{menu} #{item}")
     end
 
+    refute has_element?(view, "#{menu} #open-account")
+    refute has_element?(view, "#{menu} a[href='/api/auth/install']")
+
     # Each item that opens a dialog also hides the menu, and returns focus to
     # the trigger when the dialog closes, since the item itself is hidden.
     for {id, dialog} <- [
-          {"open-account", "#account-dialog"},
           {"open-help", "#help-dialog"},
           {"open-changes", "#changes-dialog"}
         ] do

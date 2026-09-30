@@ -23,6 +23,7 @@
 //   Terminal        the Commands panel: history, Ctrl+L, output that follows itself
 //   Shell           an interactive terminal tab: xterm.js over the page's socket
 //   Notify          desktop notifications when a track needs you and you are not looking
+//   NotifyToggle    the switch for them, on the Notifications settings page
 //   SettingsSections a project settings section's own Save, Discard and agent choice
 //   UnsavedChanges  a settings page's unsaved-changes bar and leave confirmation
 //   SettingsFrame   a settings page opens each section at its top
@@ -56,7 +57,7 @@ import {TranscriptTail} from "./hooks/transcript_tail"
 import {Composer} from "./hooks/composer"
 import {Terminal} from "./hooks/terminal"
 import {Shell} from "./hooks/shell"
-import {Notify} from "./hooks/notify"
+import {Notify, NotifyToggle} from "./hooks/notify"
 import {ProjectTree} from "./hooks/project_tree"
 import {QuickJump} from "./hooks/quick_jump"
 import {AgentConfirmation} from "./hooks/agent_confirmation"
@@ -76,7 +77,7 @@ import {ChipMenu} from "./hooks/chip_menu"
 
 
 
-const hooks = {ThreadTabs, AgentConfirmation, Theme, PanelResize, PanelToggle, TranscriptTail, Composer, Terminal, Notify, SettingsSections, UnsavedChanges, SettingsFrame, ProjectTree, QuickJump, ProjectSections, CopyCode, ProjectFormFocus, ShareMention, TurnTimer, RelativeTime, SubmitOnEnter, Shell, HeaderFit, LocalTime, ChipMenu}
+const hooks = {ThreadTabs, AgentConfirmation, Theme, PanelResize, PanelToggle, TranscriptTail, Composer, Terminal, Notify, NotifyToggle, SettingsSections, UnsavedChanges, SettingsFrame, ProjectTree, QuickJump, ProjectSections, CopyCode, ProjectFormFocus, ShareMention, TurnTimer, RelativeTime, SubmitOnEnter, Shell, HeaderFit, LocalTime, ChipMenu}
 
 const csrfToken = document.querySelector("meta[name='csrf-token']").getAttribute("content")
 clearTransportFallback(window)

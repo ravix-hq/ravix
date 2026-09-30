@@ -355,6 +355,23 @@ defmodule Ravix.Accounts do
     :ok
   end
 
+  @doc """
+  Sign a person out of every browser (Settings › Profile, RAV-77): each of
+  their sessions ends as `end_session/1` ends one, and each page holding
+  one is told. Only the person's own: the user is the caller, never an id
+  a browser sent.
+  """
+  @spec end_all_sessions(User.t()) :: {:ok, non_neg_integer()}
+  def end_all_sessions(%User{id: user_id}) do
+    {count, hashes} =
+      Repo.delete_all(from(s in Session, where: s.user_id == ^user_id, select: s.token_hash))
+
+    for hash <- hashes,
+        do: Phoenix.PubSub.broadcast(Ravix.PubSub, session_topic(hash), {:session_ended, hash})
+
+    {:ok, count}
+  end
+
   # ── the two GitHub round trips ───────────────────────────────────────
 
   @doc """
