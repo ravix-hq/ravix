@@ -821,7 +821,7 @@
       :if={@dialog == :sections}
       id="sections-dialog"
       title="Project sections"
-      on_close="dismiss"
+      on_close={dismiss(@project, @track_id)}
     >
       <p class="hint">Organize your sidebar. Sections are visible only to you.</p>
       <form id="new-section-form" phx-submit="create-section">
@@ -924,7 +924,7 @@
       id="new-project-dialog"
       title="New project"
       focus_on_mount={false}
-      on_close="dismiss"
+      on_close={dismiss(@project, @track_id)}
     >
       <p class="lede">A repository, or a scratch machine with nothing cloned yet.</p>
       <RavixWeb.Live.NewProject.render_form
@@ -948,7 +948,7 @@
       :if={@dialog == :new_track && @track_project}
       id="new-track-dialog"
       title="New track"
-      on_close="dismiss"
+      on_close={dismiss(@project, @track_id)}
     >
       <RavixWeb.Live.RepoPicker.picker
         :if={@picker}
@@ -1110,10 +1110,16 @@
       module={RavixWeb.Live.SettingsDialog}
       id="settings-dialog-panel"
       project={@project}
+      on_close={dismiss(@project, @track_id)}
       current_user={@current_user}
       session_hash={@session_hash}
     />
-    <.dialog :if={@dialog == :changes} id="changes-dialog" title="What's new" on_close="dismiss">
+    <.dialog
+      :if={@dialog == :changes}
+      id="changes-dialog"
+      title="What's new"
+      on_close={dismiss(@project, @track_id)}
+    >
       <p class="lede">Changes in Ravix since you last checked.</p>
       <button type="button" class="secondary" phx-click="mark-changes-seen">Mark all as read</button>
       <div class="changes-list">
@@ -1123,14 +1129,24 @@
         </article>
       </div>
     </.dialog>
-    <.dialog :if={@dialog == :help} id="help-dialog" title="Help – AI tools" on_close="dismiss">
+    <.dialog
+      :if={@dialog == :help}
+      id="help-dialog"
+      title="Help – AI tools"
+      on_close={dismiss(@project, @track_id)}
+    >
       <button type="button" class="secondary" phx-click="dialog" phx-value-name="changes">What's new<span
         :if={@changes_unseen > 0}
         class="chip"
       >{@changes_unseen}</span></button>
       <RavixWeb.HelpComponents.agent_tooling />
     </.dialog>
-    <.dialog :if={@dialog == :account} id="account-dialog" title="Your account" on_close="dismiss">
+    <.dialog
+      :if={@dialog == :account}
+      id="account-dialog"
+      title="Your account"
+      on_close={dismiss(@project, @track_id)}
+    >
       <p class="lede">
         Signed in as <strong>@{@current_user.login}</strong>. Connect either or both agents and choose a default for new projects. Each project uses its selected agent, paid for by its owner’s subscription or API key, whoever is working.
       </p>

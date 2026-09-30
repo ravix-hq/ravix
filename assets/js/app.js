@@ -6,7 +6,8 @@
 // scroll position, a drag, the palette painted before the first frame. Those
 // live in `hooks/`, one file each, and this file registers them. The
 // page_loading helper also reflects pending navigation in the shared status
-// indicator, and the connect params carry the browser's time zone. There is
+// indicator, dialog_escape tells a keydown whether a dialog was open, and the
+// connect params carry the browser's time zone. There is
 // no framework, and one library beyond Phoenix's own:
 // xterm.js, vendored, which is its own bundle (`xterm.js`) loaded by the Shell
 // hook the first time a terminal is opened, so it costs this file nothing.
@@ -38,6 +39,7 @@ import "../css/app.css"
 import "phoenix_html"
 import {clearTransportFallback, LONG_POLL_FALLBACK_MS} from "./transport"
 import {trackPageLoading} from "./page_loading"
+import {watchDialogs} from "./dialog_escape"
 import {browserTimeZone} from "./timezone"
 import {Socket} from "phoenix"
 import {LiveSocket} from "phoenix_live_view"
@@ -67,10 +69,12 @@ const hooks = {ThreadTabs, AgentConfirmation, Theme, PanelResize, PanelToggle, T
 
 const csrfToken = document.querySelector("meta[name='csrf-token']").getAttribute("content")
 clearTransportFallback(window)
+const dialogs = watchDialogs(window)
 const liveSocket = new LiveSocket("/live", Socket, {
   longPollFallbackMs: LONG_POLL_FALLBACK_MS,
   params: {_csrf_token: csrfToken, timezone: browserTimeZone()},
   hooks,
+  metadata: {keydown: dialogs.keydown},
 })
 
 trackPageLoading(window)

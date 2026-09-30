@@ -1462,6 +1462,8 @@ button.primary.home-action .ico { color: inherit; }
   display: grid; place-items: center; padding: 24px;
   animation: fade 120ms ease;
 }
+/* Set by the dialog's close, ahead of the server removing it. */
+.scrim[hidden] { display: none; }
 @keyframes fade { from { opacity: 0; } }
 .dialog {
   width: min(620px, 100%); max-height: min(78vh, 720px); display: flex; flex-direction: column;

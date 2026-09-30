@@ -654,7 +654,7 @@ defmodule RavixWeb.Live.SettingsDialog do
         :if={@settings}
         id="settings-dialog"
         title="Project settings"
-        on_close="dismiss"
+        on_close={@on_close}
         wide
       >
         <div

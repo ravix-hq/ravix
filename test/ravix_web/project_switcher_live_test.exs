@@ -284,8 +284,9 @@ defmodule RavixWeb.ProjectTreeLiveTest do
     assert_patch(view, path <> "?new=track")
     assert has_element?(view, "#new-track-dialog")
     assert find_live_child(view, "track-host").pid == child.pid
-    render_click(view, "dismiss")
+    view |> element("#new-track-dialog button[aria-label=Close]") |> render_click()
     assert_patch(view, path)
+    refute has_element?(view, "#new-track-dialog")
     assert find_live_child(view, "track-host").pid == child.pid
   end
 
