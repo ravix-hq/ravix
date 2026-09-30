@@ -590,6 +590,8 @@ test('project, track, streaming, image upload, reconnect, and revocation', async
   const firstTrackTab = page.locator('.project-tree-tracks .workspace-track[aria-current="page"]');
   await expect(firstTrackTab).toBeVisible();
   const firstTrackName = (await firstTrackTab.locator('.track-title').textContent()).trim();
+  // RAV-48: the first prompt retitles the track, so find it again by id.
+  const firstTrackTabId = await firstTrackTab.getAttribute('id');
   await expect(page.locator('#yard .project-tree-tracks .workspace-track')).toHaveCount(1);
   // Personal sections persist across reloads and never delete the projects inside.
   await page.getByRole('button', { name: 'Manage sections', exact: true }).click();
@@ -807,8 +809,11 @@ test('project, track, streaming, image upload, reconnect, and revocation', async
   await expect(page.locator('#transcript-turns')).not.toContainText('Draft survives reconnect');
   await accessible(page);
 
-  await page.locator('#yard .workspace-project.current .project-tree-tracks').getByRole('link').filter({ hasText: firstTrackName }).click();
-  await expect(page.locator('.track-crumbs')).toContainText(firstTrackName);
+  const firstTrackLink = page.locator(`#${firstTrackTabId}`);
+  await expect(firstTrackLink.locator('.track-title')).not.toHaveText(firstTrackName);
+  const firstTrackTitle = (await firstTrackLink.locator('.track-title').textContent()).trim();
+  await firstTrackLink.click();
+  await expect(page.locator('.track-crumbs')).toContainText(firstTrackTitle);
   await expect(page.locator('#transcript-scroll')).toHaveAttribute('data-track', firstLane);
   await expect(page.locator('#transcript-turns')).toContainText('Draft survives reconnect');
 
