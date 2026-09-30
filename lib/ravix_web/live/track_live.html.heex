@@ -74,7 +74,7 @@
           <.icon name="lock" /><span class="chip-label" data-fit-label>Private</span>
         </span>
         <.machine_chip machine={
-          probed(machine(@track, @threads, @thread_states, @setup_now), @machine_probe, @track)
+          probed(machine(@track, @turn, @setup_now), @machine_probe, @track)
         } />
         <span class="chip" id="track-machine-scope" title={machine_scope_title(@track)}><.icon
           name="machine"
@@ -164,7 +164,7 @@
           `assets/js/hooks/transcript_tail.js`. --%>
         <.thread_tabs
           threads={@threads}
-          states={@thread_states}
+          states={@turn.states}
           thread_id={@thread_id}
           draft={@thread_draft}
           adding={@track.sandbox_layout == :dedicated and @track.sandbox_state != :ready}
@@ -565,7 +565,7 @@
                     Jason.encode!(
                       composer_commands(
                         @agent_commands,
-                        turn_running?(@threads, @thread_states, @thread_id, @track),
+                        @turn.running?,
                         @pending
                       )
                     )
@@ -735,7 +735,7 @@
                       :model in @pending or @track.level == :read
                   }
                   busy={
-                    turn_running?(@threads, @thread_states, @thread_id, @track) and
+                    @turn.running? and
                       @track.level != :read
                   }
                 /><span class="spacer"></span>
@@ -758,7 +758,7 @@
                 <button
                   :if={
                     !@thread_draft[:selected?] &&
-                      turn_running?(@threads, @thread_states, @thread_id, @track) &&
+                      @turn.running? &&
                       @track.level != :read
                   }
                   id="composer-stop"
@@ -774,7 +774,7 @@
                 <button
                   :if={
                     @thread_draft[:selected?] || @track.level == :read ||
-                      !turn_running?(@threads, @thread_states, @thread_id, @track) ||
+                      !@turn.running? ||
                       composer_filled?(
                         @composer_empty?,
                         @composer_mode,
@@ -905,7 +905,7 @@
           </button>
         </nav>
         <div class="workspace-panel">
-          <%= case inspector_state(@track, machine(@track, @threads, @thread_states, @setup_now), @panel) do %>
+          <%= case inspector_state(@track, machine(@track, @turn, @setup_now), @panel) do %>
             <% {:setup, step} -> %>
               <%!-- The setup banner is the live region for these words. --%>
               <.empty pane busy id="panel-setup" icon="spinner" title={step} />
@@ -934,6 +934,7 @@
                 failure={@git_failure}
                 can_wake={@track.level != :read}
                 waking={:wake in @pending}
+                working={@turn.working?}
               />
               <p :if={@panel.error} role="alert">{@panel.error}</p>
               <.panel_body
@@ -1115,7 +1116,7 @@
           session_hash={@session_hash}
           can_write={@track.level != :read}
           asleep={
-            probed(machine(@track, @threads, @thread_states, @setup_now), @machine_probe, @track).state ==
+            probed(machine(@track, @turn, @setup_now), @machine_probe, @track).state ==
               :asleep
           }
         />

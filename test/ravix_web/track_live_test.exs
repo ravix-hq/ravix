@@ -4156,6 +4156,108 @@ defmodule RavixWeb.TrackLiveTest do
     end
   end
 
+  describe "one working state (RAV-91)" do
+    # What each surface says, in one render: the shown thread's tab word,
+    # whether Stop is drawn, the machine chip's word, and whether Checks
+    # says the turn is moving its counts.
+    defp surfaces(html, tab) do
+      doc = LazyHTML.from_document(html)
+      [label] = doc |> LazyHTML.query(tab) |> LazyHTML.attribute("aria-label")
+      [_, word] = Regex.run(~r/· (Running|Queued|Failed|Idle)$/, label)
+
+      %{
+        tab: word,
+        stop: Enum.count(LazyHTML.query(doc, "#composer-stop")) == 1,
+        chip: doc |> LazyHTML.query("#track-machine-state .chip-label") |> LazyHTML.text(),
+        checks: Enum.count(LazyHTML.query(doc, "#git-working[role=status]")) == 1
+      }
+    end
+
+    # A track whose opening turn has finished, so its chip's resting word is
+    # Idle rather than Starting.
+    defp opened(ctx) do
+      Repo.update!(
+        Ecto.Changeset.change(Repo.get!(Track, ctx.track.id), opened_at: DateTime.utc_now())
+      )
+
+      send(ctx.view.pid, {:hub, Event.new(:tracks, ctx.project.id, track_id: ctx.track.id)})
+      settle(ctx.view)
+    end
+
+    test "the tab, Stop, the machine chip and Checks change together through a turn", ctx do
+      opened(ctx)
+      open_checks(ctx, {:ok, git(0, 0)})
+      tab = "#thread-tab-#{ctx.track.id}"
+
+      assert surfaces(render(ctx.view), tab) == %{
+               tab: "Idle",
+               stop: false,
+               chip: "Idle",
+               checks: false
+             }
+
+      stub(Tracks, :git_status, fn _, _ -> {:ok, git(2, 0)} end)
+
+      for {state, expected} <- [
+            {"queued", %{tab: "Queued", stop: false, chip: "Working", checks: true}},
+            {"started", %{tab: "Running", stop: true, chip: "Working", checks: true}},
+            {"completed", %{tab: "Idle", stop: false, chip: "Idle", checks: false}}
+          ] do
+        assert surfaces(turn_stage(ctx.view, ctx.track.id, state), tab) == expected
+      end
+
+      # A settled turn reads the counts again.
+      render_async(ctx.view)
+      assert has_element?(ctx.view, "#git-uncommitted", "2 uncommitted changes")
+    end
+
+    test "a detail read's running track does not hold the chip on Working under an Idle tab",
+         ctx do
+      stub(Tracks, :get, fn _, _, _ ->
+        {:ok,
+         %{
+           track: %{Tracks.present(ctx.track, role: :owner) | status: :running},
+           header: blank_header(),
+           starters: [],
+           models: [],
+           threads: thread_options(ctx.track.id)
+         }}
+      end)
+
+      send(ctx.view.pid, {:hub, Event.new(:tracks, ctx.project.id, track_id: ctx.track.id)})
+      settle(ctx.view)
+
+      assert surfaces(render(ctx.view), "#thread-tab-#{ctx.track.id}") ==
+               %{tab: "Idle", stop: false, chip: "Idle", checks: false}
+    end
+
+    test "a sibling's turn is the machine working, but not the shown thread's Stop", ctx do
+      {:ok, sibling} =
+        Tracks.Store.create_thread(%{
+          track_id: ctx.track.id,
+          conversation_id: "live-sibling",
+          title: "Sibling"
+        })
+
+      opened(ctx)
+      html = turn_stage(ctx.view, sibling.id, "started")
+
+      assert surfaces(html, "#thread-tab-#{ctx.track.id}") ==
+               %{tab: "Idle", stop: false, chip: "Working", checks: false}
+
+      assert surfaces(html, "#thread-tab-#{sibling.id}").tab == "Running"
+    end
+
+    test "Checks does not call a machine asleep while a turn is working on it", ctx do
+      open_checks(ctx, {:error, :machine_asleep})
+      assert has_element?(ctx.view, "#git-asleep")
+
+      turn_stage(ctx.view, ctx.track.id, "started")
+      refute has_element?(ctx.view, "#git-asleep")
+      assert has_element?(ctx.view, "#git-working", "The agent is taking a turn.")
+    end
+  end
+
   test "starters and typing use the composer protocol", ctx do
     ctx.view |> element("button", "Start here") |> render_click()
     assert_push_event(ctx.view, "composer:insert", %{text: "Build it"})
