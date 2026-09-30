@@ -106,6 +106,7 @@
         phx-click={JS.push_focus() |> JS.push("dialog")}
         phx-value-name="people"
         aria-haspopup="dialog"
+        aria-expanded={to_string(@dialog == :people)}
         title={"Share track (#{length(@present)} viewing now)"}
       ><.icon name="add-person" size={15} /><span>Share</span><span
         class="dim"

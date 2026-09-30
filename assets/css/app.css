@@ -2104,7 +2104,7 @@ section.first-prompt#project-start { align-self: center; padding: 32px 24px; }
 
 @media (prefers-reduced-motion: reduce) {
   .dot.running, .dot.opening, .dot.queued, .dot.working, .dot.starting, .dot.restarting { animation: none; }
-  .toast, .live-disconnected, .scrim, .yard-scrim { animation: none; }
+  .toast, .live-disconnected, .scrim, .yard-scrim, .share-popover { animation: none; }
 }
 
 /* Desktop tooling instructions stay readable inside the shared dialog shell. */
@@ -2448,13 +2448,10 @@ body:has(.phx-error) #request-progress { display: none; }
 .access-summary strong { color: var(--ink); font-weight: 500; }
 .composer-read-only { color: var(--dim); }
 
-/* The Share dialog (ADR 0009 phase 5): visibility, the @-mention box over
-   workspace members, and the track's own link. */
+/* The Share popover (ADR 0009 phase 5, RAV-84): the @-mention box over
+   workspace members, who has access, general access and the track's link. */
 .share-dialog { display: flex; flex-direction: column; gap: 14px; }
 .share-dialog h3 { margin: 0 0 6px; font-size: 13px; }
-.share-visibility { display: flex; flex-direction: column; gap: 6px; margin: 0; padding: 0; border: 0; }
-.share-visibility legend { margin-bottom: 6px; font-weight: 600; }
-.share-visibility label { display: flex; align-items: center; gap: 8px; }
 .share-consent { padding: 10px 12px; border: 1px solid var(--line); border-left: 3px solid var(--warn); border-radius: var(--radius); }
 .share-consent p { margin: 0 0 6px; }
 .share-mention { position: relative; display: flex; flex-direction: column; gap: 4px; }
@@ -2466,8 +2463,38 @@ body:has(.phx-error) #request-progress { display: none; }
 .share-mention [role="listbox"][hidden] { display: none; }
 .share-mention [role="option"] { display: flex; gap: 8px; align-items: baseline; padding: 5px 8px; border-radius: var(--radius); cursor: pointer; }
 .share-mention [role="option"][aria-selected="true"], .share-mention [role="option"]:hover { background: var(--surface-hover); }
-.share-link { display: flex; align-items: center; gap: 8px; min-width: 0; }
-.share-link code { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* RAV-84: a popover under the Share button, with no scrim; the
+   `SharePopover` hook sets `top` and `left`. Narrower than 640px it is the
+   centred dialog it was. */
+.share-layer { position: fixed; z-index: 40; top: 56px; right: 16px; }
+.share-layer[data-placed] { right: auto; }
+.share-layer[hidden] { display: none; }
+.share-popover {
+  width: min(440px, calc(100vw - 16px)); max-height: min(78vh, 640px); display: flex; flex-direction: column;
+  background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius-lg);
+  box-shadow: 0 12px 40px var(--shadow); overflow: hidden; animation: fade 120ms ease;
+}
+.share-popover .dialog-head { padding: 10px 14px; }
+.share-popover .dialog-head h2 { font-size: 14px; }
+.share-popover .dialog-body { padding: 12px 14px 14px; }
+.share-popover .people-list { margin: 0; }
+.share-popover .people-row { min-height: 40px; padding: 6px 0; gap: 8px; }
+.share-popover .people-row:last-child { border-bottom: 0; }
+.share-popover .hint { margin: 4px 0 0; font-size: 12px; }
+@media (max-width: 639px) {
+  .share-layer { inset: 0; display: grid; place-items: center; padding: 24px; background: var(--scrim); }
+  .share-popover { width: min(620px, 100%); }
+}
+.share-general-row { display: flex; align-items: center; gap: 8px; min-height: 32px; }
+.share-general-row select { flex: 1; min-width: 0; }
+.share-general-scope { flex: 1; min-width: 0; }
+.share-link {
+  display: grid; grid-template-columns: auto auto 1fr; align-items: center; gap: 4px 8px;
+  padding-top: 12px; border-top: 1px solid var(--line);
+}
+.share-link button { display: inline-flex; align-items: center; gap: 6px; }
+.share-link [role="status"] { font-size: 12px; color: var(--dim); }
+.share-link .hint { grid-column: 1 / -1; margin: 0; }
 .account-connections { display: flex; flex-direction: column; gap: 4px; }
 .account-connections a { text-decoration: underline; text-underline-offset: 2px; }
 .workspace-hint a { text-decoration: underline; text-underline-offset: 2px; }
