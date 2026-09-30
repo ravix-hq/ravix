@@ -65,7 +65,7 @@ test('Mine/Everyone filters the rail by creator, and Show closed lists closed tr
   await search.fill('member-work');
   await expect(page.locator('#search-dialog [data-jump-result]', { hasText: 'member-work' })).toHaveCount(1);
   await search.fill('mine: member-work');
-  await expect(page.locator('#search-dialog')).toContainText('No projects, tracks or plans match');
+  await expect(page.locator('#search-dialog')).toContainText('No tracks match');
   await page.keyboard.press('Escape');
 
   await scope.getByRole('button', { name: 'Everyone', exact: true }).click();

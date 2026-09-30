@@ -464,7 +464,7 @@ test('find a track focuses its search field and explains no matches', async ({ p
   await open.press('Enter');
   await expect(query).toBeFocused();
   await page.keyboard.type('no-track-could-match-this-query');
-  await expect(dialog.getByRole('status')).toHaveText('No projects, tracks or plans match');
+  await expect(dialog.getByRole('status')).toHaveText("No tracks match 'no-track-could-match-this-query'");
   await expect(dialog.locator('a')).toHaveCount(0);
   await expect(query).toBeFocused();
   await page.keyboard.press('Escape');

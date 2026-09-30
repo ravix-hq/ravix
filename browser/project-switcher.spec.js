@@ -66,9 +66,11 @@ test('project tree and quick-jump navigate with keyboard and fit desktop and pho
     if (width === 500) await page.getByRole('button', { name: 'Close menu', exact: true }).click();
     const trigger = page.locator(width === 500 ? '#mobile-quick-jump-trigger' : '#quick-jump-trigger');
     if (width === 1280) await page.locator('#yard-toggle').click();
-    // Editing shortcuts belong to the composer, even while global search is available.
+    // Search is global (RAV-99): the composer does not keep Ctrl+K.
     await page.locator('textarea').first().focus();
     await page.keyboard.press('Control+k');
+    await expect(page.locator('#search-dialog')).toBeVisible();
+    await page.keyboard.press('Escape');
     await expect(page.locator('#search-dialog')).toHaveCount(0);
     await trigger.focus();
     await page.keyboard.press('Control+k');
