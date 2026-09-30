@@ -885,6 +885,28 @@ defmodule RavixWeb.WorkspaceManagementTest do
     refute html =~ "could not finish"
   end
 
+  # RAV-103: what `settings/2` waits for. The read is held open here where
+  # the flake only caught it by chance; opening settings under it would
+  # cancel it, and a cancelled read that holds the test's connection ends it.
+  test "opening settings waits for the project page's agent-health read", ctx do
+    parent = self()
+
+    stub(Projects, :agent_health, fn _, _ ->
+      send(parent, {:reading_health, self()})
+      receive do: (:release -> {:error, :not_found})
+    end)
+
+    {:ok, view, _} = live(log_in_user(build_conn(), ctx.user), "/p/#{ctx.project.id}")
+    assert_receive {:reading_health, reader}, 1_000
+    ref = Process.monitor(reader)
+    opening = Task.async(fn -> settings(%{ctx | view: view}) end)
+
+    assert Task.yield(opening, 200) == nil
+    send(reader, :release)
+    Task.await(opening)
+    assert_receive {:DOWN, ^ref, :process, ^reader, :normal}
+  end
+
   test "a rebuild that stopped everything says nothing extra", ctx do
     settings(ctx)
     stub(Projects, :rebuild, fn _, _ -> {:ok, %Rebuild{removed: ["agent"], failed: []}} end)
@@ -1237,6 +1259,13 @@ defmodule RavixWeb.WorkspaceManagementTest do
        })}
     end)
 
+    # RAV-103. The project page's own reads have to be over before this patches
+    # away from it. The patch removes `RavixWeb.Live.AgentHealth`, and removing
+    # a component cancels its tasks; one cancelled while it holds this test's
+    # sandbox connection takes the connection down with it, so the next thing
+    # the page reads --- the session, on the first settings event --- finds no
+    # owner. `live/2` hands the page back with that read still out.
+    render_async(ctx.view, 5_000)
     render_patch(ctx.view, "/p/#{ctx.project.id}/settings/general")
     render_async(ctx.view)
   end

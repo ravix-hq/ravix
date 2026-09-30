@@ -2568,6 +2568,86 @@ defmodule RavixWeb.TrackLiveTest do
       assert draft_key(ctx.view) == key
     end
 
+    # RAV-102. The prompt queue follows a new thread to deliver its first
+    # prompt, so by the time this page has read the transcript and subscribes,
+    # that follower is already streaming on its own cursor. The turn's opening
+    # event --- the only one carrying the prompt --- can go out between the
+    # read and the subscription. The next event still arrives and moves the
+    # page's cursor past it, and the catch-up that would have repaired it can
+    # be superseded by another read (a hub `:turn` here, a machine binding in
+    # the browser). A catch-up from the page's cursor then never asks for the
+    # opening event again, and the turn is drawn with its output and no prompt.
+    test "the first turn keeps its prompt when its opening event beat the subscription", ctx do
+      open_draft(ctx, draft_options(ctx))
+      stub_activity_follow()
+      parent = self()
+
+      expect(Tracks, :start_thread, fn _, id, _, %{prompt: "Say hello"} ->
+        Tracks.Store.create_thread(%{
+          track_id: id,
+          title: "Say hello",
+          runtime: "claude",
+          conversation_id: "first-turn"
+        })
+      end)
+
+      opening = opened(1, "first", "Say hello")
+      answer = reply(2, "first", "Hello back")
+      catch_ups = :counters.new(1, [])
+
+      # Fountain's feed: a catch-up gets what is newer than the page it names.
+      stub(Tracks, :events, fn _, _, opts ->
+        case opts[:page] do
+          nil ->
+            topic = Follower.topic(opts[:thread_id])
+
+            Phoenix.PubSub.broadcast(
+              Ravix.PubSub,
+              topic,
+              {:transcript, opts[:thread_id], opening}
+            )
+
+            {:ok, Transcript.empty("claude")}
+
+          page ->
+            :counters.add(catch_ups, 1, 1)
+
+            if :counters.get(catch_ups, 1) == 1 do
+              send(parent, {:catching_up, self()})
+              receive do: (:answer -> :ok)
+            end
+
+            newer = Enum.filter([opening, answer], &(&1["id"] > (page.last_event_id || 0)))
+            {:ok, Transcript.add_events(page, newer)}
+        end
+      end)
+
+      ctx.view |> form("#composer-form", %{text: "Say hello"}) |> render_submit()
+      render_async(ctx.view)
+      assert_receive {:catching_up, first}, 1_000
+      [thread] = Enum.reject(Tracks.Store.threads_of(ctx.track.id), &(&1.id == ctx.track.id))
+
+      Phoenix.PubSub.broadcast(
+        Ravix.PubSub,
+        Follower.topic(thread.id),
+        {:transcript, thread.id, answer}
+      )
+
+      turn = Event.new(:turn, ctx.project.id, track_id: ctx.track.id, thread_id: thread.id)
+      send(ctx.view.pid, {:hub, turn})
+      render(ctx.view)
+      send(first, :answer)
+      render_async(ctx.view)
+      render(drawn(ctx.view))
+      assert has_element?(ctx.view, "#transcript-turns #turns-first .md", "Hello back")
+
+      assert has_element?(
+               ctx.view,
+               "#transcript-turns #turns-first .workspace-prompt",
+               "Say hello"
+             )
+    end
+
     test "an untouched default is not an explicit pick", ctx do
       open_draft(ctx, draft_options(ctx))
 
@@ -5182,6 +5262,19 @@ defmodule RavixWeb.TrackLiveTest do
     }
   end
 
+  defp reply(id, turn, text) do
+    update = %{sessionUpdate: "agent_message_chunk", content: %{type: "text", text: text}}
+
+    %{
+      "id" => id,
+      "turn_id" => turn,
+      "kind" => "output",
+      "stream" => "acp",
+      "data" =>
+        Jason.encode!(%{jsonrpc: "2.0", method: "session/update", params: %{update: update}})
+    }
+  end
+
   defp settle(view) do
     # Shared CI/database load can exceed LiveViewTest's 100ms default during setup.
     render_async(view, 5_000)
@@ -7141,30 +7234,35 @@ defmodule RavixWeb.TrackLiveTest do
     # `Tracks.events/2` is two Fountain round trips and the largest answer the
     # page waits for. Held open, it stands for the slow half of a real load:
     # everything asserted before it is released is what somebody switching
-    # tracks sees immediately rather than after the transcript arrives.
-    stub(Tracks, :events, fn _user, _id, _thread_opts ->
-      send(test_pid, {:reading_transcript, self()})
+    # tracks sees immediately rather than after the transcript arrives. The
+    # catch-up read that follows subscribing finds nothing newer.
+    stub(Tracks, :events, fn _user, _id, thread_opts ->
+      if page = thread_opts[:page] do
+        {:ok, page}
+      else
+        send(test_pid, {:reading_transcript, self()})
 
-      receive do
-        :release_transcript -> :ok
-      after
-        5_000 -> flunk("the transcript read was never released")
+        receive do
+          :release_transcript -> :ok
+        after
+          5_000 -> flunk("the transcript read was never released")
+        end
+
+        {:ok,
+         Transcript.page(
+           [
+             opened(0, "turn", "An earlier prompt"),
+             %{
+               "id" => 1,
+               "turn_id" => "turn",
+               "kind" => "output",
+               "stream" => "acp",
+               "data" => "hi"
+             }
+           ],
+           "claude"
+         )}
       end
-
-      {:ok,
-       Transcript.page(
-         [
-           opened(0, "turn", "An earlier prompt"),
-           %{
-             "id" => 1,
-             "turn_id" => "turn",
-             "kind" => "output",
-             "stream" => "acp",
-             "data" => "hi"
-           }
-         ],
-         "claude"
-       )}
     end)
 
     # Sent from inside the `:load` result, so a `render/1` after it is queued
