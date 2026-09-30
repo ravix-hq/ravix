@@ -24,7 +24,6 @@
 //   Shell           an interactive terminal tab: xterm.js over the page's socket
 //   Notify          desktop notifications when a track needs you and you are not looking
 //   NotifyToggle    the switch for them, on the Notifications settings page
-//   SettingsSections a project settings section's own Save, Discard and agent choice
 //   UnsavedChanges  a settings page's unsaved-changes bar and leave confirmation
 //   SettingsFrame   a settings page opens each section at its top
 //   ProjectTree     viewer-local collapse preferences for project and section rows
@@ -39,6 +38,7 @@
 //   SubmitOnEnter   the create dialog's first prompt: Enter creates, Shift+Enter is a new line
 //   HeaderFit       a track header's status chips: whole words or just their icons
 //   ChipMenu        a chip's popover: aria-expanded, Escape and focus return inside a dialog
+//   SharePopover    the Share popover placed under its button; Share again closes it
 //
 // Adding a hook is a product decision, not a convenience. Say why in its
 // file's header, and list it here.
@@ -63,12 +63,12 @@ import {Notify, NotifyToggle} from "./hooks/notify"
 import {ProjectTree} from "./hooks/project_tree"
 import {QuickJump, QuickJumpQuery} from "./hooks/quick_jump"
 import {AgentConfirmation} from "./hooks/agent_confirmation"
-import {SettingsSections} from "./hooks/settings_sections"
 import {UnsavedChanges} from "./hooks/unsaved_changes"
 import {SettingsFrame} from "./hooks/settings_frame"
 import {ProjectSections} from "./hooks/project_sections"
 import {ProjectFormFocus} from "./hooks/project_form_focus"
 import {CopyCode} from "./hooks/copy_code"
+import {SharePopover} from "./hooks/share_popover"
 import {ShareMention} from "./hooks/share_mention"
 import {TurnTimer} from "./hooks/turn_timer"
 import {RelativeTime} from "./hooks/relative_time"
@@ -79,7 +79,7 @@ import {ChipMenu} from "./hooks/chip_menu"
 
 
 
-const hooks = {ThreadTabs, AgentConfirmation, Theme, PanelResize, PanelToggle, TranscriptTail, Composer, Terminal, Notify, NotifyToggle, SettingsSections, UnsavedChanges, SettingsFrame, ProjectTree, QuickJump, QuickJumpQuery, ProjectSections, CopyCode, ProjectFormFocus, ShareMention, TurnTimer, RelativeTime, SubmitOnEnter, Shell, HeaderFit, LocalTime, ChipMenu}
+const hooks = {ThreadTabs, AgentConfirmation, Theme, PanelResize, PanelToggle, TranscriptTail, Composer, Terminal, Notify, NotifyToggle, UnsavedChanges, SettingsFrame, ProjectTree, QuickJump, QuickJumpQuery, ProjectSections, CopyCode, ProjectFormFocus, ShareMention, TurnTimer, RelativeTime, SubmitOnEnter, Shell, HeaderFit, LocalTime, ChipMenu, SharePopover}
 
 const csrfToken = document.querySelector("meta[name='csrf-token']").getAttribute("content")
 clearTransportFallback(window)

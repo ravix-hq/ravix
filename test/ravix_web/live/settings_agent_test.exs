@@ -48,7 +48,7 @@ defmodule RavixWeb.Live.SettingsAgentTest do
     render_async(view, 2_000)
     render_patch(view, "/p/#{project.id}/settings/agent")
     render_async(view, 2_000)
-    assert has_element?(view, "#settings-sections")
+    assert has_element?(view, "#settings-section-agent")
     {view, user}
   end
 
@@ -56,13 +56,14 @@ defmodule RavixWeb.Live.SettingsAgentTest do
        ctx do
     {view, _} = open(log_in_user(ctx.conn, ctx.user), ctx.user, ctx.project)
     assert has_element?(view, "#settings-agent-claude[aria-pressed=true]", "Connected")
-    assert has_element?(view, "#settings-sections", "subscription or API key")
+    assert has_element?(view, "#settings-section-agent", "subscription or API key")
     assert has_element?(view, "#settings-agent-codex", "Not connected — connect to use")
     view |> element("#settings-agent-codex") |> render_click()
     render_async(view, 2_000)
     assert has_element?(view, "#settings-connect-codex #chatgpt-connect")
     refute has_element?(view, "#settings-connect-codex #agent-claude")
-    assert has_element?(view, "[data-switch-agent][disabled]")
+    # Choosing another agent turns the page's Save into the switch.
+    assert has_element?(view, "#project-agent-bar button[data-unsaved-save]", "Switch & rebuild")
 
     view
     |> form("#agent-settings-form", settings: [instructions: "Keep this draft"])
@@ -82,7 +83,6 @@ defmodule RavixWeb.Live.SettingsAgentTest do
     assert has_element?(view, "#settings-runtime[value=codex]")
     assert has_element?(view, "#settings-instructions", "Keep this draft")
     refute has_element?(view, "#settings-connect-codex")
-    refute has_element?(view, "[data-switch-agent][disabled]")
     refute render(view) =~ "sk-test"
     view |> form("#agent-settings-form") |> render_submit()
     render_async(view, 2_000)
@@ -229,9 +229,16 @@ defmodule RavixWeb.Live.SettingsAgentTest do
     assert has_element?(view, "#settings-agent-claude[aria-pressed=true]")
     view |> element("#settings-agent-codex") |> render_click()
 
-    view
-    |> with_target("div[data-phx-component]:has(#settings-sections)")
-    |> render_hook("discard-agent", %{})
+    # The bar's Discard, which its hook pushes to the page component.
+    [cid] =
+      view
+      |> render()
+      |> LazyHTML.from_document()
+      |> LazyHTML.query("#project-agent")
+      |> LazyHTML.attribute("data-discard-target")
+
+    view |> with_target(String.to_integer(cid)) |> render_click("discard-agent", %{})
+    assert has_element?(view, "#project-agent-bar button[data-unsaved-save]", "Save")
 
     assert has_element?(view, "#settings-agent-claude[aria-pressed=true]")
     refute has_element?(view, "#settings-connect-codex")
@@ -255,7 +262,7 @@ defmodule RavixWeb.Live.SettingsAgentTest do
              )
 
       render_patch(view, "/p/#{ctx.project.id}/settings/agent")
-      refute has_element?(view, "#settings-sections")
+      refute has_element?(view, "#settings-section-agent")
       refute has_element?(view, "#credential-form")
       refute has_element?(view, "#chatgpt-connect")
       {:ok, stranger, _} = live(log_in_user(ctx.conn, insert_user()), "/p/#{ctx.project.id}")

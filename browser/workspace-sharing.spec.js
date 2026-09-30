@@ -3,8 +3,8 @@ import { execFileSync } from 'node:child_process';
 import { test, expect } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
 import { signIn, connectClaude } from './sign-in.js';
-import { expectInlineChoice } from './controls.js';
 import { chooseSharing } from './new-track.js';
+import { spoken } from './track-label.js';
 
 // ADR 0009 phase 5, with RAVIX_WORKSPACE_ACCESS on (`bun run
 // test:browser:workspace-access`): the track header's Share dialog shares a
@@ -33,7 +33,7 @@ async function openTrack(page, visibility, branch) {
   await track.getByRole('button', { name: 'Options', exact: true }).click();
   await track.getByLabel('Branch name', { exact: true }).fill(branch);
   await track.getByRole('button', { name: 'Create track', exact: true }).click();
-  await expect(page.locator('.track-crumbs')).toContainText(branch);
+  await expect(page.locator('.track-crumbs')).toContainText(spoken(branch));
   return new URL(page.url()).pathname;
 }
 
@@ -72,20 +72,56 @@ test('the Share dialog shares a private track with one member, and nobody else l
            WHERE p.id = '${projectId}' AND u.login IN ('sharecolleague', 'sharebystander')`);
     sql(`UPDATE ravix.tracks SET setup_state = 'failed' WHERE id = '${secretId}'`);
 
-    // The Share dialog: private already, an accessible dialog, no invite link.
+    // The Share popover (RAV-84): private already, an accessible dialog
+    // hanging under the button with nothing dimmed, no invite link.
     await page.goto(secretPath);
-    await page.getByRole('button', { name: /^Share/ }).click();
+    const shareButton = page.getByRole('button', { name: /^Share/ });
+    await expect(shareButton).toHaveAttribute('aria-expanded', 'false');
+    await shareButton.click();
     const share = page.getByRole('dialog', { name: 'Share track', exact: true });
     await expect(share).toBeVisible();
-    await expect(share.getByLabel('Only people I add')).toBeChecked();
+    await expect(shareButton).toHaveAttribute('aria-expanded', 'true');
+    await expect(share.getByRole('button', { name: 'Close', exact: true })).toBeFocused();
+    await expect(page.locator('.scrim')).toHaveCount(0);
+    await expect(page.locator('#track-share-dialog')).toHaveAttribute('data-placed', '');
+    const [under, panel] = [await shareButton.boundingBox(), await share.boundingBox()];
+    expect(panel.y).toBeGreaterThanOrEqual(under.y + under.height);
+    expect(panel.y - (under.y + under.height)).toBeLessThan(16);
+    expect(Math.abs((panel.x + panel.width) - (under.x + under.width))).toBeLessThan(2);
+    // Nothing dims the page: the composer behind it is its own colour.
+    const hit = await page.evaluate(({ x, y }) => document.elementFromPoint(x, y)?.closest('#track-share-dialog') === null,
+      { x: 40, y: 450 });
+    expect(hit).toBe(true);
+    const general = share.getByRole('combobox', { name: 'General access', exact: true });
+    await expect(general).toHaveValue('private');
+    await expect(general.locator('option')).toHaveText([/Everyone in /, 'Only people I add']);
+    await expect(share.getByRole('list', { name: 'People with access' })).toContainText('@sharecreator');
     await expect(share).not.toContainText('invite link');
-    // RAV-59: each radio sits beside its one-line label.
-    for (const name of ['Everyone in ', 'Only people I add']) {
-      await expectInlineChoice(share.locator('.share-visibility label').filter({ hasText: name }));
-    }
+    await expect(share).not.toContainText(secretPath);
     const axe = await new AxeBuilder({ page }).include('#track-share-dialog-dialog')
       .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa']).analyze();
     expect(axe.violations).toEqual([]);
+
+    // Share again closes it; Escape closes it too, focus goes back to Share,
+    // and the first click after it is not lost (RAV-68).
+    await shareButton.click();
+    await expect(share).toHaveCount(0);
+    await expect(shareButton).toHaveAttribute('aria-expanded', 'false');
+    await shareButton.click();
+    await expect(share).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(share).toHaveCount(0);
+    await expect(shareButton).toBeFocused();
+    await shareButton.click();
+    await expect(share).toBeVisible();
+    // A click outside closes it, and lands where it was aimed.
+    const inspector = page.getByRole('navigation', { name: 'Inspector panels' });
+    await inspector.getByRole('button', { name: /^Changes/ }).click();
+    await expect(share).toHaveCount(0);
+    await expect(inspector.getByRole('button', { name: /^Changes/ })).toHaveClass(/selected/);
+    await inspector.getByRole('button', { name: 'Files', exact: true }).click();
+    await shareButton.click();
+    await expect(share).toBeVisible();
 
     // The @-mention box offers workspace members only; the keyboard picks one.
     const box = share.getByRole('combobox', { name: 'Add workspace members' });
@@ -100,24 +136,35 @@ test('the Share dialog shares a private track with one member, and nobody else l
     await expect(options.getByRole('option')).toHaveCount(1);
     await expect(box).toHaveAttribute('aria-activedescendant', 'share-option-sharecolleague');
     await box.press('Enter');
-    await expect(share.getByRole('list', { name: 'Shared with' })).toContainText('@sharecolleague');
+    const withAccess = share.getByRole('list', { name: 'People with access' });
+    await expect(withAccess).toContainText('@sharecolleague');
+    await expect(withAccess.locator('#share-access-sharecolleague')).toContainText('direct');
 
-    // Copy link is the track's own address.
-    await share.getByRole('button', { name: 'Copy link', exact: true }).click();
+    // Copy link is the track's own address, from the keyboard: its
+    // shortcut, and Tab then Enter.
+    await page.evaluate(() => navigator.clipboard.writeText(''));
+    await share.getByRole('button', { name: 'Close', exact: true }).focus();
+    await page.keyboard.press('c');
     await expect(share.getByRole('status')).toHaveText('Copied');
     expect(await page.evaluate(() => navigator.clipboard.readText())).toMatch(new RegExp(`${secretPath}$`));
+    await page.evaluate(() => navigator.clipboard.writeText(''));
+    const copy = share.getByRole('button', { name: 'Copy link', exact: true });
+    await expect(copy).toHaveAccessibleDescription('The link opens this track only for people who can already see it.');
+    await copy.focus();
+    await page.keyboard.press('Enter');
+    await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toMatch(new RegExp(`${secretPath}$`));
     await page.keyboard.press('Escape');
     await expect(share).toHaveCount(0);
 
     // The colleague it was shared with opens it.
     await colleague.goto(secretPath);
-    await expect(colleague.locator('.track-crumbs')).toContainText('share-secret');
+    await expect(colleague.locator('.track-crumbs')).toContainText('Share secret');
 
     // The bystander, in the same workspace, learns nothing of it.
     await bystander.goto(projectPath);
     await expect(bystander.locator('#project-sections[aria-busy="false"]')).toBeAttached();
     await expect(bystander.locator(`#project-track-tab-${secretId}`)).toHaveCount(0);
-    await expect(bystander.locator('body')).not.toContainText('share-secret');
+    await expect(bystander.locator('body')).not.toContainText('Share secret');
     await expect(bystander.locator(`#project-link-${projectId} .badge`)).toHaveCount(0);
     await bystander.locator('#quick-jump-trigger').click();
     await bystander.getByLabel('Search projects, tracks and plans').fill('share-secret');
@@ -125,16 +172,17 @@ test('the Share dialog shares a private track with one member, and nobody else l
     await bystander.keyboard.press('Escape');
     await bystander.goto('/inbox');
     await expect(bystander.locator('#project-sections[aria-busy="false"]')).toBeAttached();
-    await expect(bystander.locator('body')).not.toContainText('share-secret');
+    await expect(bystander.locator('body')).not.toContainText('Share secret');
     await bystander.goto(secretPath);
     await expect(bystander).toHaveURL(new RegExp(`${projectPath}$`));
 
     // Removing the colleague takes the open page away from them at once.
     await page.getByRole('button', { name: /^Share/ }).click();
+    await expect(share.getByRole('list', { name: 'People with access' })).toContainText('@sharecolleague');
     await share.getByRole('button', { name: 'Remove @sharecolleague', exact: true }).click();
     await expect(share).toContainText('Not shared with anyone yet.');
     await expect(colleague.locator('.track-crumbs')).toHaveCount(0);
-    await expect(colleague.locator('body')).not.toContainText('share-secret');
+    await expect(colleague.locator('body')).not.toContainText('Share secret');
   } finally {
     await colleagueContext.close();
     await bystanderContext.close();
@@ -144,7 +192,7 @@ test('the Share dialog shares a private track with one member, and nobody else l
 // RAV-32: a workspace project's People dialog offers no invitation and no
 // invite link. RAV-75: it lists everyone who reaches the project with where
 // their role comes from, and gives a workspace member a different role.
-test("a workspace project's People dialog lists every source and gives a different role", async ({ page }) => {
+test("a workspace project's Access page lists every source and gives a different role", async ({ page }) => {
   test.skip(process.env.RAVIX_WORKSPACE_ACCESS !== 'true', 'Runs under test:browser:workspace-access');
   const sql = browserSql();
 
@@ -174,9 +222,11 @@ test("a workspace project's People dialog lists every source and gives a differe
          VALUES ('${projectId}', '00000000-0000-4000-8000-000000097501',
                  '00000000-0000-4000-8000-000000009013', 'write', NOW())`);
 
+  // RAV-74: the owner's People is the project's Access settings page.
   await page.goto(projectPath);
-  await page.getByRole('button', { name: 'People', exact: true }).click();
-  const people = page.getByRole('dialog', { name: 'Project people', exact: true });
+  await page.getByRole('link', { name: 'People', exact: true }).click();
+  await expect(page).toHaveURL(new RegExp(`${projectPath}/settings/access$`));
+  const people = page.locator('#project-access');
   await expect(people).toBeVisible();
   await expect(people.getByLabel('GitHub username')).toHaveCount(0);
   await expect(people).not.toContainText('invite link');
@@ -188,12 +238,12 @@ test("a workspace project's People dialog lists every source and gives a differe
   const members = sql(`SELECT count(*) FROM ravix.workspace_memberships
                          WHERE workspace_id = '${workspaceId}' AND revoked_at IS NULL`);
   await expect(summary).toContainText(`${members} sharecreator members get Write by default`);
-  await expect(people.locator('#people-person-sharecreator')).toContainText('Admin');
-  await expect(people.locator('#people-person-sharecreator')).toContainText('owner');
-  await expect(people.locator('#people-person-accessalice')).toContainText('direct');
-  const carol = people.locator('#people-person-accesscarol');
+  await expect(people.locator('#project-access-person-sharecreator')).toContainText('Admin');
+  await expect(people.locator('#project-access-person-sharecreator')).toContainText('owner');
+  await expect(people.locator('#project-access-person-accessalice')).toContainText('direct');
+  const carol = people.locator('#project-access-person-accesscarol');
   await expect(carol).toContainText('from workspace');
-  const axe = await new AxeBuilder({ page }).include('#people-dialog')
+  const axe = await new AxeBuilder({ page }).include('#settings-page')
     .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa']).analyze();
   expect(axe.violations).toEqual([]);
 

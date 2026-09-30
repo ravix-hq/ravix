@@ -32,25 +32,7 @@ defmodule RavixWeb.Live.MemberRolesLiveTest do
 
     # The page's detail is the real door's answer, so a role change is
     # visible to it the way `Ravix.Tracks.get/3` would make it visible.
-    stub(Tracks, :get, fn user, id, _opts ->
-      with {:ok, access} <- Access.track_access(user, id) do
-        row = Repo.get!(Track, id)
-
-        {:ok,
-         %{
-           track: Tracks.present(row, role: access.role, level: access.level),
-           header: %Ravix.Tracks.Header{
-             copy_of: nil,
-             branched_from: nil,
-             created: %{dir: "t", files: nil},
-             has_setup_script: false
-           },
-           threads: [],
-           starters: [],
-           models: []
-         }}
-      end
-    end)
+    stub(Tracks, :get, fn user, id, _opts -> detail(user, id) end)
 
     stub(Tracks, :events, fn _, _, _ -> {:ok, Transcript.empty("claude")} end)
     stub(Tracks, :follow, fn _, _, _ -> {:ok, self()} end)
@@ -58,6 +40,27 @@ defmodule RavixWeb.Live.MemberRolesLiveTest do
     stub(Tracks, :mark_read, fn _, _, _ -> :ok end)
 
     %{conn: conn, owner: owner, reader: reader, writer: writer, project: project, track: track}
+  end
+
+  defp detail(user, id, status \\ nil) do
+    with {:ok, access} <- Access.track_access(user, id) do
+      row = Repo.get!(Track, id)
+      track = Tracks.present(row, role: access.role, level: access.level)
+
+      {:ok,
+       %{
+         track: if(status, do: %{track | status: status}, else: track),
+         header: %Ravix.Tracks.Header{
+           copy_of: nil,
+           branched_from: nil,
+           created: %{dir: "t", files: nil},
+           has_setup_script: false
+         },
+         threads: [],
+         starters: [],
+         models: []
+       }}
+    end
   end
 
   defp track_page(ctx, user) do
@@ -127,6 +130,30 @@ defmodule RavixWeb.Live.MemberRolesLiveTest do
       render_async(view)
       assert render(parent) =~ "Your role on this track is Read. Ask an admin for Write"
       assert has_element?(view, "#panel-asleep")
+    end
+
+    # RAV-87: Stop sits where send is while a turn runs, for those who may
+    # interrupt. A reader is not shown it, and the context refuses a forged
+    # `interrupt` before Fountain is asked.
+    test "a running turn offers a writer Stop, and a reader none", ctx do
+      stub(Tracks, :get, fn user, id, _opts -> detail(user, id, :running) end)
+
+      {writer, _} = track_page(ctx, ctx.writer)
+      assert has_element?(writer, "#composer-stop[aria-label='Stop agent']")
+
+      {reader, _} = track_page(ctx, ctx.reader)
+      refute has_element?(reader, "#composer-stop")
+      refute has_element?(reader, "button[phx-click=interrupt]")
+    end
+
+    test "a reader's forged interrupt is refused by the context", ctx do
+      stub(Tracks, :get, fn user, id, _opts -> detail(user, id, :running) end)
+      reject(&Ravix.Fountain.interrupt/2)
+      {view, parent} = track_page(ctx, ctx.reader)
+
+      render_click(view, "interrupt", %{})
+      render_async(view)
+      assert render(parent) =~ "Your role on this track is Read. Ask an admin for Write"
     end
 
     test "a writer's page is not read-only", ctx do

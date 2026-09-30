@@ -84,7 +84,12 @@ defmodule RavixWeb.WorkspaceRailAgeTest do
              "#track-age-#{prompted.id}[title='Last active #{RavixWeb.LocalTime.full(last, nil)}']"
            )
 
-    assert has_element?(view, "#{tab.(quiet)} .track-private", "Private")
+    # Private is a lock with a tooltip, and a word only a reader hears; the
+    # row's name says it too (RAV-96).
+    assert has_element?(view, "#{tab.(quiet)} .track-private[title^='Private'] svg")
+    assert has_element?(view, "#{tab.(quiet)} .track-private .sr-only", "Private")
+    assert has_element?(view, "#{tab.(quiet)}[data-label*=', private']")
+    refute has_element?(view, "#{tab.(prompted)}[data-label*=', private']")
     assert has_element?(view, "#{tab.(quiet)} #track-age-#{quiet.id}", "2d")
 
     # The link's name carries the age in words; the hook keeps it current
@@ -120,5 +125,43 @@ defmodule RavixWeb.WorkspaceRailAgeTest do
              "#closed-track-#{closed.id} time#closed-track-age-#{closed.id}[phx-hook=RelativeTime]",
              "3h"
            )
+  end
+
+  # RAV-96: an avatar on every row says nothing when one person made every
+  # track the rail shows, so the rail leaves them out; a second creator, or
+  # Mine narrowing the rail back to one, decides it again.
+  test "the rail drops its avatars while every track shown has one creator", %{conn: conn} do
+    viewer = insert_user(login: "solo")
+    other = insert_user(login: "second")
+    project = insert_project(user: viewer, name: "Owners")
+
+    mine =
+      insert_track(
+        project: project,
+        title: "Mine",
+        created_by: viewer.id,
+        created_by_login: "solo"
+      )
+
+    {:ok, view, _} = live(log_in_user(conn, viewer), "/p/#{project.id}")
+    render_async(view, 5_000)
+
+    assert has_element?(view, "#project-tree[data-one-creator]")
+    # Still drawn, and still named, for the row's own accessible name.
+    assert has_element?(view, "#project-track-tab-#{mine.id}[data-label*='created by @solo']")
+
+    insert_track(
+      project: project,
+      title: "Theirs",
+      created_by: other.id,
+      created_by_login: "second"
+    )
+
+    {:ok, view, _} = live(log_in_user(conn, viewer), "/p/#{project.id}")
+    render_async(view, 5_000)
+    refute has_element?(view, "#project-tree[data-one-creator]")
+
+    view |> element("#rail-scope-mine") |> render_click()
+    assert has_element?(view, "#project-tree[data-one-creator]")
   end
 end

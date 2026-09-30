@@ -82,6 +82,30 @@ defmodule Ravix.SessionConfigTest do
     assert %Option{id: "fast-mode", type: :select} = fast
   end
 
+  test "the adapter's \"Xhigh\" is named in words, and its value is kept" do
+    [effort] =
+      SessionConfig.options([
+        %{
+          "id" => "effort",
+          "category" => "thought_level",
+          "type" => "select",
+          "options" => [
+            %{"value" => "high", "name" => "High"},
+            %{"value" => "xhigh", "name" => "Xhigh"},
+            %{"value" => "x-high"}
+          ]
+        }
+      ])
+
+    assert effort.choices == [
+             %{value: "high", name: "High"},
+             %{value: "xhigh", name: "Extra high"},
+             %{value: "x-high", name: "Extra high"}
+           ]
+
+    assert SessionConfig.summary([effort], %{"effort" => "xhigh"}) == ["Extra high"]
+  end
+
   test "only advertised effort values and a boolean Fast are chosen; mode never is" do
     claude = @claude |> SessionConfig.options() |> SessionConfig.controls()
     assert SessionConfig.choose(claude, "effort", "max") == {:ok, "effort", "max"}

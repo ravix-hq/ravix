@@ -2,7 +2,7 @@ import { test, expect } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
 import { composerFixture } from './composer-fixture.js';
 import { signIn as signInAs, connectClaude } from './sign-in.js';
-import { openProjectSettings } from './settings.js';
+import { openProjectSettings, saveMachine } from './settings.js';
 
 async function primaryAppearance(locator) {
   return locator.evaluate((element) => {
@@ -553,7 +553,7 @@ test('project, track, streaming, image upload, reconnect, and revocation', async
   await page.getByRole('button', { name: 'Create track', exact: true }).click();
   const composer = page.getByRole('textbox', { name: 'Message', exact: true });
   await expect(composer).toBeEnabled({ timeout: 30_000 });
-  const selectedTrackTitle = await page.locator('.project-tree-tracks [aria-current="page"]').getAttribute('title');
+  const selectedTrackTitle = await page.locator('.project-tree-tracks [aria-current="page"] .track-title').textContent();
   await expect(page).toHaveTitle(`${selectedTrackTitle} · Browser quality · Ravix`);
   // The composer enables once the conversation exists, before the opening
   // turn has made the worktree. A diff read then is honestly empty and the
@@ -635,7 +635,7 @@ test('project, track, streaming, image upload, reconnect, and revocation', async
 
   await expect(page.getByLabel('Command', { exact: true })).not.toBeVisible();
   await page.getByRole('button', { name: 'Commands', exact: true }).click();
-  await expect(page.locator('#track-terminal .dock-empty')).toContainText('For an interactive shell, such as a console or a REPL, open a terminal with +.');
+  await expect(page.locator('#track-terminal .dock-empty')).toContainText('For an interactive shell, open a terminal with +.');
   await expect(page.locator('#track-terminal').getByRole('button', { name: 'Run', exact: true })).toHaveCount(0);
   await page.getByLabel('Command', { exact: true }).fill('echo draft');
   await page.getByRole('button', { name: 'Collapse the dock' }).click();
@@ -812,7 +812,7 @@ test('project, track, streaming, image upload, reconnect, and revocation', async
   await newTrack.getByRole('button', { name: 'Options', exact: true }).click();
   await page.getByLabel('Branch name').fill('second-lane');
   await page.getByRole('button', { name: 'Create track', exact: true }).click();
-  await expect(page.locator('.track-crumbs')).toContainText('second-lane');
+  await expect(page.locator('.track-crumbs')).toContainText('Second lane');
   await expect(composer).toBeEnabled({ timeout: 30_000 });
   await expect(page.locator('#transcript-scroll')).not.toHaveAttribute('data-track', firstLane);
   // The track arrived at is its own; the one left behind had three turns in it.
@@ -912,11 +912,13 @@ test('project settings navigate, warn before discarding, and save sections acces
   const leave = page.getByRole('alertdialog', { name: 'Leave without saving?' });
   await expect(page).toHaveTitle('General · Settings browser · Ravix');
   await expect(page.getByRole('navigation', { name: 'Breadcrumb' })).toContainText('Settings browser');
+  // One Save a page, in the unsaved-changes bar (RAV-74).
+  const bar = page.getByRole('region', { name: 'Unsaved changes' });
   await settings.getByLabel('Name', { exact: true }).fill('Unsaved name');
-  await expect(settings.getByRole('status')).toHaveText('Unsaved changes');
+  await expect(bar).toBeVisible();
   const nativeDialogs = [];
   page.on('dialog', async dialog => { nativeDialogs.push(dialog.type()); await dialog.dismiss(); });
-  // Leaving a section with changes in it asks, in the page, never natively.
+  // Leaving a page with changes on it asks, in the page, never natively.
   await settings.locator('#settings-nav-agent').click();
   await expect(leave).toBeVisible();
   await expect(leave.getByRole('button', { name: 'Keep editing', exact: true })).toBeFocused();
@@ -925,22 +927,26 @@ test('project settings navigate, warn before discarding, and save sections acces
   await expect(leave).toBeHidden();
   await expect(page).toHaveURL(/\/settings\/general$/);
   await expect(settings.getByLabel('Name', { exact: true })).toHaveValue('Unsaved name');
-  await settings.getByRole('button', { name: 'Discard changes', exact: true }).click();
+  await bar.getByRole('button', { name: 'Discard', exact: true }).click();
+  await expect(bar).toBeHidden();
   await expect(settings.getByLabel('Name', { exact: true })).toHaveValue('Settings browser');
+  // The repository is shown, with a way to it.
+  await expect(settings.locator('#general-repository')).toBeVisible();
   await settings.locator('#settings-nav-agent').click();
   await expect(leave).toBeHidden();
   await expect(page).toHaveURL(/\/settings\/agent$/);
   await expect(page.locator('#settings-title')).toHaveText('Agent');
-  await expect(settings.locator('[data-settings-agent] strong')).toHaveText(['Claude Code', 'Codex']);
+  await expect(settings.locator('.agent-choice strong')).toHaveText(['Claude Code', 'Codex']);
   await settings.locator('#settings-agent-codex').click();
   await expect(settings.getByLabel('Model', { exact: true }).locator('option')).toHaveText(['GPT-6 Astra', 'GPT-5.5']);
   await settings.locator('#settings-agent-claude').click();
   await expect(settings.getByLabel('Model', { exact: true }).locator('option')).toHaveText(['Claude Opus 5.5', 'Claude Opus 5', 'Claude Sonnet 5']);
   await settings.getByLabel('Instructions', { exact: true }).fill('Explain changes and run focused tests.');
-  await settings.getByRole('button', { name: 'Save agent', exact: true }).click();
-  await expect(settings.getByRole('status')).toHaveText('Saved.');
+  await bar.getByRole('button', { name: 'Save', exact: true }).click();
+  await expect(page.getByText('Settings saved.', { exact: true })).toBeVisible();
+  await expect(bar).toBeHidden();
   await accessible(page);
-  // Back and forward move between sections.
+  // Back and forward move between pages.
   await page.goBack();
   await expect(page).toHaveURL(/\/settings\/general$/);
   await page.goForward();
@@ -948,22 +954,28 @@ test('project settings navigate, warn before discarding, and save sections acces
   await settings.locator('#settings-nav-general').click();
   await expect(settings.getByLabel('Name', { exact: true })).toHaveValue('Settings browser');
   await settings.getByLabel('Name', { exact: true }).fill('Settings organized');
-  await settings.getByRole('button', { name: 'Save general', exact: true }).click();
-  await expect(settings.getByRole('status')).toHaveText('Saved.');
-  await settings.locator('#settings-nav-run-script').click();
+  await bar.getByRole('button', { name: 'Save', exact: true }).click();
+  await expect(bar).toBeHidden();
+  // The Machine page: one Save & rebuild, which asks first. A run script
+  // alone needs no rebuild, and a refusal lands on its field.
+  await settings.locator('#settings-nav-machine').click();
   await settings.getByLabel('Run command', { exact: true }).fill('npm run dev -- --port "$PORT" --strictPort');
-  // A readiness path must be an absolute HTTP path; the refusal lands on its field.
   await settings.getByLabel('Readiness path (optional)', { exact: true }).fill('health');
-  await settings.getByRole('button', { name: 'Save defaults', exact: true }).click();
+  await expect(bar.getByRole('button', { name: 'Save & rebuild', exact: true })).toBeVisible();
+  await bar.getByRole('button', { name: 'Save & rebuild', exact: true }).click();
+  const review = page.getByRole('alertdialog', { name: 'Save these changes?' });
+  await expect(review).toContainText('run script edited');
+  await expect(review.getByRole('button', { name: 'Save', exact: true })).toBeFocused();
+  await accessible(page);
+  await review.getByRole('button', { name: 'Save', exact: true }).click();
   await expect(settings.locator('.field p.error')).toContainText('Readiness must be an HTTP path');
-  await expect(settings.getByRole('status')).toContainText('Could not save');
+  await expect(page.getByText(/Could not save the run script/)).toBeVisible();
   await settings.getByLabel('Readiness path (optional)', { exact: true }).fill('/health');
-  await settings.getByRole('button', { name: 'Save defaults', exact: true }).click();
-  await expect(settings.getByRole('status')).toHaveText('Saved.');
-  // Each section opens at its top, wherever the last one was scrolled to.
+  await saveMachine(page, ['run script edited']);
+  // Each page opens at its top, wherever the last one was scrolled to.
   const body = settings.locator('.settings-body');
   let top;
-  for (const section of ['environment', 'secrets', 'danger']) {
+  for (const section of ['access', 'machine', 'danger']) {
     await settings.locator(`#settings-nav-${section}`).click();
     await expect(page).toHaveURL(new RegExp(`/settings/${section}$`));
     await expect.poll(() => settings.evaluate(el => el.scrollTop)).toBe(0);
@@ -994,7 +1006,7 @@ test('project settings navigate, warn before discarding, and save sections acces
   await accessible(page);
   await capture(page, 'settings-mobile');
   let mobileTop;
-  for (const section of ['general', 'environment', 'secrets', 'danger', 'agent']) {
+  for (const section of ['general', 'access', 'machine', 'danger', 'agent']) {
     await settings.locator(`#settings-nav-${section}`).click();
     await expect(page).toHaveURL(new RegExp(`/settings/${section}$`));
     await expect.poll(() => settings.evaluate(el => el.scrollTop)).toBe(0);
@@ -1023,7 +1035,7 @@ test('composer Send stays compact and keeps its arrow after repeated submissions
   await newTrack.getByRole('button', { name: 'Options', exact: true }).click();
   await newTrack.getByLabel('Branch name', { exact: true }).fill('compact-send');
   await newTrack.getByRole('button', { name: 'Create track', exact: true }).click();
-  await expect(page.locator('.track-crumbs')).toContainText('compact-send');
+  await expect(page.locator('.track-crumbs')).toContainText('Compact send');
   const composer = page.getByRole('textbox', { name: 'Message', exact: true });
   const send = page.getByRole('button', { name: 'Send', exact: true });
   await expect(composer).toBeEnabled({ timeout: 30_000 });
@@ -1115,19 +1127,31 @@ test('composer Send stays compact and keeps its arrow after repeated submissions
     if (method === 'click') await send.click();
     else await composer.press('Enter');
     await expect(page.locator('#composer-form')).toHaveClass(/phx-submit-loading/);
-    await checkSend();
+    // One snapshot of the acknowledgement window, since RAV-87 lets send
+    // leave the slot as soon as the box clears and the turn starts: while the
+    // submit is out, send is there and still carries its arrow.
+    const inFlight = await page.evaluate(() => {
+      const form = document.querySelector('#composer-form');
+      const path = form.querySelector('button[aria-label="Send"] svg path');
+      return { loading: form.classList.contains('phx-submit-loading'), d: path?.getAttribute('d') };
+    });
+    if (inFlight.loading) expect(inFlight.d).toBe('M12 19V5M6 11l6-6 6 6');
     await expect(composer).toHaveValue('');
+    // RAV-87: an empty box has nothing to send, so send is disabled or, while
+    // the turn runs, stands aside for Stop. Typing brings it back, enabled.
+    await composer.fill('Not sent');
     await expect(send).toBeEnabled();
     await checkSend();
+    await composer.fill('');
     await page.evaluate(() => window.liveSocket.disableLatencySim());
     // Acknowledgement clears the input before the agent finishes. Keep this
     // button-rendering regression sequential instead of queuing another turn.
     await expect(page.locator('#transcript-turns .turn-footer')).toHaveCount(++completedAnswers, { timeout: 20_000 });
-    await expect(page.locator('#composer-form').getByRole('button', { name: 'Stop', exact: true })).toHaveCount(0, { timeout: 30_000 });
+    await expect(page.locator('#composer-form').getByRole('button', { name: 'Stop agent', exact: true })).toHaveCount(0, { timeout: 30_000 });
   }
   await page.evaluate(() => window.liveSocket.disableLatencySim());
   await expect(page.locator('#transcript-turns')).toContainText('Send regression Enter', { timeout: 20_000 });
-  await expect(page.locator('#composer-form').getByRole('button', { name: 'Stop', exact: true })).toHaveCount(0, { timeout: 30_000 });
+  await expect(page.locator('#composer-form').getByRole('button', { name: 'Stop agent', exact: true })).toHaveCount(0, { timeout: 30_000 });
   const fixture = composerFixture(new URL(page.url()).pathname.split('/').pop());
   const palettes = await page.locator('[data-theme-choice]').evaluateAll(els => [...new Set(els.map(el => el.dataset.themeChoice))]);
   expect(palettes).toHaveLength(22);
@@ -1140,9 +1164,22 @@ test('composer Send stays compact and keeps its arrow after repeated submissions
     await expect(async () => {
       await page.reload();
       await expect(page.locator('[data-phx-main]')).toHaveClass(/phx-connected/);
-      await expect(page.locator('#composer-form').getByRole('button', { name: 'Stop', exact: true })).toHaveCount(['opening', 'running'].includes(status) ? 1 : 0, { timeout: 1_000 });
+      await expect(page.locator('#composer-form').getByRole('button', { name: 'Stop agent', exact: true })).toHaveCount(status === 'running' ? 1 : 0, { timeout: 1_000 });
       await expect(page.locator('#composer-form').getByRole('button', { name: 'Wake / retry', exact: true })).toHaveCount(['opening', 'failed'].includes(status) ? 1 : 0, { timeout: 1_000 });
     }).toPass({ timeout: 15_000 });
+    // RAV-87: Stop is drawn from the thread's tab, which says Running only
+    // while a turn runs, not while the track is opening. With nothing typed,
+    // send is disabled, or stands aside for Stop mid-turn; something to send
+    // brings it back, so the matrix below still measures it. Setting the box
+    // through `input` is how the hook hears it, disabled or not.
+    const typeIn = value => composer.evaluate((el, value) => {
+      el.value = value;
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+    }, value);
+    await typeIn('');
+    if (status === 'running') await expect(send).toBeHidden();
+    else await expect(send).toBeDisabled();
+    await typeIn('Queued while the agent works');
     await expect(send).toBeVisible();
     if (connected) await expect(send).toBeEnabled();
     else await expect(send).toBeDisabled();
@@ -1178,11 +1215,13 @@ test('shared project prefixes stay muted and truncate across every theme', async
   const projectPath = new URL(page.url()).pathname;
   await expect(page.locator('.workspace-project-name.selected .project-label')).toHaveText(name);
   await expect(page.locator('.workspace-project-name.selected .project-label .dim')).toHaveCount(0);
-  await page.locator('#workspace-stage').getByRole('button', { name: 'People', exact: true }).click();
+  // The owner's People is the project's Access settings page (RAV-74).
+  await page.locator('#workspace-stage').getByRole('link', { name: 'People', exact: true }).click();
+  await expect(page).toHaveURL(/\/settings\/access$/);
   await page.getByLabel('GitHub username', { exact: true }).fill('eli');
   await page.getByRole('button', { name: 'Invite', exact: true }).click();
-  await expect(page.locator('#people-dialog')).toContainText('@eli');
-  const people = page.locator('#people-dialog');
+  await expect(page.locator('#project-access')).toContainText('@eli');
+  const people = page.locator('#project-access');
   const heights = await people.locator('.people-row').evaluateAll(rows =>
     rows.map(row => row.getBoundingClientRect().height));
   expect(heights.length).toBeGreaterThanOrEqual(2);

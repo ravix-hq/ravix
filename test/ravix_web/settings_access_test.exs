@@ -57,7 +57,7 @@ defmodule RavixWeb.SettingsAccessTest do
       assert {:ok, _} = Ravix.People.remove_project(owner, project.id, creator.login)
       {:ok, view, _} = live(log_in_user(conn, owner), "/p/#{project.id}")
       render_async(view)
-      render_patch(view, "/p/#{project.id}/settings/general")
+      render_patch(view, "/p/#{project.id}/settings/danger")
       render_async(view)
 
       assert has_element?(

@@ -47,7 +47,11 @@ defmodule RavixWeb.ComponentsTest do
                arrow-up arrow-down external settings sparkle info machine add-person github code
                document copy more refresh person sign-out lock moon)
 
-      assert Enum.sort(spa) == RavixWeb.Icons.names()
+      # Ravix's own additions, beyond the SPA's set: the in-place stop, and
+      # the inspector's ignored-files toggle and its kinds of file.
+      inspector = ~w(eye eye-off drop braces markdown hash angles list container dot-file)
+
+      assert Enum.sort(spa ++ ~w(stop) ++ inspector) == RavixWeb.Icons.names()
     end
   end
 

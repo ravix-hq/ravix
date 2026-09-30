@@ -2,7 +2,7 @@ import { test, expect } from '@playwright/test';
 import { readFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { signIn, connectClaude } from './sign-in.js';
-import { openProjectSettings } from './settings.js';
+import { openProjectSettings, saveMachine } from './settings.js';
 
 const mock = `http://localhost:${process.env.MOCK_PORT || 8893}`;
 
@@ -86,7 +86,10 @@ test('a flagged track copies secrets, becomes ready, and deletes its own machine
   const trackUrl = page.url();
   const settings = await openProjectSettings(page, 'agent');
   await expect(settings).toContainText('Changes the default agent for new threads. Existing threads keep their agent.');
+  await settings.locator('#settings-nav-danger').click();
+  await expect(settings.locator('#danger-zone')).toBeVisible();
   await expect(settings.locator('#project-rebuild-form')).toHaveCount(0);
+  await page.goBack();
   await page.goBack();
   await page.goBack();
   await expect(page).toHaveURL(trackUrl);
@@ -120,17 +123,18 @@ test('an owner confirms an uncertain secret change and can save again', async ({
   const sql = query => execFileSync('psql', [`${server}/${database}`, '-XAtq', '-v', 'ON_ERROR_STOP=1', '-c', query], { encoding: 'utf8' }).trim();
   // Persisted state after a provider timeout or worker loss. Only this harness's database.
   sql(`UPDATE ravix.projects SET secrets_pending = true, secrets_generation = 1 WHERE id = '${projectId}'`);
-  const settings = await openProjectSettings(page, 'secrets');
+  const settings = await openProjectSettings(page, 'machine');
   const confirmation = page.locator('#secret-confirmation-form');
   await expect(confirmation).toContainText('Values cannot be checked here');
   await confirmation.getByLabel('I confirmed the previous secret change has finished in Fountain.', { exact: true }).check();
   await confirmation.getByRole('button', { name: 'Confirm and unlock secret changes', exact: true }).click();
   await expect(confirmation).toHaveCount(0);
   expect(sql(`SELECT secrets_pending FROM ravix.projects WHERE id = '${projectId}'`)).toBe('f');
+  await settings.getByRole('button', { name: 'Add secret', exact: true }).click();
   await settings.getByLabel('Store', { exact: true }).selectOption('vault');
-  await settings.getByLabel('Key', { exact: true }).fill('RECOVERY_TEST');
-  await settings.getByLabel('Value', { exact: true }).fill('browser-fixture-only');
-  await settings.getByRole('button', { name: 'Update secret', exact: true }).click();
-  await expect(settings).toContainText('RECOVERY_TEST');
+  await settings.getByLabel('Secret name', { exact: true }).fill('RECOVERY_TEST');
+  await settings.getByLabel('Secret value', { exact: true }).fill('browser-fixture-only');
+  await saveMachine(page, ['1 secret added']);
+  await expect(settings.locator('#secret-keys')).toContainText('RECOVERY_TEST');
   expect(sql(`SELECT secrets_generation || ':' || secrets_pending FROM ravix.projects WHERE id = '${projectId}'`)).toBe('2:false');
 });

@@ -325,6 +325,9 @@ defmodule RavixWeb.WorkspaceGitHubTest do
 
       view |> element("#available-77 button") |> render_click()
       assert flashed(view) =~ "Added @acme to this workspace."
+      # Landing the add starts a fresh read of what is still available, after
+      # the `render_async` above collected the tasks it waits for.
+      render_async(view, 5_000)
 
       assert [%Installation{installation_id: 77, account_login: "acme"} = connection] =
                Store.installations(ctx.team.id)
@@ -332,6 +335,9 @@ defmodule RavixWeb.WorkspaceGitHubTest do
       assert connection.connected_by_user_id == ctx.owner.id
       assert has_element?(view, "#workspace-installations li[data-account=acme]", "Connected")
       assert has_element?(view, "li[data-repo='acme/api']")
+      # Settling the add starts a fresh read of the accounts on offer, which
+      # the `render_async` in `flashed/1` was already past; wait for it too.
+      render_async(view)
       refute has_element?(view, "#available-77")
       assert has_element?(view, "#available-88")
     end

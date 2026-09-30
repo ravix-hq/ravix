@@ -358,6 +358,11 @@ defmodule RavixWeb.WorkspaceLive do
       {:ok, page} ->
         socket |> assign(settings: page) |> assign_page_title()
 
+      # One of the project dialog's old tabs, now a part of a page: that
+      # page, scrolled to it, and nothing to say about it.
+      {:moved, to} ->
+        socket |> assign(settings: nil) |> push_patch(to: to, replace: true)
+
       # A URL the page was mounted at is left before there is a page to
       # patch, so the sentence goes in the flash the redirect carries too.
       {:redirect, to, message} ->
@@ -1205,6 +1210,15 @@ defmodule RavixWeb.WorkspaceLive do
   # a project you just left goes, and a project you took somebody off has a
   # different set of tracks under it -- so it is re-read and the dialog
   # closes behind it.
+  #
+  # On the project's Access settings page it was the owner taking somebody
+  # else's grant away, and the page stays where it is.
+  def handle_info(
+        {:person_removed, :project, _login},
+        %{assigns: %{settings: %{kind: :project}}} = socket
+      ),
+      do: {:noreply, reload_async(socket)}
+
   def handle_info({:person_removed, :project, _login}, socket),
     do: {:noreply, socket |> reload_async() |> push_patch(to: "/")}
 
@@ -1433,6 +1447,10 @@ defmodule RavixWeb.WorkspaceLive do
     if name == :people and socket.assigns[:dialog] == :people,
       do: send_update(RavixWeb.Live.PeopleDialog, id: "people", reload: true)
 
+    # So does the project's Access settings page.
+    if name == :people and match?(%{kind: :project, section: "access"}, socket.assigns.settings),
+      do: send_update(RavixWeb.Live.PeopleDialog, id: "project-access", reload: true)
+
     {:noreply, socket |> recheck_or_leave() |> reload_async()}
   end
 
@@ -1594,6 +1612,27 @@ defmodule RavixWeb.WorkspaceLive do
       String.contains?(String.downcase(project.display_name), String.downcase(String.trim(query)))
 
   defp project_attention(tracks, id), do: Enum.count(Map.get(tracks, id, []), &attention?/1)
+
+  # What a project's badge counts, for its tooltip and name (RAV-96): the
+  # tracks the Inbox would list, not how many tracks there are.
+  defp need_you(1), do: "1 track needs you"
+  defp need_you(count), do: "#{count} tracks need you"
+
+  defp sidebar_shortcut(true), do: "⌘B"
+  defp sidebar_shortcut(_mac), do: "Ctrl+B"
+
+  # Whether every track the rail shows has one creator (RAV-96). Then an
+  # avatar on each row says nothing, as under Mine, and the rail leaves it
+  # out; each row's name still says who created it.
+  defp one_creator?(tracks, user, selected) do
+    tracks
+    |> Map.values()
+    |> Enum.filter(&is_list/1)
+    |> Enum.flat_map(&rail_rows(&1, user, selected))
+    |> Enum.uniq_by(& &1.created_by_login)
+    |> length()
+    |> Kernel.<=(1)
+  end
 
   # start_async does not run on the disconnected render. The connected mount
   # starts the same traced read as subsequent refreshes, leaving the shell free
@@ -2097,6 +2136,12 @@ defmodule RavixWeb.WorkspaceLive do
   defp open_dialog(socket, :changes), do: assign(socket, dialog: :changes)
   defp open_dialog(socket, :new_workspace), do: assign(socket, dialog: :new_workspace)
 
+  # What the gear's dot means, for its button's name and tooltip.
+  defp unseen_note(0, _separator), do: ""
+
+  defp unseen_note(count, separator),
+    do: "#{separator}#{count} new in What's new"
+
   defp unseen(socket) do
     changes = Accounts.unseen_changes(socket.assigns.current_user)
     assign(socket, changes: changes, changes_unseen: length(changes))
@@ -2432,6 +2477,7 @@ defmodule RavixWeb.WorkspaceLive do
     [
       Track.label(track),
       "created by @#{track.created_by_login}",
+      Map.get(track, :visibility) == :private && "private",
       track.origin.kind == :plan && "from a project plan",
       MachineState.label(tab_machine(track).state),
       (marker = tab_status(track)) in [:unread, :commented] && tab_status_label(marker)
@@ -2454,11 +2500,13 @@ defmodule RavixWeb.WorkspaceLive do
   end
 
   # A row's dot sits in a slot of its own width whether or not there is one,
-  # so every row's avatar and title start at the same x.
+  # so every row's avatar and title start at the same x. A working track's
+  # spinner is in its age slot instead (`meta_slot/1`), so it has no dot.
   attr :track, :map, required: true
 
   defp status_slot(assigns) do
-    assigns = assign(assigns, :status, tab_status(assigns.track))
+    assigns =
+      assign(assigns, :status, with(:working <- tab_status(assigns.track), do: nil))
 
     ~H"""
     <span class="track-status" aria-hidden={if is_nil(@status), do: "true"}>
@@ -2504,6 +2552,38 @@ defmodule RavixWeb.WorkspaceLive do
       datetime={DateTime.to_iso8601(@at)}
       title={"Last active " <> RavixWeb.LocalTime.full(@at, nil)}
     >{elem(ago(@at), 0)}</time>
+    """
+  end
+
+  # A private track's lock: an icon beside the title rather than a word that
+  # takes the title's room. The row's accessible name says "private".
+  defp private_mark(assigns) do
+    ~H"""
+    <span class="track-private" title="Private: only its creator and the people they invite">
+      <.icon name="lock" size={12} /><span class="sr-only">Private</span>
+    </span>
+    """
+  end
+
+  # A row's end (RAV-96): its age, or a spinner while the agent is taking a
+  # turn. The slot has one width either way, so titles end at the same x.
+  attr :track, :map, required: true
+
+  defp meta_slot(assigns) do
+    assigns = assign(assigns, :working, tab_status(assigns.track) == :working)
+
+    ~H"""
+    <span class="track-meta">
+      <span
+        :if={@working}
+        id={"track-working-#{@track.id}"}
+        class="loading-spinner track-spinner"
+        role="img"
+        aria-label="Working"
+        title={tab_status_title(@track)}
+      ></span>
+      <.age :if={!@working} id={"track-age-#{@track.id}"} at={@track.activity_at} />
+    </span>
     """
   end
 
@@ -2617,7 +2697,7 @@ defmodule RavixWeb.WorkspaceLive do
         id={"search-track-link-#{track.id}"}
         patch={"/p/#{project.id}/t/#{track.id}"}
         class="workspace-track"
-        title={Track.label(track)}
+        title={Track.tooltip(track)}
         data-jump-result
       >
         <span class="search-label">{Track.label(track)}</span><span :if={track.visibility == :private}><.icon name="lock" />

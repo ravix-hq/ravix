@@ -8,7 +8,7 @@ function markup({panel, key, hide, show}) {
 }
 
 function mountYard() {
-  markup({panel: "yard", key: YARD_KEY, hide: "Hide projects", show: "Show projects"})
+  markup({panel: "yard", key: YARD_KEY, hide: "Hide sidebar (Ctrl+B)", show: "Show sidebar (Ctrl+B)"})
   return mountHook(PanelToggle, "#toggle")
 }
 
@@ -21,19 +21,19 @@ test("a sidebar starts open and a click closes it, then opens it again", () => {
   const {hook} = mountYard()
   expect(document.documentElement.dataset.yard).toBeUndefined()
   expect(hook.el.getAttribute("aria-expanded")).toBe("true")
-  expect(hook.el.title).toBe("Hide projects")
+  expect(hook.el.title).toBe("Hide sidebar (Ctrl+B)")
   expect(localStorage.getItem(YARD_KEY)).toBeNull()
 
   hook.el.click()
   expect(document.documentElement.dataset.yard).toBe("closed")
   expect(hook.el.getAttribute("aria-expanded")).toBe("false")
-  expect(hook.el.title).toBe("Show projects")
+  expect(hook.el.title).toBe("Show sidebar (Ctrl+B)")
   expect(localStorage.getItem(YARD_KEY)).toBe("closed")
 
   hook.el.click()
   expect(document.documentElement.dataset.yard).toBeUndefined()
   expect(hook.el.getAttribute("aria-expanded")).toBe("true")
-  expect(hook.el.title).toBe("Hide projects")
+  expect(hook.el.title).toBe("Hide sidebar (Ctrl+B)")
   expect(localStorage.getItem(YARD_KEY)).toBe("open")
 })
 
@@ -42,13 +42,13 @@ test("a closed sidebar is restored, and a server patch cannot report it as open"
   const {hook} = mountYard()
   expect(document.documentElement.dataset.yard).toBe("closed")
   expect(hook.el.getAttribute("aria-expanded")).toBe("false")
-  expect(hook.el.title).toBe("Show projects")
+  expect(hook.el.title).toBe("Show sidebar (Ctrl+B)")
 
   hook.el.setAttribute("aria-expanded", "true")
-  hook.el.title = "Hide projects"
+  hook.el.title = "Hide sidebar (Ctrl+B)"
   hook.updated()
   expect(hook.el.getAttribute("aria-expanded")).toBe("false")
-  expect(hook.el.title).toBe("Show projects")
+  expect(hook.el.title).toBe("Show sidebar (Ctrl+B)")
 })
 
 test("anything other than closed leaves the sidebar open", () => {
@@ -97,4 +97,40 @@ test("a browser that refuses storage still toggles for this visit", () => {
     Storage.prototype.getItem = get
     Storage.prototype.setItem = set
   }
+})
+
+// RAV-96: Ctrl/⌘B shows and hides the yard while its toggle is on screen.
+test("the sidebar's shortcut clicks its toggle, and nothing else does", () => {
+  document.body.innerHTML = `<button id="toggle" data-panel="yard" data-key="${YARD_KEY}" data-shortcut="b"
+    data-hide-label="Hide sidebar (⌘B)" data-show-label="Show sidebar (⌘B)" aria-expanded="true"></button>`
+  const {hook} = mountHook(PanelToggle, "#toggle")
+  const press = options => {
+    const event = new KeyboardEvent("keydown", {key: "b", bubbles: true, cancelable: true, ...options})
+    window.dispatchEvent(event)
+    return event
+  }
+  // Not drawn (a phone's drawer): the key is left to the browser.
+  hook.el.getClientRects = () => []
+  expect(press({metaKey: true}).defaultPrevented).toBe(false)
+  expect(document.documentElement.dataset.yard).toBeUndefined()
+
+  hook.el.getClientRects = () => [{}]
+  expect(press({metaKey: true}).defaultPrevented).toBe(true)
+  expect(document.documentElement.dataset.yard).toBe("closed")
+  expect(hook.el.title).toBe("Show sidebar (⌘B)")
+  press({key: "B", ctrlKey: true})
+  expect(document.documentElement.dataset.yard).toBeUndefined()
+
+  for (const options of [{}, {ctrlKey: true, shiftKey: true}, {metaKey: true, altKey: true}, {metaKey: true, repeat: true}, {ctrlKey: true, key: "k"}]) {
+    expect(press(options).defaultPrevented).toBe(false)
+  }
+  expect(document.documentElement.dataset.yard).toBeUndefined()
+  const handled = new KeyboardEvent("keydown", {key: "b", metaKey: true, cancelable: true})
+  handled.preventDefault()
+  window.dispatchEvent(handled)
+  expect(document.documentElement.dataset.yard).toBeUndefined()
+
+  hook.destroyed()
+  press({metaKey: true})
+  expect(document.documentElement.dataset.yard).toBeUndefined()
 })

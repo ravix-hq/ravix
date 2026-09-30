@@ -28,7 +28,12 @@ defmodule RavixWeb.Live.SettingsVariablesTest do
     stub(Ravix.Accounts.Inference, :usable_agents, fn _ -> {:ok, [:claude]} end)
     {:ok, view, _} = live(log_in_user(ctx.conn, user), "/p/#{project.id}")
     render_async(view, 2_000)
-    render_patch(view, "/p/#{project.id}/settings/variables")
+
+    stub(Ravix.Projects, :rebuild, fn _, _ ->
+      {:ok, %Ravix.Projects.Machine.Rebuild{removed: [], failed: []}}
+    end)
+
+    render_patch(view, "/p/#{project.id}/settings/machine")
     render_async(view, 2_000)
     %{view: view, user: user, project: project, env: env}
   end
@@ -39,92 +44,94 @@ defmodule RavixWeb.Live.SettingsVariablesTest do
     refute inspect(row) =~ "hidden-diagnostic-value"
   end
 
+  # RAV-74: variables are a part of the Machine page, saved with the rest
+  # of it behind one "Save & rebuild".
   test "owner adds, edits and removes visible variables", %{view: view, env: env} do
-    view |> element("[phx-click=add-env-var]") |> render_click()
-
-    view
-    |> form("#env-vars-form", env_vars: %{"0" => %{key: "PORT", value: "4100"}})
-    |> render_submit()
-
-    render_async(view, 2_000)
+    add(view)
+    save(view, env_vars: %{"0" => %{key: "PORT", value: "4100"}})
     assert Agent.get(env, & &1) == %{"PORT" => "4100"}
     assert has_element?(view, "textarea#env-var-value-0", "4100")
 
     view
-    |> form("#env-vars-form", env_vars: %{"0" => %{key: "PORT", value: "4200\nnext line"}})
+    |> form("#machine-form", env_vars: %{"0" => %{key: "PORT", value: "4200\nnext line"}})
     |> render_submit()
 
     render_async(view, 2_000)
-    assert Agent.get(env, & &1) == %{"PORT" => "4200\nnext line"}
-    view |> element("[phx-click=remove-env-var]") |> render_click()
-    view |> form("#env-vars-form") |> render_submit()
+    assert has_element?(view, "#machine-review li", "1 variable changed")
+    view |> form("#machine-form") |> put_submitter("#confirm-machine") |> render_submit()
     render_async(view, 2_000)
+    assert Agent.get(env, & &1) == %{"PORT" => "4200\nnext line"}
+    view |> element("button[aria-label='Remove variable 1']") |> render_click()
+    save(view, %{})
     assert Agent.get(env, & &1) == %{}
     refute has_element?(view, "#env-var-key-0")
   end
 
   test "auth-name errors keep entered rows for correction", %{view: view, env: env} do
-    view |> element("[phx-click=add-env-var]") |> render_click()
+    add(view)
 
     view
-    |> form("#env-vars-form", env_vars: %{"0" => %{key: "OPENAI_API_KEY", value: "test-value"}})
+    |> form("#machine-form", env_vars: %{"0" => %{key: "OPENAI_API_KEY", value: "test-value"}})
     |> render_submit()
 
-    render_async(view, 2_000)
     assert render(view) =~ "Use a secret if you intend to override billing"
+    refute has_element?(view, "#machine-review")
     assert has_element?(view, "#env-var-key-0[value=OPENAI_API_KEY]")
     assert has_element?(view, "#env-var-value-0", "test-value")
     assert Agent.get(env, & &1) == %{}
   end
 
-  test "stale dialog refuses to replace a newer map", %{view: view, env: env} do
+  test "stale page refuses to replace a newer map", %{view: view, env: env} do
     Agent.update(env, fn _ -> %{"PORT" => "newer"} end)
-    view |> element("[phx-click=add-env-var]") |> render_click()
-
-    view
-    |> form("#env-vars-form", env_vars: %{"0" => %{key: "PORT", value: "old edit"}})
-    |> render_submit()
-
-    render_async(view, 2_000)
+    add(view)
+    save(view, env_vars: %{"0" => %{key: "PORT", value: "old edit"}})
     assert render(view) =~ "Variables changed since you opened settings. Reload and try again."
     assert Agent.get(env, & &1) == %{"PORT" => "newer"}
   end
 
   test "missing row value reports validation instead of crashing", %{view: view, env: env} do
     view
-    |> with_target(component(view))
-    |> render_hook("save-env-vars", %{
-      "env_vars" => %{"0" => %{"key" => "PORT"}}
-    })
+    |> element("#machine-form")
+    |> render_submit(%{"env_vars" => %{"0" => %{"key" => "PORT"}}})
 
-    render_async(view, 2_000)
     assert render(view) =~ "Each variable needs a name and a string value."
     assert Agent.get(env, & &1) == %{}
   end
 
-  defp component(view) do
-    view
-    |> element("#settings-sections")
-    |> render()
-    |> LazyHTML.from_fragment()
-    |> LazyHTML.query("#settings-sections")
-    |> LazyHTML.attribute("data-component")
-    |> hd()
-    |> String.to_integer()
-  end
-
   test "discard restores saved rows and revoked ownership cannot save", ctx do
-    ctx.view |> element("[phx-click=add-env-var]") |> render_click()
-    ctx.view |> with_target(component(ctx.view)) |> render_hook("discard-env-vars", %{})
+    add(ctx.view)
+    ctx.view |> with_target(component(ctx.view)) |> render_click("discard-machine", %{})
     refute has_element?(ctx.view, "#env-var-key-0")
-    ctx.view |> element("[phx-click=add-env-var]") |> render_click()
+    add(ctx.view)
     # Same event-time access gate as every settings mutation.
     expect(Ravix.Accounts.Access, :project_of, fn _, _ -> {:error, :not_found} end)
 
     ctx.view
-    |> form("#env-vars-form", env_vars: %{"0" => %{key: "PORT", value: "9"}})
+    |> form("#machine-form", env_vars: %{"0" => %{key: "PORT", value: "9"}})
     |> render_submit()
 
+    refute has_element?(ctx.view, "#machine-review")
     assert Agent.get(ctx.env, & &1) == %{}
+  end
+
+  defp add(view), do: view |> element("button", "Add variable") |> render_click()
+
+  defp save(view, params) do
+    view |> form("#machine-form", params) |> render_submit()
+    render_async(view, 2_000)
+    view |> form("#machine-form", params) |> put_submitter("#confirm-machine") |> render_submit()
+    render_async(view, 2_000)
+  end
+
+  # The page component, as the unsaved-changes bar's Discard targets it.
+  defp component(view) do
+    view
+    |> element("#project-machine")
+    |> render()
+    |> LazyHTML.from_fragment()
+    |> LazyHTML.query("#project-machine")
+    |> LazyHTML.attribute("data-discard-target")
+    |> hd()
+    |> String.to_integer()
   end
 end

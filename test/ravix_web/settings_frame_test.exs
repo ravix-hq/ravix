@@ -2,6 +2,8 @@ defmodule RavixWeb.SettingsFrameTest do
   @moduledoc """
   RAV-72: settings are pages in the app shell, one URL a section, in one
   frame -- a grouped nav with Danger zone last, a breadcrumb and a title.
+  RAV-74: a project's are five pages -- General, Access, Agent, Machine and
+  Danger zone -- and the dialog's old tabs land on the part they became.
   The workspace's pages are `RavixWeb.WorkspaceSettingsLiveTest`'s; the
   personal page is `RavixWeb.ConnectionsLiveTest`'s.
   """
@@ -10,6 +12,7 @@ defmodule RavixWeb.SettingsFrameTest do
   import Mimic
 
   alias Ravix.Fountain.Shapes.Catalog
+  alias Ravix.People
   alias RavixWeb.Live.Settings
 
   setup :verify_on_exit!
@@ -21,6 +24,7 @@ defmodule RavixWeb.SettingsFrameTest do
       {:ok,
        Map.merge(
          %{
+           env_vars: %{},
            name: project.name,
            runtime: "claude",
            model: "model",
@@ -47,7 +51,8 @@ defmodule RavixWeb.SettingsFrameTest do
       assert Settings.first(:personal) == "profile"
       assert Settings.first(:workspace) == "general"
       assert Settings.first(:project) == "general"
-      assert Settings.section?(:project, "run-script")
+      assert Settings.section?(:project, "machine")
+      refute Settings.section?(:project, "run-script")
       refute Settings.section?(:project, "members")
       refute Settings.section?(:workspace, nil)
       assert Settings.label(:project, "danger") == "Danger zone"
@@ -65,17 +70,40 @@ defmodule RavixWeb.SettingsFrameTest do
 
     test "a project's groups end with Danger zone alone, and leave out what is not shown" do
       project = %{id: "p1", display_name: "Atlas"}
-      shown = Enum.map(Settings.sections(:project), &elem(&1, 0)) -- ["workspace"]
-      groups = Settings.project_groups(project, shown, %{"secrets" => 2})
+      shown = Enum.map(Settings.sections(:project), &elem(&1, 0))
+      groups = Settings.project_groups(project, shown, %{"access" => 2})
 
-      assert Enum.map(groups, & &1.label) == ["Atlas", "Machine", nil]
+      assert Enum.map(groups, & &1.label) == ["Atlas", nil]
+
+      assert groups |> hd() |> Map.fetch!(:items) |> Enum.map(& &1.key) ==
+               ~w(general access agent machine)
+
       assert [%{items: [%{key: "danger", danger: true}]}] = Enum.take(groups, -1)
-      refute Enum.any?(groups, fn g -> Enum.any?(g.items, &(&1.key == "workspace")) end)
 
-      assert %{count: 2, path: "/p/p1/settings/secrets"} =
-               groups |> Enum.flat_map(& &1.items) |> Enum.find(&(&1.key == "secrets"))
+      assert %{count: 2, path: "/p/p1/settings/access"} =
+               groups |> Enum.flat_map(& &1.items) |> Enum.find(&(&1.key == "access"))
 
       assert [%{label: "Atlas"}] = Settings.project_groups(project, ["general"])
+    end
+
+    test "the dialog's old tabs are parts of the new pages" do
+      project = %{id: "p1", role: :owner, access: :full}
+
+      for {old, to} <- [
+            {"environment", "/p/p1/settings/machine#machine-environment"},
+            {"variables", "/p/p1/settings/machine#machine-variables"},
+            {"secrets", "/p/p1/settings/machine#machine-secrets"},
+            {"run-script", "/p/p1/settings/machine#machine-run-script"},
+            {"workspace", "/p/p1/settings/general#general-workspace"}
+          ] do
+        assert Settings.resolve(:project_settings, %{"section" => old}, %{project: project}) ==
+                 {:moved, to}
+      end
+
+      for kept <- ~w(general agent danger) do
+        assert {:ok, %{section: ^kept}} =
+                 Settings.resolve(:project_settings, %{"section" => kept}, %{project: project})
+      end
     end
 
     test "a URL that is not a settings page resolves to nothing" do
@@ -94,12 +122,7 @@ defmodule RavixWeb.SettingsFrameTest do
     end
 
     test "each section is its own page in the shell, and the nav moves between them", ctx do
-      stub_settings(ctx.project, %{
-        env_vars: %{"A" => "1", "B" => "2"},
-        env_keys: ["TOKEN"],
-        vault_keys: ["API", "OTHER"]
-      })
-
+      stub_settings(ctx.project)
       view = open(ctx.conn, ctx.user, "/p/#{ctx.project.id}/settings/agent")
 
       assert has_element?(view, "#yard")
@@ -108,26 +131,124 @@ defmodule RavixWeb.SettingsFrameTest do
       assert has_element?(view, "#settings-title", "Agent")
       assert page_title(view) == "Agent · Atlas · Ravix"
       assert has_element?(view, "#settings-nav-agent[aria-current=page]")
-      assert has_element?(view, "#settings-nav-variables .settings-count", "2")
-      assert has_element?(view, "#settings-nav-secrets .settings-count", "3")
-      refute has_element?(view, "#settings-nav-general .settings-count")
+
+      for key <- ~w(general access agent machine danger),
+          do: assert(has_element?(view, "#settings-nav-#{key}"))
+
       assert has_element?(view, ".settings-group.danger:last-child #settings-nav-danger.danger")
-      assert has_element?(view, "#settings-section-general[hidden]")
-      refute has_element?(view, "#settings-section-agent[hidden]")
+      # Only the page the URL names is drawn.
+      assert has_element?(view, "#settings-section-agent")
+      refute has_element?(view, "#settings-section-general")
       # The project's own page is not drawn under it.
       refute has_element?(view, ".crumbs #crumb-plans")
 
-      # Every section keeps its own Save, and the page asks before leaving
-      # one with changes in it (no bar).
-      assert has_element?(view, "#project-settings-unsaved[phx-hook=UnsavedChanges]")
-      refute has_element?(view, "#project-settings-unsaved-bar")
-      assert has_element?(view, "#settings-section-danger[data-unsaved-ignore]")
+      # One Save a page, in the bar.
+      assert has_element?(view, "#project-agent[phx-hook=UnsavedChanges]")
+      assert has_element?(view, "#project-agent-bar button[data-unsaved-save]", "Save")
 
       view |> element("#settings-nav-danger") |> render_click()
       assert_patch(view, "/p/#{ctx.project.id}/settings/danger")
-      assert has_element?(view, "#settings-section-agent[hidden]")
-      refute has_element?(view, "#settings-section-danger[hidden]")
+      refute has_element?(view, "#settings-section-agent")
+      assert has_element?(view, "#danger-zone[data-unsaved-ignore]")
+      refute has_element?(view, "[phx-hook=UnsavedChanges]")
       assert page_title(view) == "Danger zone · Atlas · Ravix"
+    end
+
+    test "General shows the name, the repository with a link to GitHub, and the workspace",
+         ctx do
+      project = insert_project(user: ctx.user, name: "Repo'd", repo_full_name: "octo/atlas")
+      stub_settings(project)
+      view = open(ctx.conn, ctx.user, "/p/#{project.id}/settings/general")
+
+      assert has_element?(view, "#settings-name")
+      assert has_element?(view, "#project-general-bar button[data-unsaved-save]", "Save")
+      assert has_element?(view, "#general-repository code", "octo/atlas")
+
+      assert has_element?(
+               view,
+               ~s(#general-repository-link[href="https://github.com/octo/atlas"][target=_blank][rel~=noopener]),
+               "Open on GitHub"
+             )
+
+      # A scratch project has none: that is said, and nothing is linked.
+      scratch = insert_project(user: ctx.user, name: "Scratch", repo_full_name: nil)
+      stub_settings(scratch)
+      view = open(ctx.conn, ctx.user, "/p/#{scratch.id}/settings/general")
+      assert has_element?(view, "#general-repository", "no repository")
+      refute has_element?(view, "#general-repository-link")
+    end
+
+    test "Machine gathers the setup, packages, variables, secrets and run script", ctx do
+      stub_settings(ctx.project, %{
+        setup_script: "npm ci",
+        packages: %{"apt" => ["jq"]},
+        env_vars: %{"A" => "1"},
+        env_keys: ["TOKEN"],
+        vault_keys: ["API"]
+      })
+
+      view = open(ctx.conn, ctx.user, "/p/#{ctx.project.id}/settings/machine")
+
+      for part <- ~w(machine-environment machine-variables machine-secrets machine-run-script),
+          do: assert(has_element?(view, "#machine-form ##{part}"))
+
+      assert has_element?(view, "#settings-setup", "npm ci")
+      assert has_element?(view, "#packages-apt[value=jq]")
+      assert has_element?(view, "#env-var-key-0[value=A]")
+      assert has_element?(view, "#secret-key-env-TOKEN", "Environment")
+      assert has_element?(view, "#secret-key-vault-API", "Vault")
+      assert has_element?(view, "#default-command")
+      # One Save for all of it, and it says what it does.
+      assert has_element?(
+               view,
+               "#project-machine-bar button[data-unsaved-save]",
+               "Save & rebuild"
+             )
+
+      assert has_element?(view, "#project-machine-bar button[form=machine-form]")
+    end
+
+    test "settings Fountain cannot read are said so; Access, which is Ravix's own, still shows",
+         ctx do
+      stub(Ravix.Accounts.Inference, :usable_agents, fn _ -> {:ok, [:claude]} end)
+      stub(Ravix.Projects, :settings, fn _, _ -> {:error, {:unavailable, "Try later"}} end)
+      reject(&Ravix.Projects.update_settings/3)
+
+      for section <- ~w(general agent machine danger) do
+        view = open(ctx.conn, ctx.user, "/p/#{ctx.project.id}/settings/#{section}")
+        assert has_element?(view, "#settings-unavailable", "could not be read")
+        assert has_element?(view, "#settings-nav-#{section}[aria-current=page]")
+      end
+
+      view = open(ctx.conn, ctx.user, "/p/#{ctx.project.id}/settings/access")
+      refute has_element?(view, "#settings-unavailable")
+      assert has_element?(view, "#project-access-person-#{ctx.user.login}", "owner")
+    end
+
+    test "an old tab's address opens the page it is part of, at that part", ctx do
+      stub_settings(ctx.project)
+      conn = log_in_user(ctx.conn, ctx.user)
+
+      for {old, to} <- [
+            {"secrets", "machine#machine-secrets"},
+            {"run-script", "machine#machine-run-script"},
+            {"workspace", "general#general-workspace"}
+          ] do
+        path = "/p/#{ctx.project.id}/settings/#{to}"
+
+        assert {:error, {:live_redirect, %{to: ^path}}} =
+                 live(conn, "/p/#{ctx.project.id}/settings/#{old}")
+      end
+
+      # And from a page already open, a patch.
+      view = open(ctx.conn, ctx.user, "/p/#{ctx.project.id}/settings/general")
+      render_patch(view, "/p/#{ctx.project.id}/settings/variables")
+      # The test client drops the fragment it was sent; the first case above
+      # shows it is sent.
+      assert_patch(view, "/p/#{ctx.project.id}/settings/variables")
+      assert assert_patch(view) =~ "/p/#{ctx.project.id}/settings/machine"
+      assert has_element?(view, "#settings-nav-machine[aria-current=page]")
+      assert has_element?(view, "#machine-variables")
     end
 
     test "moving to another project's settings shows that project's", ctx do
@@ -139,6 +260,7 @@ defmodule RavixWeb.SettingsFrameTest do
 
         {:ok,
          %{
+           env_vars: %{},
            name: name,
            runtime: "claude",
            model: "model",
@@ -172,13 +294,13 @@ defmodule RavixWeb.SettingsFrameTest do
                live(conn, "/p/#{ctx.project.id}?settings=true")
     end
 
-    test "an unknown section, or Workspace with workspaces off, goes to the first", ctx do
+    test "an unknown section goes to the first", ctx do
       stub_settings(ctx.project)
 
       conn = log_in_user(ctx.conn, ctx.user)
       general = "/p/#{ctx.project.id}/settings/general"
 
-      for section <- ["nope", "workspace"] do
+      for section <- ["nope", "members"] do
         assert {:error,
                 {:live_redirect, %{to: ^general, flash: %{"info" => "Settings page not found."}}}} =
                  live(conn, "/p/#{ctx.project.id}/settings/#{section}")
@@ -191,19 +313,68 @@ defmodule RavixWeb.SettingsFrameTest do
       view = open(ctx.conn, ctx.user, "/p/#{other.id}/settings/general")
       assert_patch(view, "/home")
       assert has_element?(view, "#flash-info", "Project not found.")
-      refute has_element?(view, "#settings-sections")
+      refute has_element?(view, "#settings-page")
       refute render(view) =~ "Theirs"
+    end
+
+    test "a member who is not the owner is sent to the project, on every page", ctx do
+      member = insert_user()
+      People.Store.add_project_member(ctx.project.id, member.id, ctx.user.id)
+      # A direct Admin is still not the owner: settings are `project_of/2`'s.
+      {:ok, _} = People.set_project_role(ctx.user, ctx.project.id, member.login, "admin")
+      reject(&Ravix.Projects.settings/2)
+      conn = log_in_user(ctx.conn, member)
+
+      project_path = "/p/#{ctx.project.id}"
+
+      for section <- ~w(general access agent machine danger secrets) do
+        assert {:error,
+                {:live_redirect,
+                 %{
+                   to: ^project_path,
+                   flash: %{"info" => "Only the project's owner can change its settings."}
+                 }}} = live(conn, "/p/#{ctx.project.id}/settings/#{section}")
+      end
+
+      # Nor from a page already open, by a patch.
+      {:ok, view, _} = live(conn, project_path)
+      render_async(view)
+      render_patch(view, "/p/#{ctx.project.id}/settings/machine")
+      assert_patch(view, project_path)
+      refute has_element?(view, "#settings-page")
+
+      # Their People is still the dialog, and there is no Settings for them.
+      {:ok, view, _} = live(conn, "/p/#{ctx.project.id}")
+      render_async(view)
+      refute has_element?(view, "#crumb-settings")
+      refute has_element?(view, "#crumb-people")
+      refute has_element?(view, "#project-menu-settings-#{ctx.project.id}")
+      view |> element(".crumbs button", "People") |> render_click()
+      assert has_element?(view, "#people-dialog")
+    end
+
+    test "the owner reaches settings from the project header and its ⋯ menu", ctx do
+      stub_settings(ctx.project)
+      view = open(ctx.conn, ctx.user, "/p/#{ctx.project.id}")
+      assert has_element?(view, ~s(#crumb-settings[href="/p/#{ctx.project.id}/settings/general"]))
+      view |> element("#crumb-people") |> render_click()
+      assert_patch(view, "/p/#{ctx.project.id}/settings/access")
+      assert has_element?(view, "#project-access-person-#{ctx.user.login}", "owner")
+
+      render_patch(view, "/p/#{ctx.project.id}")
+      view |> element("#project-menu-settings-#{ctx.project.id}") |> render_click()
+      assert_patch(view, "/p/#{ctx.project.id}/settings/general")
     end
 
     test "a dialog opened over a settings page closes back to it", ctx do
       stub_settings(ctx.project)
-      view = open(ctx.conn, ctx.user, "/p/#{ctx.project.id}/settings/secrets")
+      view = open(ctx.conn, ctx.user, "/p/#{ctx.project.id}/settings/machine")
       view |> element("#open-help") |> render_click()
       assert has_element?(view, "#help-dialog")
       view |> element("#help-dialog button[aria-label=Close]") |> render_click()
-      assert_patch(view, "/p/#{ctx.project.id}/settings/secrets")
+      assert_patch(view, "/p/#{ctx.project.id}/settings/machine")
       refute has_element?(view, "#help-dialog")
-      assert has_element?(view, "#settings-sections")
+      assert has_element?(view, "#machine-form")
     end
 
     test "the project's People dialog (RAV-75) opens over a settings page and closes back", ctx do
@@ -211,7 +382,7 @@ defmodule RavixWeb.SettingsFrameTest do
       view = open(ctx.conn, ctx.user, "/p/#{ctx.project.id}/settings/agent")
       render_click(view, "dialog", %{name: "people"})
       assert has_element?(view, "#people-dialog")
-      assert has_element?(view, "#settings-sections")
+      assert has_element?(view, "#settings-page")
       view |> element("#people-dialog button[aria-label=Close]") |> render_click()
       refute_patched(view)
       refute has_element?(view, "#people-dialog")
