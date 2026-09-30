@@ -1,6 +1,6 @@
 defmodule RavixWeb.ProjectMoveLiveTest do
   @moduledoc """
-  "Move to workspace…" in project settings: offered to the owner, only
+  "Move to workspace…" in project settings' General (RAV-74): offered to the owner, only
   towards workspaces they own or administer, behind a confirmation that
   says who gains visibility; a same-repository target points to the
   project already there; open pages on both sides re-read after the move.
@@ -66,7 +66,7 @@ defmodule RavixWeb.ProjectMoveLiveTest do
 
     {:ok, view, _html} = live(log_in_user(build_conn(), ctx.owner), "/p/#{ctx.project.id}")
     render_async(view)
-    render_patch(view, "/p/#{ctx.project.id}/settings/workspace")
+    render_patch(view, "/p/#{ctx.project.id}/settings/general")
     render_async(view)
     view
   end
@@ -76,8 +76,7 @@ defmodule RavixWeb.ProjectMoveLiveTest do
   test "the owner confirms who gains visibility, then moves the project", ctx do
     view = open_settings(ctx)
 
-    assert has_element?(view, "#settings-nav-workspace", "Workspace")
-    assert has_element?(view, "#settings-section-workspace", "This project is in Acme.")
+    assert has_element?(view, "#general-workspace", "This project is in Acme.")
     assert has_element?(view, "#move-to-#{ctx.beta.id}", "Move to Beta…")
     refute has_element?(view, "#move-to-#{ctx.gamma.id}")
     refute has_element?(view, "#move-to-#{ctx.acme.id}")
@@ -120,7 +119,7 @@ defmodule RavixWeb.ProjectMoveLiveTest do
     assert workspace_of(ctx.project) == ctx.beta.id
     assert render(view) =~ "Moved to Beta."
     refute has_element?(view, "#move-confirmation")
-    assert has_element?(view, "#settings-section-workspace", "This project is in Beta.")
+    assert has_element?(view, "#general-workspace", "This project is in Beta.")
     assert has_element?(view, "#move-to-#{ctx.acme.id}", "Move to Acme…")
   end
 
@@ -169,8 +168,7 @@ defmodule RavixWeb.ProjectMoveLiveTest do
     Application.put_env(:ravix, :workspace_access, false)
     view = open_settings(ctx)
     assert has_element?(view, "#settings-form")
-    refute has_element?(view, "#settings-section-workspace")
-    refute has_element?(view, "#settings-nav-workspace")
+    refute has_element?(view, "#general-workspace")
   end
 
   test "a legacy duplicate offers no move and points to its canonical project", ctx do
@@ -194,7 +192,7 @@ defmodule RavixWeb.ProjectMoveLiveTest do
 
     view = open_settings(%{owner: solo, project: lonely})
     assert has_element?(view, "#move-no-targets", "owner or admin")
-    assert has_element?(view, "#settings-section-workspace", "your personal workspace")
+    assert has_element?(view, "#general-workspace", "your personal workspace")
     refute has_element?(view, "#move-targets")
   end
 end

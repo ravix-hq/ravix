@@ -667,6 +667,9 @@ html[data-yard="closed"] .workspace-trigger-skeleton { flex: none; width: 28px; 
   .workspace-project .project-action[title="Plans"]:not(.on),
   .workspace-project .project-action[title="More"] { opacity: 0; }
   .workspace-project:has(.project-menu:popover-open) .project-action[title="More"] { opacity: 1; }
+  /* The open project's ⋯ holds its Settings (RAV-74), so it does not wait
+     for a hover. Its space was always there; only the icon appears. */
+  .workspace-project.current .project-action[title="More"] { opacity: 1; }
   .workspace-project-row:hover .project-action, .workspace-project-row:focus-within .project-action { opacity: 1; }
   .workspace-project:not(.current) .project-actions { opacity: 0; }
   .workspace-project:hover .project-actions, .workspace-project:focus-within .project-actions { opacity: 1; }
@@ -2110,6 +2113,23 @@ section.first-prompt#project-start { align-self: center; padding: 32px 24px; }
 .settings-danger h3 { color: var(--bad); }
 .settings-danger form + form { margin-top: 24px; padding-top: 20px; border-top: 1px solid var(--line); }
 .settings-discard { margin-bottom: 20px; }
+/* RAV-74: a project page's parts, GitHub-settings style: a heading and a rule. */
+.settings-part { margin-top: 32px; padding-top: 20px; border-top: 1px solid var(--line); }
+.settings-part:first-child { margin-top: 0; padding-top: 0; border-top: none; }
+.settings-part > h2 { margin: 0 0 8px; font-size: 16px; }
+.settings-repo { display: flex; flex-wrap: wrap; align-items: baseline; gap: 12px; margin: 8px 0 0; }
+.settings-repo code { overflow-wrap: anywhere; }
+.settings-part fieldset { margin: 0; padding: 0; border: 0; min-width: 0; }
+.machine-row { display: grid; gap: 6px; padding: 12px 0; border-bottom: 1px solid var(--line); }
+.machine-row > button { justify-self: start; }
+.secret-keys { display: grid; gap: 2px; margin: 0 0 12px; padding: 0; list-style: none; }
+.secret-keys li { display: flex; align-items: center; gap: 10px; padding: 6px 0; border-bottom: 1px solid var(--line); }
+.secret-keys small, .secret-row small { color: var(--dim); }
+.secret-pending { font-style: italic; }
+.machine-review .machine-changes { margin: 0 0 16px; padding-left: 18px; line-height: 1.7; }
+.machine-review { width: min(520px, 100%); }
+.access-page .access-summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; margin: 0 0 20px; font-size: 13px; }
+.access-page .access-summary li { padding: 12px 14px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); }
 
 .plans-panel { padding: 1.25rem; overflow: auto; min-width: 0; width: 100%; }
 .plans-toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: .65rem; margin-bottom: .8rem; }

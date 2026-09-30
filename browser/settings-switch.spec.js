@@ -54,7 +54,10 @@ test('settings explicitly rebuilds when switching agents and the next track work
     const settings = await openProjectSettings(page, 'agent');
     await expect(settings.locator('[data-confirm]')).toHaveCount(0);
     await settings.locator(`#settings-agent-${target}`).click();
-    await expect(settings.getByRole('button', { name: 'Save agent', exact: true })).toBeHidden();
+    // RAV-74: one Save a page, in the bar, and here it is the switch.
+    const bar = page.locator('#project-agent-bar');
+    const save = bar.getByRole('button', { name: 'Switch & rebuild', exact: true });
+    await expect(save).toBeVisible();
     // Leaving the section with the switch unsaved asks first (RAV-72).
     await settings.locator('#settings-nav-general').click();
     const leave = page.getByRole('alertdialog', { name: 'Leave without saving?' });
@@ -62,15 +65,15 @@ test('settings explicitly rebuilds when switching agents and the next track work
     await leave.getByRole('button', { name: 'Keep editing', exact: true }).click();
     await expect(leave).toBeHidden();
     await expect(page).toHaveURL(/\/settings\/agent$/);
-    await settings.getByRole('button', { name: 'Switch and rebuild', exact: true }).click();
+    await save.click();
     const confirmation = settings.getByRole('group', { name: 'Confirm agent switch' });
     await expect(confirmation).toContainText("This closes 1 open track visible to you, plus any private tracks you cannot see, and discards the machine's disk");
     await expect(confirmation.getByRole('button', { name: 'Rebuild and switch' })).toBeFocused();
     await confirmation.getByRole('button', { name: 'Cancel', exact: true }).click();
     await expect(confirmation).toHaveCount(0);
     await expect(settings.locator(`#settings-agent-${target}`)).toHaveAttribute('aria-pressed', 'true');
-    await expect(settings.getByRole('button', { name: 'Switch and rebuild', exact: true })).toBeFocused();
-    await settings.getByRole('button', { name: 'Switch and rebuild', exact: true }).click();
+    await expect(save).toBeFocused();
+    await save.click();
     await confirmation.getByRole('button', { name: 'Rebuild and switch' }).click();
     await expect(page).toHaveURL(/\/(home)?$/);
   }
@@ -95,7 +98,9 @@ test('settings connects an unavailable agent inline, retains the draft, and can 
   const settings = await openProjectSettings(page, 'agent');
   await settings.locator('#settings-agent-codex').click();
   await expect(settings.locator('#settings-agent-codex')).toContainText('Not connected');
-  await expect(settings.getByRole('button', { name: 'Switch and rebuild', exact: true })).toBeDisabled();
+  const bar = page.locator('#project-agent-bar');
+  await expect(bar.getByRole('button', { name: 'Switch & rebuild', exact: true })).toBeVisible();
+  await expect(settings.locator('#settings-connect-codex')).toBeVisible();
   await settings.getByLabel('Instructions', { exact: true }).fill('Keep my draft');
   await settings.getByRole('button', { name: 'API key', exact: true }).click();
   await settings.getByLabel('API key', { exact: true }).fill('sk-browser-settings-fixture');
@@ -103,12 +108,14 @@ test('settings connects an unavailable agent inline, retains the draft, and can 
   await expect(settings.locator('#settings-agent-codex')).toContainText('Connected');
   await expect(settings.locator('#settings-agent-codex')).toHaveAttribute('aria-pressed', 'true');
   await expect(settings.getByLabel('Instructions', { exact: true })).toHaveValue('Keep my draft');
-  await settings.getByRole('button', { name: 'Switch and rebuild', exact: true }).click();
+  await bar.getByRole('button', { name: 'Switch & rebuild', exact: true }).click();
   await expect(settings.locator('#agent-switch-confirmation')).toBeVisible();
-  await settings.getByRole('button', { name: 'Cancel', exact: true }).click();
-  await settings.getByRole('button', { name: 'Discard changes', exact: true }).click();
+  await settings.locator('#agent-switch-confirmation').getByRole('button', { name: 'Cancel', exact: true }).click();
+  await bar.getByRole('button', { name: 'Discard', exact: true }).click();
+  await expect(bar).toBeHidden();
   await expect(settings.locator('#settings-agent-claude')).toHaveAttribute('aria-pressed', 'true');
-  await expect(settings.getByRole('button', { name: 'Save agent', exact: true })).toBeVisible();
+  await expect(bar.locator('[data-unsaved-save]')).toHaveText('Save');
+  await expect(settings.getByLabel('Instructions', { exact: true })).toHaveValue('');
   // Discarded, nothing is left to ask about.
   await settings.locator('#settings-nav-general').click();
   await expect(page).toHaveURL(/\/settings\/general$/);

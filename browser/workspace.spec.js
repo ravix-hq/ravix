@@ -2,7 +2,7 @@ import { test, expect } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
 import { composerFixture } from './composer-fixture.js';
 import { signIn as signInAs, connectClaude } from './sign-in.js';
-import { openProjectSettings } from './settings.js';
+import { openProjectSettings, saveMachine } from './settings.js';
 
 async function primaryAppearance(locator) {
   return locator.evaluate((element) => {
@@ -912,11 +912,13 @@ test('project settings navigate, warn before discarding, and save sections acces
   const leave = page.getByRole('alertdialog', { name: 'Leave without saving?' });
   await expect(page).toHaveTitle('General · Settings browser · Ravix');
   await expect(page.getByRole('navigation', { name: 'Breadcrumb' })).toContainText('Settings browser');
+  // One Save a page, in the unsaved-changes bar (RAV-74).
+  const bar = page.getByRole('region', { name: 'Unsaved changes' });
   await settings.getByLabel('Name', { exact: true }).fill('Unsaved name');
-  await expect(settings.getByRole('status')).toHaveText('Unsaved changes');
+  await expect(bar).toBeVisible();
   const nativeDialogs = [];
   page.on('dialog', async dialog => { nativeDialogs.push(dialog.type()); await dialog.dismiss(); });
-  // Leaving a section with changes in it asks, in the page, never natively.
+  // Leaving a page with changes on it asks, in the page, never natively.
   await settings.locator('#settings-nav-agent').click();
   await expect(leave).toBeVisible();
   await expect(leave.getByRole('button', { name: 'Keep editing', exact: true })).toBeFocused();
@@ -925,22 +927,26 @@ test('project settings navigate, warn before discarding, and save sections acces
   await expect(leave).toBeHidden();
   await expect(page).toHaveURL(/\/settings\/general$/);
   await expect(settings.getByLabel('Name', { exact: true })).toHaveValue('Unsaved name');
-  await settings.getByRole('button', { name: 'Discard changes', exact: true }).click();
+  await bar.getByRole('button', { name: 'Discard', exact: true }).click();
+  await expect(bar).toBeHidden();
   await expect(settings.getByLabel('Name', { exact: true })).toHaveValue('Settings browser');
+  // The repository is shown, with a way to it.
+  await expect(settings.locator('#general-repository')).toBeVisible();
   await settings.locator('#settings-nav-agent').click();
   await expect(leave).toBeHidden();
   await expect(page).toHaveURL(/\/settings\/agent$/);
   await expect(page.locator('#settings-title')).toHaveText('Agent');
-  await expect(settings.locator('[data-settings-agent] strong')).toHaveText(['Claude Code', 'Codex']);
+  await expect(settings.locator('.agent-choice strong')).toHaveText(['Claude Code', 'Codex']);
   await settings.locator('#settings-agent-codex').click();
   await expect(settings.getByLabel('Model', { exact: true }).locator('option')).toHaveText(['GPT-6 Astra', 'GPT-5.5']);
   await settings.locator('#settings-agent-claude').click();
   await expect(settings.getByLabel('Model', { exact: true }).locator('option')).toHaveText(['Claude Opus 5.5', 'Claude Opus 5', 'Claude Sonnet 5']);
   await settings.getByLabel('Instructions', { exact: true }).fill('Explain changes and run focused tests.');
-  await settings.getByRole('button', { name: 'Save agent', exact: true }).click();
-  await expect(settings.getByRole('status')).toHaveText('Saved.');
+  await bar.getByRole('button', { name: 'Save', exact: true }).click();
+  await expect(page.getByText('Settings saved.', { exact: true })).toBeVisible();
+  await expect(bar).toBeHidden();
   await accessible(page);
-  // Back and forward move between sections.
+  // Back and forward move between pages.
   await page.goBack();
   await expect(page).toHaveURL(/\/settings\/general$/);
   await page.goForward();
@@ -948,22 +954,28 @@ test('project settings navigate, warn before discarding, and save sections acces
   await settings.locator('#settings-nav-general').click();
   await expect(settings.getByLabel('Name', { exact: true })).toHaveValue('Settings browser');
   await settings.getByLabel('Name', { exact: true }).fill('Settings organized');
-  await settings.getByRole('button', { name: 'Save general', exact: true }).click();
-  await expect(settings.getByRole('status')).toHaveText('Saved.');
-  await settings.locator('#settings-nav-run-script').click();
+  await bar.getByRole('button', { name: 'Save', exact: true }).click();
+  await expect(bar).toBeHidden();
+  // The Machine page: one Save & rebuild, which asks first. A run script
+  // alone needs no rebuild, and a refusal lands on its field.
+  await settings.locator('#settings-nav-machine').click();
   await settings.getByLabel('Run command', { exact: true }).fill('npm run dev -- --port "$PORT" --strictPort');
-  // A readiness path must be an absolute HTTP path; the refusal lands on its field.
   await settings.getByLabel('Readiness path (optional)', { exact: true }).fill('health');
-  await settings.getByRole('button', { name: 'Save defaults', exact: true }).click();
+  await expect(bar.getByRole('button', { name: 'Save & rebuild', exact: true })).toBeVisible();
+  await bar.getByRole('button', { name: 'Save & rebuild', exact: true }).click();
+  const review = page.getByRole('alertdialog', { name: 'Save these changes?' });
+  await expect(review).toContainText('run script edited');
+  await expect(review.getByRole('button', { name: 'Save', exact: true })).toBeFocused();
+  await accessible(page);
+  await review.getByRole('button', { name: 'Save', exact: true }).click();
   await expect(settings.locator('.field p.error')).toContainText('Readiness must be an HTTP path');
-  await expect(settings.getByRole('status')).toContainText('Could not save');
+  await expect(page.getByText(/Could not save the run script/)).toBeVisible();
   await settings.getByLabel('Readiness path (optional)', { exact: true }).fill('/health');
-  await settings.getByRole('button', { name: 'Save defaults', exact: true }).click();
-  await expect(settings.getByRole('status')).toHaveText('Saved.');
-  // Each section opens at its top, wherever the last one was scrolled to.
+  await saveMachine(page, ['run script edited']);
+  // Each page opens at its top, wherever the last one was scrolled to.
   const body = settings.locator('.settings-body');
   let top;
-  for (const section of ['environment', 'secrets', 'danger']) {
+  for (const section of ['access', 'machine', 'danger']) {
     await settings.locator(`#settings-nav-${section}`).click();
     await expect(page).toHaveURL(new RegExp(`/settings/${section}$`));
     await expect.poll(() => settings.evaluate(el => el.scrollTop)).toBe(0);
@@ -994,7 +1006,7 @@ test('project settings navigate, warn before discarding, and save sections acces
   await accessible(page);
   await capture(page, 'settings-mobile');
   let mobileTop;
-  for (const section of ['general', 'environment', 'secrets', 'danger', 'agent']) {
+  for (const section of ['general', 'access', 'machine', 'danger', 'agent']) {
     await settings.locator(`#settings-nav-${section}`).click();
     await expect(page).toHaveURL(new RegExp(`/settings/${section}$`));
     await expect.poll(() => settings.evaluate(el => el.scrollTop)).toBe(0);
@@ -1203,11 +1215,13 @@ test('shared project prefixes stay muted and truncate across every theme', async
   const projectPath = new URL(page.url()).pathname;
   await expect(page.locator('.workspace-project-name.selected .project-label')).toHaveText(name);
   await expect(page.locator('.workspace-project-name.selected .project-label .dim')).toHaveCount(0);
-  await page.locator('#workspace-stage').getByRole('button', { name: 'People', exact: true }).click();
+  // The owner's People is the project's Access settings page (RAV-74).
+  await page.locator('#workspace-stage').getByRole('link', { name: 'People', exact: true }).click();
+  await expect(page).toHaveURL(/\/settings\/access$/);
   await page.getByLabel('GitHub username', { exact: true }).fill('eli');
   await page.getByRole('button', { name: 'Invite', exact: true }).click();
-  await expect(page.locator('#people-dialog')).toContainText('@eli');
-  const people = page.locator('#people-dialog');
+  await expect(page.locator('#project-access')).toContainText('@eli');
+  const people = page.locator('#project-access');
   const heights = await people.locator('.people-row').evaluateAll(rows =>
     rows.map(row => row.getBoundingClientRect().height));
   expect(heights.length).toBeGreaterThanOrEqual(2);
