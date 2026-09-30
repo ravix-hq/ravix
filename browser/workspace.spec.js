@@ -706,7 +706,7 @@ test('project, track, streaming, image upload, reconnect, and revocation', async
     .filter({ hasText: 'Explain the queued project for the browser smoke test' });
   await expect(queued).toHaveCount(1);
   // The status chip is what makes this the queue rather than the transcript.
-  await expect(queued.locator('.chip')).toHaveCount(1);
+  await expect(queued.locator('.queue-state')).toHaveCount(1);
   // The prompt's own bubble, not just the page: the mock's reply quotes the
   // prompt back, so the transcript contains these words even when the prompt
   // never arrived. It reaches the live page on the turn's opening event, which
@@ -1064,8 +1064,10 @@ test('composer Send stays compact and keeps its arrow after repeated submissions
     const box = await send.boundingBox();
     expect(box.width).toBeLessThanOrEqual(80);
     expect(box.height).toBeLessThanOrEqual(44);
-    expect(box.width).toBeGreaterThanOrEqual(32);
-    expect(box.height).toBeGreaterThanOrEqual(32);
+    // RAV-94 made every control in the row 28px, still above WCAG 2.5.8's
+    // 24px target.
+    expect(box.width).toBeGreaterThanOrEqual(28);
+    expect(box.height).toBeGreaterThanOrEqual(28);
     await expect(send).toHaveText('');
     await expect(send).toHaveAttribute('title', 'Send');
     const svg = send.locator('svg');
@@ -1119,8 +1121,8 @@ test('composer Send stays compact and keeps its arrow after repeated submissions
     expect(m.visible).toBe(true);
     expect(m.width).toBeLessThanOrEqual(80);
     expect(m.height).toBeLessThanOrEqual(44);
-    expect(m.width).toBeGreaterThanOrEqual(32);
-    expect(m.height).toBeGreaterThanOrEqual(32);
+    expect(m.width).toBeGreaterThanOrEqual(28);
+    expect(m.height).toBeGreaterThanOrEqual(28);
     expect(m.text).toBe('');
     expect(m.title).toBe('Send');
     expect(m.svgVisible).toBe(true);

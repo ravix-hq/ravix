@@ -51,7 +51,8 @@
 // to and "is there anything?" is the question before that.
 //
 // ⌘L (Ctrl+L off a Mac) focuses the box from anywhere on the page except
-// the terminal, where Ctrl+L already means "clear the screen".
+// the terminal, where Ctrl+L already means "clear the screen". The hint that
+// says so (`[data-composer-shortcut]`) is hidden while focus is in the box.
 //
 // Ask agent / Comment (`[data-composer-mode]` buttons in the box) switch
 // here the moment they are pressed (RAV-94): the box's colour, the pressed
@@ -388,6 +389,16 @@ export const Composer = {
       kbd.textContent = shortcutLabel()
       hint.replaceChildren(kbd, " to focus")
     }
+    // The shortcut is for reaching the composer; once focus is anywhere in
+    // it, the hint has nothing to say (RAV-94). Hidden in place, so the row
+    // does not shift as focus comes and goes.
+    this.onFocusIn = () => this.showShortcut(false)
+    this.onFocusOut = e => {
+      if (!box.contains(e.relatedTarget)) this.showShortcut(true)
+    }
+    box.addEventListener("focusin", this.onFocusIn)
+    box.addEventListener("focusout", this.onFocusOut)
+    this.showShortcut(!box.contains(document.activeElement))
 
     this.handleEvent("composer:files", ({paths, truncated, error}) => {
       this.files = {
@@ -464,6 +475,8 @@ export const Composer = {
   destroyed() {
     document.removeEventListener("keydown", this.onShortcut)
     this.boundBox?.removeEventListener("click", this.onModeClick)
+    this.boundBox?.removeEventListener("focusin", this.onFocusIn)
+    this.boundBox?.removeEventListener("focusout", this.onFocusOut)
     this.boundBox?.removeEventListener("mousedown", this.onMentionPick)
     this.boundBox?.removeEventListener("dragover", this.onDragOver)
     this.boundBox?.removeEventListener("dragleave", this.onDragLeave)
@@ -591,6 +604,11 @@ export const Composer = {
     if (this.active) this.active.setAttribute("aria-selected", "false")
     this.active = null
     this.el.removeAttribute("aria-activedescendant")
+  },
+
+  showShortcut(shown) {
+    const hint = document.querySelector("[data-composer-shortcut]")
+    if (hint) hint.style.visibility = shown ? "" : "hidden"
   },
 
   /** Ask or comment: the one chosen here, until the server has drawn it. */
