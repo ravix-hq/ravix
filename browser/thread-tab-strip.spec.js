@@ -142,6 +142,7 @@ test('thread tab strip: underline, overflow, + menu, rename, close and aligned p
   await composer.click();
   await expect(renamed.locator('.thread-tab-title')).toHaveText('Audit migration');
   await page.reload();
+  await expect(page.locator('[data-phx-main]')).toHaveClass(/phx-connected/);
   await expect(page.locator(`#thread-tab-${id} .thread-tab-title`)).toHaveText('Audit migration');
 
   // A hovered tab shows × ("Close thread"); an idle thread closes at once,
@@ -158,6 +159,7 @@ test('thread tab strip: underline, overflow, + menu, rename, close and aligned p
   await expect(page.locator(`#thread-tab-${closing}`)).toHaveCount(0);
   await expect(tabs).toHaveCount(5);
   await page.reload();
+  await expect(page.locator('[data-phx-main]')).toHaveClass(/phx-connected/);
   await expect(tabs).toHaveCount(5);
   await expect(page.locator(`#thread-tab-${closing}`)).toHaveCount(0);
   // Delete on a focused tab closes it as well.
