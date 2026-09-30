@@ -421,4 +421,127 @@ defmodule Ravix.Workspaces.RepositoriesTest do
       refute project.id == later.id
     end
   end
+
+  # RAV-76: a workspace project moves to another repository only through
+  # the workspace's own connections, and never onto one the workspace
+  # already has a project for.
+  describe "changing a project's repository" do
+    setup ctx do
+      {:ok, _} = Repositories.refresh(ctx.owner, ctx.team.id)
+      provisioning(1)
+      {:ok, %{project: project}} = Repositories.add(ctx.owner, ctx.team.id, "acme/web")
+      %{project: project}
+    end
+
+    defp rebuilding do
+      client =
+        FakeTransport.client([
+          {%{method: "PUT", path: "/api/environments/env-1"}, {200, [], %{data: %{id: "env-1"}}}},
+          {%{method: "GET", path: "/api/conversations"}, {200, [], %{data: []}}},
+          {%{method: "DELETE", path: "/api/agents/agent-1"}, {204, [], ""}},
+          {%{method: "GET", path: "/api/catalog"},
+           {200, [], %{data: %{"runtimes" => ["codex"], "models" => %{}}}}},
+          {%{method: "POST", path: "/api/agents"}, {201, [], %{data: %{id: "agent-2"}}}}
+        ])
+
+      stub(Ravix.Fountain, :client, fn -> client end)
+      client
+    end
+
+    test "through another connection: its installation, id and connection are recorded", ctx do
+      client = rebuilding()
+
+      assert {:ok, _rebuilt} =
+               Ravix.Projects.change_repository(ctx.owner, ctx.project.id, "TOOLS/cli")
+
+      assert %Project{
+               repo_full_name: "tools/cli",
+               normalized_repo_full_name: "tools/cli",
+               installation_id: 88,
+               github_repo_id: 3,
+               agent_id: "agent-2",
+               workspace_id: team_id
+             } = project = Repo.get!(Project, ctx.project.id)
+
+      assert team_id == ctx.team.id
+      assert project.workspace_installation_id == ctx.b.id
+
+      assert [%{"url" => "https://github.com/tools/cli.git"}] =
+               FakeTransport.calls(client)
+               |> Enum.find(&(&1.method == "PUT"))
+               |> Map.get(:body)
+               |> Map.get("repositories")
+
+      # The catalog now shows the project against its new repository.
+      assert {:ok, catalog} = Repositories.catalog(ctx.owner, ctx.team.id)
+      assert %{project: %{id: id}} = Enum.find(catalog.repos, &(&1.repo.full_name == "tools/cli"))
+      assert id == ctx.project.id
+      assert %{project: nil} = Enum.find(catalog.repos, &(&1.repo.full_name == "acme/web"))
+    end
+
+    test "a repository no connection reaches, or one GitHub no longer grants, is refused",
+         ctx do
+      client = FakeTransport.client([])
+      stub(Ravix.Fountain, :client, fn -> client end)
+
+      assert {:error, {:not_found, "repo_not_in_workspace", _}} =
+               Ravix.Projects.change_repository(ctx.owner, ctx.project.id, "someone/else")
+
+      github(%{77 => %{account: "acme", repos: []}, 88 => %{account: "tools", repos: []}})
+
+      assert {:error, {:not_found, "repo_not_in_workspace", _}} =
+               Ravix.Projects.change_repository(ctx.owner, ctx.project.id, "tools/cli")
+
+      assert FakeTransport.calls(client) == []
+      assert Repo.get!(Project, ctx.project.id).repo_full_name == "acme/web"
+    end
+
+    test "one the workspace already has a project for is refused, naming it", ctx do
+      provisioning(1)
+      {:ok, %{project: other}} = Repositories.add(ctx.owner, ctx.team.id, "tools/cli")
+      client = FakeTransport.client([])
+      stub(Ravix.Fountain, :client, fn -> client end)
+
+      assert {:error, {:conflict, "repository_taken", message}} =
+               Ravix.Projects.change_repository(ctx.owner, ctx.project.id, "tools/cli")
+
+      assert message =~ other.name
+      assert FakeTransport.calls(client) == []
+
+      # Nor is it offered.
+      assert {:ok, choices} = Ravix.Projects.repository_choices(ctx.owner, ctx.project.id)
+      assert Enum.sort(choices) == ["Acme/API"]
+    end
+
+    test "the project's owner must still be able to create projects in the workspace", ctx do
+      admin = insert_user(token_enc: nil, credential_set_id: "set-me")
+      :ok = Store.add_member(ctx.team.id, admin.id, :admin, ctx.owner.id)
+      provisioning(1)
+      {:ok, %{project: theirs}} = Repositories.add(admin, ctx.team.id, "tools/cli")
+      assert {:ok, _} = Store.set_role(ctx.team.id, admin.id, :member, ctx.owner.id)
+      client = FakeTransport.client([])
+      stub(Ravix.Fountain, :client, fn -> client end)
+
+      assert {:error, {:forbidden, _}} =
+               Ravix.Projects.change_repository(admin, theirs.id, "Acme/API")
+
+      assert FakeTransport.calls(client) == []
+      assert Repo.get!(Project, theirs.id).repo_full_name == "tools/cli"
+    end
+
+    test "a workspace admin who does not own the project, and another tenant, are not found",
+         ctx do
+      admin = insert_user(token_enc: nil)
+      :ok = Store.add_member(ctx.team.id, admin.id, :admin, ctx.owner.id)
+      stranger = insert_user(token_enc: nil)
+      {:ok, _theirs} = Workspaces.create(stranger, "Theirs")
+
+      for user <- [admin, stranger] do
+        assert {:error, :not_found} =
+                 Ravix.Projects.change_repository(user, ctx.project.id, "tools/cli")
+      end
+
+      assert Repo.get!(Project, ctx.project.id).repo_full_name == "acme/web"
+    end
+  end
 end

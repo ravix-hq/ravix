@@ -48,6 +48,7 @@ defmodule Ravix.Projects do
   alias Ravix.Projects.{Machine, MachineState, Project, Settings, Store, View}
   alias Ravix.Projects.Machine.Provisioned
   alias Ravix.Spec
+  alias Ravix.Workspaces.Repositories
 
   @typedoc "How the caller reaches a project. See `Ravix.Accounts.Access.access_of/3`."
   @type access :: Ravix.Accounts.Access.access()
@@ -477,6 +478,135 @@ defmodule Ravix.Projects do
       Machine.rebuild(project, client)
     end
   end
+
+  @doc """
+  Point the project at another repository (RAV-38 decision 3, RAV-76).
+  Owner only.
+
+  The Ravix GitHub App must already read the new repository: a workspace
+  project's through one of the workspace's connections
+  (`Ravix.Workspaces.Repositories.readable/3`, which takes
+  `:create_project` and refuses a repository the workspace already has a
+  project for), any other project's through an installation the owner can
+  see, as `create/2` checks. Nothing is written before that answers.
+
+  Then the machine is rebuilt on it and every track is closed, because a
+  track is a branch of the old repository on the old disk. The project's
+  settings, secrets, members and history stay. See
+  `Ravix.Projects.Machine.change_repository/3` for the order, and for
+  `{:error, {:not_rebuilt, reason}}`: the repository changed and the
+  rebuild did not happen.
+  """
+  @spec change_repository(User.t(), String.t(), String.t() | nil) ::
+          {:ok, Machine.Rebuild.t()} | {:error, reason() | {:not_rebuilt, reason()}}
+  def change_repository(%User{} = user, id, full_name) do
+    with {:ok, project} <- Ravix.Accounts.Access.project_of(user, id),
+         {:ok, wanted} <- parse_repo_name(full_name),
+         :ok <- not_current(project, wanted),
+         {:ok, client} <- fountain(),
+         {:ok, target} <- readable_repo(user, project, wanted) do
+      Machine.change_repository(project, target, client)
+    end
+  end
+
+  @doc """
+  The repositories `change_repository/3` could move the project to, by name,
+  for the Danger zone to suggest: the workspace's catalog without the ones
+  it already has projects for, or the owner's installations' repositories.
+  Owner only. Suggestions, not the check: `change_repository/3` asks again.
+  """
+  @spec repository_choices(User.t(), String.t()) :: {:ok, [String.t()]} | {:error, reason()}
+  def repository_choices(%User{} = user, id) do
+    with {:ok, project} <- Ravix.Accounts.Access.project_of(user, id),
+         {:ok, names} <- choices(user, project) do
+      current = Project.normalize_repo(project.repo_full_name)
+      {:ok, names |> Enum.reject(&(Project.normalize_repo(&1) == current)) |> Enum.uniq()}
+    end
+  end
+
+  defp choices(user, %Project{workspace_id: workspace_id} = project) do
+    if workspace_repos?(project) do
+      with {:ok, %{repos: repos}} <- Repositories.catalog(user, workspace_id) do
+        {:ok, for(%{repo: repo, project: nil} <- repos, do: repo.full_name)}
+      end
+    else
+      with {:ok, app} <- github(),
+           {:ok, token} <- user_token(user),
+           {:ok, installations} <- reauth_on_401(Ravix.GitHub.installations_for(app, token)) do
+        {:ok,
+         Enum.flat_map(installations, fn installation ->
+           case Ravix.GitHub.repositories(app, token, installation.id) do
+             {:ok, repos} -> Enum.map(repos, & &1.full_name)
+             {:error, _} -> []
+           end
+         end)}
+      end
+    end
+  end
+
+  # A project in a workspace reaches GitHub through the workspace's
+  # connections while workspaces are on; any other through its owner's.
+  defp workspace_repos?(%Project{workspace_id: id}),
+    do: is_binary(id) and Ravix.Workspaces.enabled?()
+
+  defp parse_repo_name(full_name) when is_binary(full_name) do
+    trimmed = String.trim(full_name)
+
+    if Regex.match?(~r/\A[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\z/, trimmed) and
+         String.length(trimmed) <= 200,
+       do: {:ok, trimmed},
+       else: invalid_repo_name()
+  end
+
+  defp parse_repo_name(_full_name), do: invalid_repo_name()
+
+  defp invalid_repo_name,
+    do:
+      {:error,
+       {:unprocessable, "invalid_repo",
+        "Enter the repository as owner/name, as GitHub spells it."}}
+
+  defp not_current(%Project{repo_full_name: current}, wanted) do
+    if Project.normalize_repo(current) == Project.normalize_repo(wanted),
+      do: {:error, {:conflict, "same_repo", "This project already uses #{wanted}."}},
+      else: :ok
+  end
+
+  defp readable_repo(user, project, wanted) do
+    if workspace_repos?(project) do
+      Repositories.readable(user, project.workspace_id, wanted)
+    else
+      with {:ok, app} <- github(),
+           {:ok, token} <- user_token(user),
+           {:ok, installations} <-
+             reauth_on_401(Ravix.GitHub.installations_for(app, token, :fresh)) do
+        find_readable(app, token, installations, wanted)
+      end
+    end
+  end
+
+  # The first of the owner's installations that grants it. Listed as the
+  # owner, so it is a repository they can see and the App can read.
+  defp find_readable(_app, _token, [], _wanted), do: not_readable()
+
+  defp find_readable(app, token, [installation | rest], wanted) do
+    with {:ok, repos} <-
+           reauth_on_401(Ravix.GitHub.repositories(app, token, installation.id, :fresh)) do
+      case find_repo(repos, wanted) do
+        {:ok, repo} ->
+          {:ok, %{repo: repo, installation_id: installation.id, workspace_installation_id: nil}}
+
+        {:error, _} ->
+          find_readable(app, token, rest, wanted)
+      end
+    end
+  end
+
+  defp not_readable,
+    do:
+      {:error,
+       {:not_found, "repo_not_readable",
+        "The Ravix GitHub App cannot read that repository. Install the App on it, or grant it that repository, and try again."}}
 
   @doc "The machine, its settings and its secrets. Owner only."
   @spec destroy(User.t(), String.t()) :: :ok | {:error, reason()}

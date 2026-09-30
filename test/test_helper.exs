@@ -26,6 +26,7 @@ for mod <- [
       Ravix.Trace,
       Ravix.Tracks.Sandbox.Store,
       Ravix.Projects,
+      Ravix.Projects.Deletion,
       Ravix.Plans,
       Ravix.PromptQueue,
       Ravix.PromptQueue.Store,
