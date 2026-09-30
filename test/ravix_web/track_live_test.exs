@@ -2250,7 +2250,12 @@ defmodule RavixWeb.TrackLiveTest do
     refute has_element?(ctx.view, "#track-note-compact-2")
     assert has_element?(ctx.view, "#track-note-compact-0")
 
-    # Escape closes the panel again.
+    # An Escape that closed a dialog leaves it open; Escape alone closes it.
+    ctx.view
+    |> element(".track-plan-items")
+    |> render_keydown(%{"key" => "Escape", "dialog" => true})
+
+    assert has_element?(ctx.view, ".track-plan-toggle[aria-expanded=true]")
     ctx.view |> element(".track-plan-items") |> render_keydown(%{"key" => "Escape"})
     assert has_element?(ctx.view, ".track-plan-toggle[aria-expanded=false]")
     refute has_element?(ctx.view, ".track-plan-list > li")

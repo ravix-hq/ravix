@@ -977,7 +977,9 @@ defmodule RavixWeb.WorkspaceLiveTest do
     view |> element("button", "Hide advanced") |> render_click()
     assert has_element?(view, "#track-advanced[hidden]")
     assert has_element?(view, "#track-title[value='Keep this name']")
-    render_click(view, "dismiss")
+    # The close patches from the client, so a link clicked meanwhile keeps
+    # its address (RAV-68).
+    view |> element("#new-track-dialog button[aria-label=Close]") |> render_click()
     assert_patch(view, "/p/#{project.id}")
     refute has_element?(view, "#new-track-form")
   end
@@ -1344,7 +1346,7 @@ defmodule RavixWeb.WorkspaceLiveTest do
 
     view |> form("#new-track-form", new_track: %{title: "keep-my-draft"}) |> render_submit()
     render_async(view)
-    render_click(view, "dismiss")
+    view |> element("#new-track-dialog button[aria-label=Close]") |> render_click()
     assert_patch(view, "/p/#{first.id}")
     assert has_element?(view, "#yard [data-project-id='#{first.id}'].current")
 
@@ -1498,6 +1500,25 @@ defmodule RavixWeb.WorkspaceLiveTest do
       view |> element(item) |> render_click()
       assert has_element?(view, dialog)
       render_click(view, "dismiss")
+    end
+  end
+
+  # RAV-68: with a project selected the close is a client patch, so a link
+  # clicked while it is in flight is not overruled by a server patch.
+  test "a dialog on a project page closes by patching to the page", %{conn: conn} do
+    user = insert_user()
+    project = insert_project(user: user)
+    track = insert_track(project: project)
+    path = "/p/#{project.id}/t/#{track.id}"
+    {:ok, view, _} = live(log_in_user(conn, user), path)
+    render_async(view)
+
+    for name <- ~w(help account changes) do
+      render_click(view, "dialog", %{name: name})
+      assert has_element?(view, "##{name}-dialog")
+      view |> element("##{name}-dialog button[aria-label=Close]") |> render_click()
+      assert_patch(view, path)
+      refute has_element?(view, "##{name}-dialog")
     end
   end
 
@@ -2299,6 +2320,14 @@ defmodule RavixWeb.WorkspaceLiveTest do
         # is on the scrim, and the scrim only exists then.
         refute has_element?(ctx.view, "[phx-window-keydown=yard-close]")
       end
+    end
+
+    test "an Escape that closed a dialog over it leaves it open", ctx do
+      render_click(ctx.view, "yard")
+      ctx.view |> element(".yard-scrim") |> render_keydown(%{"key" => "Escape", "dialog" => true})
+      assert has_element?(ctx.view, "aside#yard.forced")
+      ctx.view |> element(".yard-scrim") |> render_keydown(%{"key" => "Escape"})
+      refute has_element?(ctx.view, "aside#yard.forced")
     end
 
     test "following a link in it closes it, because every link is a patch", ctx do
