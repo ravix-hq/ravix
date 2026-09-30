@@ -642,35 +642,62 @@ defmodule RavixWeb.CoreComponents do
       <.empty icon="machine" title="No machine yet" because="The machine is built when a project first needs one.">
         This project has nothing running to type at.
       </.empty>
+
+  In a pane (`pane`) it is the pane's whole content, centred in it both
+  ways, and says one line: the title, with no body. That is what a tab of
+  the inspector shows when its machine is asleep or still being set up, or
+  when there is nothing in it yet. `status` makes the line a live region,
+  for a state that arrives while somebody is on the page; leave it off where
+  something else on the page already announces the same words.
+
+      <.empty pane status id="panel-asleep" icon="moon" title="Machine is asleep">
+        <:action label="Wake" click="wake" />
+      </.empty>
   """
   attr :icon, :string, required: true, doc: "an icon name"
   attr :title, :string, required: true
   attr :because, :string, default: nil, doc: "the concrete reason, when there is one"
   attr :soon, :boolean, default: false, doc: "set for a surface that genuinely is not built yet"
+  attr :pane, :boolean, default: false, doc: "fill the pane it is in, centred, on one line"
+  attr :status, :boolean, default: false, doc: "announce the title as a status"
+  attr :busy, :boolean, default: false, doc: "turn the icon, for a state that is in progress"
   attr :rest, :global
-  slot :inner_block, required: true, doc: "one or two sentences: what this panel is for"
+  slot :inner_block, doc: "one or two sentences: what this panel is for"
   slot :because_block, doc: "a `because` with markup in it, instead of the attr"
 
   slot :action, doc: "one button" do
     attr :label, :string, required: true
     attr :click, :any, required: true
+    attr :id, :string
+    attr :disabled, :boolean
   end
 
   def empty(assigns) do
     ~H"""
-    <div class="empty" {@rest}>
-      <span class="mark"><.icon name={@icon} size={20} /></span>
-      <h3>{@title}</h3>
-      <p>{render_slot(@inner_block)}</p>
+    <div
+      class={
+        Enum.join(
+          ["empty" | for({on, name} <- [{@pane, "pane"}, {@busy, "busy"}], on, do: name)],
+          " "
+        )
+      }
+      {@rest}
+    >
+      <span class="mark"><.icon name={@icon} size={if @pane, do: 18, else: 20} /></span>
+      <h3 :if={!@status}>{@title}</h3>
+      <h3 :if={@status}><span role="status">{@title}</span></h3>
+      <p :if={@inner_block != []}>{render_slot(@inner_block)}</p>
       <p :if={@because} class="dimmer">{@because}</p>
       <p :if={@because_block != []} class="dimmer">{render_slot(@because_block)}</p>
       <span :if={@soon} class="soon">Coming soon</span>
       <button
         :for={action <- @action}
+        id={action[:id]}
         type="button"
         class="primary"
         style="margin-top: 6px"
         phx-click={action.click}
+        disabled={action[:disabled]}
       >
         {action.label}
       </button>

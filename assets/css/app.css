@@ -1248,6 +1248,11 @@ html[data-yard="closed"] .workspace-trigger-skeleton { flex: none; width: 28px; 
 .dock-empty .empty { padding: 14px 12px; gap: 6px; }
 .dock-empty .empty .mark { width: 30px; height: 30px; margin-bottom: 0; }
 .dock-empty .empty p { font-size: 12px; }
+/* With the inspector already saying what the machine is doing, the dock's
+   two lines are one: whose machine, then the word. */
+.machine-dock-host.dock-compact > #track-machine-label,
+.machine-dock-host.dock-compact > #track-machine-status { display: inline; }
+.machine-dock-host.dock-compact > #track-machine-label { margin-right: 8px; color: var(--dim); }
 /* The preview is somebody else's page in a frame; the panel colour is the
    ground it paints over, so the wait for it is not a hole in the inspector. */
 .workspace-preview { width: 100%; height: 360px; background: var(--panel); border: 0; margin: 12px 0; }
@@ -1345,6 +1350,16 @@ html[data-yard="closed"] .workspace-trigger-skeleton { flex: none; width: 28px; 
   color: var(--accent-ink); background: var(--accent-soft); border: 1px solid var(--accent-line);
 }
 .empty code { color: var(--ink); background: var(--code-bg); padding: 1px 5px; border-radius: 4px; }
+/* In a pane it is everything the pane holds below whatever sits at its top,
+   centred both ways, and one quiet line: the pane is waiting, not failing. */
+/* `:where` keeps this at no specificity, so a layout that hides the panel
+   (the narrow views) still wins. */
+:where(.workspace-panel:has(> .empty.pane)) { display: flex; flex-direction: column; }
+.empty.pane { flex: 1; min-height: 120px; padding: 24px 16px; gap: 6px; }
+.empty.pane .mark { width: 32px; height: 32px; margin-bottom: 2px; }
+.empty.pane h3 { color: var(--dim); font-weight: 400; }
+.empty.busy .mark svg { animation: request-spin 1200ms linear infinite; }
+@media (prefers-reduced-motion: reduce) { .empty.busy .mark svg { animation: none; } }
 .empty-icon { width: 42px; height: 42px; display: grid; place-items: center; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); color: var(--dim); }
 
 /* A project with no track open yet. */

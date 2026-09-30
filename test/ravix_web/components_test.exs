@@ -45,7 +45,7 @@ defmodule RavixWeb.ComponentsTest do
       spa = ~w(home plus search folder folder-plus file globe branch pull issue terminal play
                wrench check x dot picture pencil clock chevron panel-left panel-right spinner
                arrow-up arrow-down external settings sparkle info machine add-person github code
-               document copy more refresh person sign-out lock)
+               document copy more refresh person sign-out lock moon)
 
       assert Enum.sort(spa) == RavixWeb.Icons.names()
     end

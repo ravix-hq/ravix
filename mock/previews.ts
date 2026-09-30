@@ -37,6 +37,13 @@ function render(service: Service) {
   const label = service.dir.replaceAll("<", "&lt;").replaceAll(">", "&gt;");
   writeFileSync(join(service.root, "index.html"), `<!doctype html><html><head><meta charset="utf-8"><title>Track preview</title><meta name="viewport" content="width=device-width,initial-scale=1"></head><body style="font:20px system-ui;padding:32px;background:#f4f1e9;color:#252c28"><h1>Live track · version ${service.version}</h1><p>${label}</p><p>A saved correction updates this app, even after closing Ravix.</p><script type="module" src="/main.js"></script></body></html>`);
 }
+// Sprites put to sleep by the browser harness (`/__browser/sandbox-status`),
+// each with what waking it does to the Fountain sandbox it runs. A passive
+// status read reports it stopped; an exec wakes it, as a real sprite does.
+const asleep = new Map<string, () => void>();
+export function setMockSpriteAsleep(sprite: string, wake: (() => void) | null) {
+  if (wake) asleep.set(sprite, wake); else asleep.delete(sprite);
+}
 export function updateMockPreview(workdir: string) {
   for (const service of services.values()) if (service.dir === workdir || service.dir.startsWith(`${workdir}/`)) { service.version++; render(service); }
 }
@@ -136,11 +143,13 @@ const server = Bun.serve<SocketData>({ port: Number(process.env.MOCK_SPRITES_POR
     }
     // Passive status reads must not execute a command or start a service.
     if (req.method === "GET" && /^\/v1\/sprites\/ravix-[a-z0-9]+$/.test(url.pathname))
-      return Response.json({ status: "running" });
+      return Response.json({ status: asleep.has(url.pathname.split("/").at(-1)!) ? "warm" : "running" });
     const match = /^\/v1\/sprites\/([^/]+)\/(proxy|exec|services)(?:\/([^/]+))?(?:\/(start|stop))?$/.exec(url.pathname);
     if (!match) return new Response("missing", { status: 404 });
     if (match[2] === "proxy") return server.upgrade(req, { data: {} }) ? undefined : new Response("upgrade", { status: 400 });
     if (match[2] === "exec") {
+      const wake = asleep.get(match[1]!);
+      if (wake) { asleep.delete(match[1]!); wake(); }
       const argv = url.searchParams.getAll("cmd");
       const script = argv[0] === "sh" ? argv.at(-1) ?? "" : "";
       if (/__ravix_git__|git push -u origin HEAD/.test(script)) {

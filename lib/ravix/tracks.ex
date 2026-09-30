@@ -1363,6 +1363,40 @@ defmodule Ravix.Tracks do
       {:error,
        {:conflict, "setup_pending", "Setup is still in progress. Please wait for it to finish."}}
 
+  @doc """
+  Wake the track's machine now, rather than with the next message.
+
+  Setup parked on a sleeping shared machine is woken the way `retry/3` wakes
+  it. Anything else is asked whether it is running with a probe that runs a
+  command (`Ravix.Terminal.status/3` without `passive`), which is what wakes
+  a suspended machine; its answer clears the asleep mark
+  (`Ravix.Tracks.Sleep`). Write access, like a message: a Read member
+  (ADR 0010) cannot wake a machine they could not prompt.
+  """
+  @spec wake(User.t(), String.t()) :: :ok | {:error, reason()}
+  def wake(%User{} = user, track_id) do
+    with {:ok, %{track: track}} <- Access.track_access(user, track_id, :write) do
+      if track.setup_state == "running" and track.setup_error_code == "sandbox_suspended",
+        do: retry(user, track_id),
+        else: probe_awake(user, track_id)
+    end
+  end
+
+  defp probe_awake(user, track_id) do
+    case Ravix.Terminal.status(user, track_id) do
+      {:ok, %{available: true}} ->
+        :ok
+
+      {:ok, _} ->
+        {:error,
+         {:conflict, "machine_not_awake",
+          "This track's machine did not wake. Try again, or send a message."}}
+
+      {:error, _} = error ->
+        error
+    end
+  end
+
   defp send_opening_turn(_client, %Track{conversation_id: nil}, _project, _origin, _mode), do: :ok
 
   defp send_opening_turn(client, track, project, origin, :async) do

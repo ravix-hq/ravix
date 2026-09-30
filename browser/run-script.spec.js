@@ -23,10 +23,12 @@ test('project run script is inherited: run, ready, restart, stop and plain overr
 
   await page.locator('button[phx-click="panel"][phx-value-name="preview"]').click();
   const status = page.locator('#run-status');
-  const run = page.locator('button[phx-value-action="run"]');
+  // Stopped, the panel is its empty state and Run is that state's action.
+  const empty = page.locator('#preview-empty');
+  const run = empty.getByRole('button', { name: 'Run', exact: true });
   const restart = page.locator('button[phx-value-action="restart-run"]');
   const stop = page.locator('button[phx-value-action="stop"]');
-  await expect(status).toHaveText('Status: stopped');
+  await expect(empty).toContainText('No preview running');
   await run.click();
   await expect(status).toHaveText('Status: ready');
   await expect(page.locator('button[phx-value-action="open"]')).toBeVisible();
@@ -41,7 +43,7 @@ test('project run script is inherited: run, ready, restart, stop and plain overr
     await expect(page.locator('#preview-logs pre')).toContainText('VITE', { timeout: 2_000 });
   }).toPass({ timeout: 20_000 });
   await stop.click();
-  await expect(status).toHaveText('Status: stopped');
+  await expect(empty).toContainText('No preview running');
 
   await page.getByText('Run script override', { exact: true }).click();
   // Open by the reader and left open by every patch that follows: a status
@@ -55,5 +57,5 @@ test('project run script is inherited: run, ready, restart, stop and plain overr
   await expect(page.locator('button[phx-value-action="open"]')).toHaveCount(0);
   await expect(page.locator('iframe.workspace-preview')).toHaveCount(0);
   await stop.click();
-  await expect(status).toHaveText('Status: stopped');
+  await expect(empty).toContainText('No preview running');
 });

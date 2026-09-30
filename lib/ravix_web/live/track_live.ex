@@ -493,6 +493,14 @@ defmodule RavixWeb.TrackLive do
     {:noreply, begin(socket, :retry, &Tracks.retry(&1, &2, thread_id))}
   end
 
+  # The inspector's Wake. `Tracks.wake/2` holds the access check; the button
+  # is only drawn for somebody it would let through.
+  def handle_event("wake", _, socket) do
+    if MapSet.member?(socket.assigns.pending, :wake),
+      do: {:noreply, socket},
+      else: {:noreply, begin(socket, :wake, &Tracks.wake/2)}
+  end
+
   def handle_event("queue", %{"action" => "cancel", "id" => id}, socket),
     do: {:noreply, queued(socket, &PromptQueue.cancel/3, id)}
 
@@ -1227,6 +1235,14 @@ defmodule RavixWeb.TrackLive do
   defp async_result(:retry, {:ok, response}, socket),
     do: result(settle(socket, :retry), response, fn s, _ -> load(s) end)
 
+  # Awake: read the tab again, from nothing, since what it held was the
+  # asleep state rather than anything worth keeping on screen.
+  defp async_result(:wake, {:ok, response}, socket),
+    do:
+      result(settle(socket, :wake), response, fn s, _ ->
+        s |> refresh_detail() |> reload_panel()
+      end)
+
   # The hub event `set_model/4` publishes refreshes every page on the track,
   # this one included; the refresh here is so this page does not wait on it.
   defp async_result(:model, {:ok, response}, socket),
@@ -1241,16 +1257,24 @@ defmodule RavixWeb.TrackLive do
        do: socket
 
   defp async_result({:git_status, _}, {:ok, {:ok, status}}, socket),
-    do: assign(socket, git: %{status: status, error: nil}, git_loading?: false)
+    do: assign(socket, git: %{status: status, error: nil, asleep?: false}, git_loading?: false)
+
+  # Not an error: Git status says the machine is asleep, and offers to wake
+  # it, the way Files and Changes do (`asleep/1`).
+  defp async_result({:git_status, _}, {:ok, {:error, :machine_asleep}}, socket),
+    do: assign(socket, git: %{status: nil, error: nil, asleep?: true}, git_loading?: false)
 
   defp async_result({:git_status, _}, {:ok, {:error, reason}}, socket),
     do:
-      assign(socket, git: %{status: nil, error: Error.from(reason).message}, git_loading?: false)
+      assign(socket,
+        git: %{status: nil, error: Error.from(reason).message, asleep?: false},
+        git_loading?: false
+      )
 
   defp async_result({:git_status, _}, {:exit, reason}, socket),
     do:
       assign(socket,
-        git: %{status: nil, error: Error.from({:async_exit, reason}).message},
+        git: %{status: nil, error: Error.from({:async_exit, reason}).message, asleep?: false},
         git_loading?: false
       )
 
@@ -1301,7 +1325,7 @@ defmodule RavixWeb.TrackLive do
       |> assign(thread_error: "Could not load the agents. Press + to try again.")
 
   defp async_result(name, {:exit, reason}, socket)
-       when name in [:interrupt, :retry, :pull, :model],
+       when name in [:interrupt, :retry, :wake, :pull, :model],
        do: socket |> settle(name) |> exit(reason)
 
   # A background refresh that crashed leaves the page showing what it had.
@@ -2418,12 +2442,6 @@ defmodule RavixWeb.TrackLive do
   # read as `@panel_data[:runs] || []`: an `Access` read that answers `nil`
   # for a field that does not exist, so a renamed one would render an empty
   # list rather than fail.
-  defp panel_body(%{data: :machine_asleep} = assigns) do
-    ~H"""
-    <p class="panel-empty" role="status">This track's machine is asleep. Files load when it wakes.</p>
-    """
-  end
-
   defp panel_body(%{data: %Files.Listing{}} = assigns) do
     ~H"""
     <div class="file-explorer">
@@ -2455,6 +2473,17 @@ defmodule RavixWeb.TrackLive do
     """
   end
 
+  defp panel_body(%{data: %Diff{diff: ""}} = assigns) do
+    ~H"""
+    <.empty
+      pane
+      id="changes-empty"
+      icon="branch"
+      title={if @branch_merged?, do: "Branch merged", else: "No changes yet"}
+    />
+    """
+  end
+
   defp panel_body(%{data: %Diff{}} = assigns) do
     files = assigns.data.files
     selected = Enum.find(files, &(&1.change.path == assigns.diff_path))
@@ -2475,22 +2504,14 @@ defmodule RavixWeb.TrackLive do
 
     ~H"""
     <div class="changes-panel">
-      <div :if={@data.diff == ""} class="panel-empty">
-        <.empty :if={@branch_merged?} icon="branch" title="Branch merged">
-          This branch was merged. There are no remaining changes in this track’s worktree.
-        </.empty>
-        <.empty :if={!@branch_merged?} icon="branch" title="No changes yet">
-          Files the agent edits in this track’s worktree appear here, each with its diff.
-        </.empty>
-      </div>
-      <p :if={@data.diff != ""} class="changes-summary">
+      <p class="changes-summary">
         <span>{changed_files(length(@data.changes))}</span>
         <span class="change-counts">
           <span class="diff-add">+{@added}</span> <span class="diff-del">−{@removed}</span>
         </span>
       </p>
       <p :if={@data.truncated} class="changes-note">Diff is truncated.</p>
-      <div :if={!@selected && @data.diff != ""}>
+      <div :if={!@selected}>
         <form id="diff-filter-form" phx-change="filter-diff" phx-submit="filter-diff">
           <label for="diff-filter" class="sr-only">Filter paths</label>
           <input
@@ -2568,30 +2589,64 @@ defmodule RavixWeb.TrackLive do
     """
   end
 
+  # Siblings rather than one wrapper, so that with nothing run the empty
+  # state is the panel's own child and fills it. Whether the branch was ever
+  # pushed is the difference between "wait" and "push" (`ChecksReport`).
   defp panel_body(%{data: %ChecksReport{}} = assigns) do
     ~H"""
-    <div>
-      <p :if={@data.pull}>
-        <a href={@data.pull.url} target="_blank" rel="noreferrer">
-          Pull request #{@data.pull.number}: {@data.pull.title}
-        </a>
-        <span class="chip pull-state">{pull_state_label(@data.pull.state)}</span>
-      </p>
-      <div :for={check <- @data.runs}>
-        <a :if={check.url} href={check.url} target="_blank" rel="noreferrer">
-          {check.name}
-        </a>
-        <span :if={!check.url}>{check.name}</span>
-        <span class="chip">{check.conclusion || check.status}</span>
-      </div>
-      <a :if={@data.pull} href={@data.pull.url} target="_blank" rel="noreferrer">
-        View on GitHub
+    <p :if={@data.pull}>
+      <a href={@data.pull.url} target="_blank" rel="noreferrer">
+        Pull request #{@data.pull.number}: {@data.pull.title}
       </a>
+      <span class="chip pull-state">{pull_state_label(@data.pull.state)}</span>
+    </p>
+    <.empty
+      :if={@data.runs == []}
+      pane
+      id="checks-empty"
+      icon="check"
+      title={if @data.pushed, do: "No checks yet", else: "No checks until the branch is pushed"}
+    />
+    <div :for={check <- @data.runs}>
+      <a :if={check.url} href={check.url} target="_blank" rel="noreferrer">
+        {check.name}
+      </a>
+      <span :if={!check.url}>{check.name}</span>
+      <span class="chip">{check.conclusion || check.status}</span>
     </div>
+    <a :if={@data.pull} href={@data.pull.url} target="_blank" rel="noreferrer">
+      View on GitHub
+    </a>
     """
   end
 
-  attr :git, :map, default: nil, doc: "`%{status:, error:}`, or nil before the first read"
+  attr :id, :string, required: true
+  attr :can_wake, :boolean, required: true, doc: "Write access (ADR 0010)"
+  attr :waking, :boolean, default: false
+
+  # The machine is asleep, said once, with the Wake that `Tracks.wake/2`
+  # answers. A Read member sees the state and no button: the context
+  # refuses them anyway, and a button that is refused is a broken one.
+  defp asleep(assigns) do
+    ~H"""
+    <.empty pane status id={@id} icon="moon" title="Machine is asleep">
+      <:action
+        :if={@can_wake}
+        id="panel-wake"
+        label={if @waking, do: "Waking…", else: "Wake"}
+        click="wake"
+        disabled={@waking}
+      />
+    </.empty>
+    """
+  end
+
+  attr :git, :map,
+    default: nil,
+    doc: "`%{status:, error:, asleep?:}`, or nil before the first read"
+
+  attr :can_wake, :boolean, default: false
+  attr :waking, :boolean, default: false
   attr :loading, :boolean, default: false
   attr :checks, :any, default: nil, doc: "the loaded `ChecksReport`, if there is one"
   attr :checks_error, :string, default: nil
@@ -2621,6 +2676,7 @@ defmodule RavixWeb.TrackLive do
       <p :if={@git && @git.error} id="git-status-error" class="git-note" role="alert">
         {@git.error}
       </p>
+      <.asleep :if={@git && @git.asleep?} id="git-asleep" can_wake={@can_wake} waking={@waking} />
       <ul class="git-rows">
         <li :if={@status} id="git-uncommitted" class="git-row">
           <span class={["chip", if(@status.uncommitted > 0, do: "warn", else: "ok")]}>
@@ -2699,6 +2755,26 @@ defmodule RavixWeb.TrackLive do
   # itself; a prompt or the wake button does. See `Ravix.Tracks.Setup`.
   defp parked?(track),
     do: track.setup_state == "running" and track.setup_error_code == "sandbox_suspended"
+
+  # What the inspector shows in place of its tab when the machine behind the
+  # tab cannot answer: the setup step while setup runs or the machine is
+  # being made (the same words as the setup banner), or that it is asleep.
+  # Asleep is the machine's own word --- a refused read or setup parked on
+  # it --- never a guess from the clock. The Checks tab reads GitHub as well
+  # as the machine, so there only its Git status says so (`git_status/1`).
+  defp inspector_state(track, machine, panel) do
+    cond do
+      machine.state in [:starting, :restarting] and
+          (track.setup_state != "ready" or track.sandbox_state == :provisioning) ->
+        {:setup, machine.detail}
+
+      parked?(track) or panel.data == :machine_asleep ->
+        :asleep
+
+      true ->
+        nil
+    end
+  end
 
   defp pull_state_label(:merged), do: "Merged"
   defp pull_state_label(:closed), do: "Closed"
