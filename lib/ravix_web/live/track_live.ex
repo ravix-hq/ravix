@@ -2984,6 +2984,31 @@ defmodule RavixWeb.TrackLive do
     """
   end
 
+  attr :turn, :map, required: true
+
+  # How long a running turn has been going. The server writes the elapsed
+  # time as of this render; `assets/js/hooks/turn_timer.js` keeps it ticking
+  # from `data-started` without a round-trip, correcting the browser's clock
+  # by `data-now`. Settling swaps this for `turn_footer/1`'s final duration.
+  defp turn_timer(assigns) do
+    {started, _ended} = turn_span(assigns.turn.events)
+    now = DateTime.utc_now()
+    assigns = assign(assigns, started: started, now: now)
+
+    ~H"""
+    <footer :if={@started} class="turn-footer turn-running">
+      <span
+        id={"turn-timer-#{@turn.id}"}
+        class="turn-elapsed"
+        phx-hook="TurnTimer"
+        data-started={DateTime.to_iso8601(@started)}
+        data-now={DateTime.to_iso8601(@now)}
+        title={"Running since #{Calendar.strftime(@started, "%H:%M")} UTC"}
+      >{duration(DateTime.diff(@now, @started))}</span>
+    </footer>
+    """
+  end
+
   # Events are newest first. The turn opened at its `started` stage (or its
   # oldest event, for a turn Fountain started itself) and ended at the stage
   # that settled it.

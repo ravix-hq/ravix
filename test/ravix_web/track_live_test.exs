@@ -5170,6 +5170,78 @@ defmodule RavixWeb.TrackLiveTest do
     refute has_element?(ctx.view, "#turns-live .turn-footer")
   end
 
+  test "a running turn's elapsed time ticks in the browser until the server's duration replaces it",
+       ctx do
+    started = DateTime.add(DateTime.utc_now(), -95) |> DateTime.truncate(:second)
+
+    chunk =
+      Jason.encode!(%{
+        jsonrpc: "2.0",
+        method: "session/update",
+        params: %{
+          update: %{
+            sessionUpdate: "agent_message_chunk",
+            content: %{type: "text", text: "Working"}
+          }
+        }
+      })
+
+    events = [
+      Map.put(opened(201, "timed", "Take your time"), "ts", DateTime.to_iso8601(started)),
+      %{
+        "id" => 202,
+        "turn_id" => "timed",
+        "kind" => "output",
+        "stream" => "acp",
+        "data" => chunk,
+        "ts" => DateTime.to_iso8601(DateTime.add(started, 3))
+      }
+    ]
+
+    for event <- events, do: send(ctx.view.pid, {:transcript, ctx.track.id, event})
+    drawn(ctx.view)
+
+    # The start is written out so a reload resumes from it, not from zero,
+    # and the server's own clock rides along for the hook to correct skew.
+    timer =
+      ctx.view
+      |> render()
+      |> LazyHTML.from_document()
+      |> LazyHTML.query(
+        ~s|#turns-timed .turn-running .turn-elapsed[phx-hook="TurnTimer"]| <>
+          ~s|[data-started="#{DateTime.to_iso8601(started)}"]|
+      )
+
+    assert Enum.count(timer) == 1
+    assert LazyHTML.text(timer) =~ ~r/^1m 3\ds$/
+
+    assert {:ok, _now, 0} =
+             timer |> LazyHTML.attribute("data-now") |> hd() |> DateTime.from_iso8601()
+
+    refute has_element?(ctx.view, "#turns-timed .turn-footer time")
+
+    ended = DateTime.add(started, 16 * 60 + 5)
+
+    send(
+      ctx.view.pid,
+      {:transcript, ctx.track.id,
+       %{
+         "id" => 203,
+         "turn_id" => "timed",
+         "kind" => "stage",
+         "stage" => "turn",
+         "state" => "completed",
+         "ts" => DateTime.to_iso8601(ended)
+       }}
+    )
+
+    drawn(ctx.view)
+
+    refute has_element?(ctx.view, "#turns-timed .turn-elapsed")
+    refute has_element?(ctx.view, "#turns-timed .turn-running")
+    assert has_element?(ctx.view, "#turns-timed .turn-footer", "16m 5s")
+  end
+
   test "a turn with no tool calls or thoughts has nothing to fold", ctx do
     data =
       Jason.encode!(%{
