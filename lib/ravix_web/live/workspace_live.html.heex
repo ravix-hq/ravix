@@ -80,15 +80,17 @@
           class="ghost panel-toggle"
           data-panel="yard"
           data-key="ravix.panel.yard"
-          data-hide-label="Hide projects"
-          data-show-label="Show projects"
+          data-hide-label={"Hide sidebar (#{sidebar_shortcut(@mac)})"}
+          data-show-label={"Show sidebar (#{sidebar_shortcut(@mac)})"}
+          data-shortcut="b"
           aria-controls="yard"
           aria-expanded="true"
-          title="Hide projects"
+          aria-keyshortcuts={if @mac, do: "Meta+B", else: "Control+B"}
+          title={"Hide sidebar (#{sidebar_shortcut(@mac)})"}
         >
           <.icon name="panel-left" size={16} />
-          <span class="sr-only label-hide">Hide projects</span>
-          <span class="sr-only label-show">Show projects</span>
+          <span class="sr-only label-hide">Hide sidebar</span>
+          <span class="sr-only label-show">Show sidebar</span>
         </button>
         <button type="button" class="x yard-close" phx-click="yard-close" aria-label="Close menu">
           <.icon name="x" size={16} />
@@ -107,7 +109,7 @@
             aria-pressed="false"
             title="Say so from the desktop when a track needs you and this tab is in the background"
           >
-            <span class="notify-dot" data-notify-dot></span><span class="col"><small>Desktop notifications</small><span
+            <span class="notify-dot" data-notify-dot></span><span class="col"><small>Notifications</small><span
               class="truncate"
               data-notify-state
             >Off</span></span>
@@ -228,7 +230,12 @@
           <div :if={@rail_error} id="rail-error" role="alert">
             <p>Projects could not be loaded.</p><button type="button" phx-click="refresh">Retry</button>
           </div>
-          <div id="project-tree" phx-hook="ProjectTree" data-viewer={@current_user.id}>
+          <div
+            id="project-tree"
+            phx-hook="ProjectTree"
+            data-viewer={@current_user.id}
+            data-one-creator={one_creator?(@tracks, @current_user, @track_id)}
+          >
             <section
               :for={
                 {section, projects} <-
@@ -299,7 +306,8 @@
                       <span
                         :if={project_attention(@tracks, project.id) > 0}
                         class="badge"
-                        aria-label={"#{project_attention(@tracks, project.id)} unread"}
+                        aria-label={need_you(project_attention(@tracks, project.id))}
+                        title={need_you(project_attention(@tracks, project.id))}
                       >{project_attention(@tracks, project.id)}</span>
                     </.link>
                     <.link
@@ -540,7 +548,7 @@
             <strong class="truncate">You</strong><small class="truncate">@{@current_user.login}</small>
           </span>
           <span class="sr-only">Account menu</span>
-          <.icon name="chevron" size={12} open={true} class="account-chevron" />
+          <.icon name="chevron" size={12} class="account-chevron" />
         </button>
       </div>
     </aside>

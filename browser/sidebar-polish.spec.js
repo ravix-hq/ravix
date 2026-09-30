@@ -151,3 +151,83 @@ test('sidebar rows keep one rhythm, spin while working and keep the open track i
   await expect(more).toBeFocused();
   expect((await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa']).analyze()).violations).toEqual([]);
 });
+
+// RAV-96: the nav's rows are one height with their counts inside them, the
+// sidebar toggle says what it hides and its shortcut, the project list keeps
+// its width when it scrolls, a count says what it counts, and the You menu
+// is single-line rows under a chevron pointing the way it opens.
+test('the sidebar nav and You menu keep one pitch and say what they do', async ({ page }) => {
+  test.setTimeout(120_000);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await signIn(page, 'sidebarpolish', '/home');
+  await connectClaude(page);
+  await page.getByRole('button', { name: /^New project/ }).click();
+  await page.getByLabel('Project name', { exact: true }).fill(`Sidebar nav ${Date.now().toString(36)}`);
+  await page.getByRole('button', { name: 'Create project', exact: true }).click();
+  const projectRow = page.locator('#yard .workspace-project.current');
+  await projectRow.locator('.project-add').click();
+  await page.getByRole('button', { name: 'Create track', exact: true }).click();
+  await expect(page.locator('#track-machine-state')).toHaveText('Idle', { timeout: 30_000 });
+  const trackId = new URL(page.url()).pathname.split('/t/')[1];
+  const projectId = await projectRow.getAttribute('data-project-id');
+
+  const { database } = JSON.parse(readFileSync(`tmp/browser-${process.env.BROWSER_PORT || 4103}.json`, 'utf8'));
+  if (!/^ravix_browser_[a-f0-9]{32}$/.test(database) || !/^[a-f0-9-]{36}$/.test(trackId)) throw new Error('Invalid browser fixture');
+  const server = process.env.BROWSER_DATABASE_SERVER || 'postgres://postgres:postgres@localhost:5432';
+  // Fixture row only: a failed setup is something the Inbox and the
+  // project's badge count.
+  execFileSync('psql', [`${server}/${database}`, '-XAtq', '-v', 'ON_ERROR_STOP=1', '-c',
+    `UPDATE ravix.tracks SET setup_state = 'failed', setup_error = 'The opening turn failed.' WHERE id = '${trackId}'`]);
+  await page.goto('/inbox');
+  await expect(page.locator('[data-phx-main]')).toHaveClass(/phx-connected/);
+  const badge = page.locator(`#project-link-${projectId} .badge`);
+  await expect(badge).toBeVisible();
+  const trigger = page.locator('#account-trigger');
+
+  // Evidence first, so the same steps photograph origin/main.
+  await page.screenshot({ path: 'tmp/sidebar-nav.png', clip: { x: 0, y: 0, width: 320, height: 900 } });
+  await trigger.click();
+  const menu = page.locator('#account-menu');
+  await expect(menu).toBeVisible();
+  await page.screenshot({ path: 'tmp/sidebar-you-menu.png', clip: { x: 0, y: 0, width: 320, height: 900 } });
+  await page.keyboard.press('Escape');
+  await expect(menu).toBeHidden();
+
+  // Nav rows: one height, the Inbox's count inside it.
+  const heights = await page.locator('#yard .yard-nav .yard-item').evaluateAll(els => els.map(el => el.getBoundingClientRect().height));
+  expect(new Set(heights), `nav heights ${heights}`).toEqual(new Set([30]));
+  await expect(page.locator('#yard .yard-nav .yard-item .badge')).toHaveText('1');
+
+  // The project's count says what it counts.
+  await expect(badge).toHaveAttribute('title', '1 track needs you');
+  await expect(badge).toHaveAttribute('aria-label', '1 track needs you');
+
+  // The toggle hides the sidebar, says so, and Ctrl+B does the same.
+  const toggle = page.locator('#yard-toggle');
+  await expect(toggle).toHaveAttribute('title', 'Hide sidebar (Ctrl+B)');
+  await expect(toggle).toHaveAccessibleName('Hide sidebar');
+  await page.keyboard.press('Control+b');
+  await expect(page.locator('html')).toHaveAttribute('data-yard', 'closed');
+  await expect(toggle).toHaveAttribute('title', 'Show sidebar (Ctrl+B)');
+  await page.keyboard.press('Control+b');
+  await expect(page.locator('html')).not.toHaveAttribute('data-yard', 'closed');
+
+  // The project list keeps its scrollbar's room whether or not it scrolls.
+  expect(await page.locator('#yard .yard-scroll').evaluate(el => getComputedStyle(el).scrollbarGutter)).toBe('stable');
+
+  // A row is lit by a tint, never underlined.
+  const row = page.locator(`#project-track-tab-${trackId}`);
+  await row.hover();
+  expect(await row.evaluate(el => getComputedStyle(el).textDecorationLine)).toBe('none');
+
+  // The You menu: 32px single-line rows, opened by a chevron pointing up.
+  const up = await page.locator('.account-chevron').evaluate(el => new DOMMatrix(getComputedStyle(el).transform).b);
+  expect(up).toBeCloseTo(-1);
+  await trigger.click();
+  await expect(menu).toBeVisible();
+  const rows = await menu.locator(':scope > .theme-picker > .theme-trigger, :scope > .notify > .theme-trigger, :scope > .account-item').evaluateAll(els => els.map(el => el.getBoundingClientRect().height));
+  expect(rows.length).toBeGreaterThan(5);
+  expect(new Set(rows), `menu rows ${rows}`).toEqual(new Set([32]));
+  await page.keyboard.press('Escape');
+  expect((await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa']).analyze()).violations).toEqual([]);
+});

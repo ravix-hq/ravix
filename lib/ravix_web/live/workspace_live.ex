@@ -1595,6 +1595,27 @@ defmodule RavixWeb.WorkspaceLive do
 
   defp project_attention(tracks, id), do: Enum.count(Map.get(tracks, id, []), &attention?/1)
 
+  # What a project's badge counts, for its tooltip and name (RAV-96): the
+  # tracks the Inbox would list, not how many tracks there are.
+  defp need_you(1), do: "1 track needs you"
+  defp need_you(count), do: "#{count} tracks need you"
+
+  defp sidebar_shortcut(true), do: "⌘B"
+  defp sidebar_shortcut(_mac), do: "Ctrl+B"
+
+  # Whether every track the rail shows has one creator (RAV-96). Then an
+  # avatar on each row says nothing, as under Mine, and the rail leaves it
+  # out; each row's name still says who created it.
+  defp one_creator?(tracks, user, selected) do
+    tracks
+    |> Map.values()
+    |> Enum.filter(&is_list/1)
+    |> Enum.flat_map(&rail_rows(&1, user, selected))
+    |> Enum.uniq_by(& &1.created_by_login)
+    |> length()
+    |> Kernel.<=(1)
+  end
+
   # start_async does not run on the disconnected render. The connected mount
   # starts the same traced read as subsequent refreshes, leaving the shell free
   # to render and the selected track free to mount independently.
