@@ -576,7 +576,11 @@ defmodule Ravix.Tracks.Transcript do
     case Protocol.classify_line(line) do
       {:notification, "session/update", params} ->
         update = if is_map(params["update"]), do: params["update"], else: params
-        Enum.reduce(Blocks.from_update(update), acc, &apply_block(&1, update, ts, &2))
+
+        case Blocks.from_update(update) do
+          [] -> refine(acc, update)
+          blocks -> Enum.reduce(blocks, acc, &apply_block(&1, update, ts, &2))
+        end
 
       {:invalid, raw} ->
         Fold.push(acc, %Block.Raw{body: raw})
@@ -616,13 +620,33 @@ defmodule Ravix.Tracks.Transcript do
   defp pair_result(acc, id, result, update, ts) do
     Fold.result(acc, id, fn tool ->
       %{
-        tool
+        refined(tool, update)
         | status: if(result.error?, do: :error, else: :done),
           output: result.body,
-          ended_at: ts,
-          detail: detail(tool.detail, update)
+          ended_at: ts
       }
     end)
+  end
+
+  # A `tool_call_update` with no terminal status yields no block, but it is
+  # where a streaming adapter names the call: claude-agent-acp sends the
+  # `tool_call` as the tool_use starts, titled "Preparing file…" or
+  # "Terminal" with empty input, and the path or command only arrives in
+  # these (RAV-92). Dropping them left a finished row on its placeholder.
+  defp refine(acc, %{"sessionUpdate" => "tool_call_update", "toolCallId" => id} = update)
+       when is_binary(id),
+       do: Fold.result(acc, id, &refined(&1, update))
+
+  defp refine(acc, _update), do: acc
+
+  defp refined(tool, update) do
+    name =
+      case update["title"] do
+        title when is_binary(title) and title != "" -> title
+        _ -> tool.name
+      end
+
+    %{tool | name: name, detail: detail(tool.detail, update)}
   end
 
   # ── tool detail (src/lib/tools.ts) ────────────────────────────────────
@@ -633,6 +657,10 @@ defmodule Ravix.Tracks.Transcript do
   Both frames are read. `tool_call` carries the kind and the arguments;
   `tool_call_update` carries the result, and an adapter is free to put the
   diff on either, so the two are merged rather than one being trusted.
+
+  A later diff for a path replaces the earlier ones for it: an adapter sends
+  a diff built from the call's input and then the real one once the tool has
+  run, and both describe the same change.
   """
   @spec detail(Detail.t(), map()) :: Detail.t()
   def detail(%Detail{} = current, update) do
@@ -664,7 +692,17 @@ defmodule Ravix.Tracks.Transcript do
         else: current.input
 
     paths = Enum.uniq(current.paths ++ locations(update["locations"]))
-    edits = current.edits ++ edits(update["content"])
+
+    edits =
+      case edits(update["content"]) do
+        [] ->
+          current.edits
+
+        new ->
+          replaced = MapSet.new(new, & &1.path)
+          Enum.reject(current.edits, &MapSet.member?(replaced, &1.path)) ++ new
+      end
+
     %Detail{kind: kind, input: input, paths: paths, edits: edits}
   end
 
