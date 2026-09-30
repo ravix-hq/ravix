@@ -3,7 +3,7 @@ defmodule RavixWeb.WorkspaceScopeLiveTest do
   The current workspace scopes the page (ADR 0009 follow-up): the switcher
   sets it, it persists per person, the rail, quick-jump, badges, the Inbox
   and New track show only it, a `/p/:id` link follows its project into its
-  workspace, the gear opens settings, legacy shares sit in "Shared with
+  workspace, its menu opens settings, legacy shares sit in "Shared with
   you", and with the switch off nothing changes.
 
   Not async: the tests turn `RAVIX_WORKSPACE_ACCESS` on, application-wide.
@@ -339,16 +339,113 @@ defmodule RavixWeb.WorkspaceScopeLiveTest do
     assert Repo.reload!(ctx.me).current_workspace_id == nil
   end
 
-  test "the gear opens the current workspace's settings and members", ctx do
+  # The rail read, held until the test lets it answer, as the setup's stub
+  # would have answered it.
+  defp hold_rail do
+    test_pid = self()
+
+    expect(Tracks, :list_many, fn user, ids, _opts ->
+      send(test_pid, {:rail_started, self()})
+
+      receive do
+        :release_rail ->
+          Ravix.Accounts.Access.open_tracks(user, ids)
+          |> Enum.group_by(fn {_row, project} -> project.id end, fn {row, _} ->
+            %{Tracks.present(row) | status: :ready, unread: true}
+          end)
+      end
+    end)
+  end
+
+  defp switcher_name(html) do
+    html
+    |> LazyHTML.from_document()
+    |> LazyHTML.query("#workspace-switcher-trigger .truncate")
+    |> LazyHTML.text()
+    |> String.trim()
+  end
+
+  test "the first paint names the session's current workspace and shows skeletons, never an empty Inbox",
+       ctx do
+    {:ok, _} = Accounts.put_current_workspace(ctx.me, ctx.team.id)
+    hold_rail()
+
+    dead = get(ctx.conn, "/inbox")
+    html = html_response(dead, 200)
+    refute_received {:rail_started, _}
+
+    # The disconnected render resolves the workspace the connected one will.
+    assert switcher_name(html) == "Team"
+    refute html =~ ~s(id="workspace-switcher-skeleton")
+    assert html =~ ~s(href="/w/#{ctx.team.id}")
+    assert html =~ "rail-row-skeleton"
+    assert html =~ "inbox-item-skeleton"
+    refute html =~ "all caught up"
+    refute html =~ "Loading projects…</p>"
+
+    {:ok, view, _} = live(dead)
+    assert_receive {:rail_started, worker}
+    assert has_element?(view, "#workspace-switcher-trigger", "Team")
+    assert has_element?(view, "#rail-loading .rail-row-skeleton")
+    assert has_element?(view, "#inbox-loading .inbox-item-skeleton")
+    refute has_element?(view, ".inbox-empty")
+
+    send(worker, :release_rail)
+    render_async(view)
+    assert has_element?(view, "#workspace-switcher-trigger", "Team")
+    assert Repo.reload!(ctx.me).current_workspace_id == ctx.team.id
+    refute has_element?(view, "#inbox-loading")
+    refute has_element?(view, "#rail-loading")
+    assert has_element?(view, ".inbox-item", "team-track")
+  end
+
+  test "the first paint resolves a workspace the viewer cannot reach to their default", ctx do
+    stranger = insert_user(login: "stranger")
+    {:ok, theirs} = Workspaces.create(stranger, "Theirs")
+
+    ctx.me
+    |> Ecto.Changeset.change(current_workspace_id: theirs.id)
+    |> Repo.update!()
+
+    html = ctx.conn |> get("/inbox") |> html_response(200)
+    assert switcher_name(html) == "me"
+    refute html =~ "Theirs"
+    refute html =~ "/w/#{theirs.id}"
+  end
+
+  test "a first page naming a project in another workspace shows a switcher skeleton until it follows",
+       ctx do
+    {:ok, _} = Accounts.put_current_workspace(ctx.me, ctx.personal.id)
+    hold_rail()
+
+    html = ctx.conn |> get("/p/#{ctx.team_project.id}") |> html_response(200)
+    assert html =~ ~s(id="workspace-switcher-skeleton")
+    assert switcher_name(html) == ""
+
+    {:ok, view, _} = live(ctx.conn, "/p/#{ctx.team_project.id}")
+    assert_receive {:rail_started, worker}
+    assert has_element?(view, "#workspace-switcher-skeleton")
+    refute has_element?(view, "#workspace-switcher-trigger")
+
+    send(worker, :release_rail)
+    render_async(view)
+    refute has_element?(view, "#workspace-switcher-skeleton")
+    assert has_element?(view, "#workspace-switcher-trigger", "Team")
+  end
+
+  test "the workspace menu opens the current workspace's settings and members", ctx do
     view = open(ctx.conn, "/home")
 
     assert has_element?(
              view,
-             ~s(#workspace-settings[href="/w/#{ctx.personal.id}"][aria-label="Settings and members of me"])
+             ~s(#workspace-menu #workspace-settings[href="/w/#{ctx.personal.id}"][aria-label="Settings and members of me"])
            )
 
+    # One settings entry point in the sidebar: no gear beside the name.
+    refute has_element?(view, ".workspace-gear")
+
     # The switcher's entries are choices, not links to that page.
-    refute has_element?(view, ~s(#workspace-menu a[href^="/w/"]))
+    refute has_element?(view, ~s(#workspace-menu [role=group] a))
 
     assert {:error, {:live_redirect, %{to: to}}} =
              view |> element("#workspace-settings") |> render_click()

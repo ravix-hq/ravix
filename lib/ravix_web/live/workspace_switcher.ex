@@ -6,8 +6,8 @@ defmodule RavixWeb.Live.WorkspaceSwitcher do
   "New workspace" form. Picking one makes it the viewer's *current*
   workspace (`Ravix.Accounts.put_current_workspace/2`), which is what the
   sidebar, quick-jump, badges, the Inbox and New track then show: an event,
-  not a navigation. The gear beside the current workspace's name opens its
-  settings and members (`RavixWeb.WorkspacePeopleLive`). Drawn only while
+  not a navigation. "Members and settings", first in the menu, opens the
+  current workspace's page (`RavixWeb.WorkspacePeopleLive`). Drawn only while
   `RAVIX_WORKSPACE_ACCESS` is on: with it off, `list/1` answers nothing and
   the component renders nothing.
 
@@ -73,16 +73,26 @@ defmodule RavixWeb.Live.WorkspaceSwitcher do
   attr :workspaces, :list, required: true
   attr :current_id, :string, default: nil
 
-  @doc "The switcher: a trigger naming the current workspace, and its menu."
+  @doc """
+  The switcher: a trigger naming the current workspace, and its menu. With
+  no current workspace in hand yet -- a URL about to move the page into
+  another one -- a skeleton, never a guess at which it will be (RAV-67).
+  """
   def switcher(assigns) do
-    current =
-      Enum.find(assigns.workspaces, &(&1.workspace.id == assigns.current_id)) ||
-        List.first(assigns.workspaces)
-
+    current = Enum.find(assigns.workspaces, &(&1.workspace.id == assigns.current_id))
     assigns = assign(assigns, current: current && current.workspace)
 
     ~H"""
-    <div :if={@workspaces != []} id="workspace-switcher" class="workspace-switcher">
+    <div
+      :if={@workspaces != [] && is_nil(@current)}
+      id="workspace-switcher-skeleton"
+      class="workspace-switcher"
+      role="status"
+    >
+      <span class="skeleton workspace-trigger-skeleton" aria-hidden="true"></span>
+      <span class="sr-only">Loading workspace…</span>
+    </div>
+    <div :if={@current} id="workspace-switcher" class="workspace-switcher">
       <button
         type="button"
         id="workspace-switcher-trigger"
@@ -94,16 +104,18 @@ defmodule RavixWeb.Live.WorkspaceSwitcher do
         <span class="truncate">{@current.name}</span>
         <.icon name="chevron" size={12} />
       </button>
-      <.link
-        id="workspace-settings"
-        navigate={"/w/#{@current.id}"}
-        class="ghost workspace-gear"
-        aria-label={"Settings and members of #{@current.name}"}
-        title="Workspace settings and members"
-      >
-        <.icon name="settings" size={14} />
-      </.link>
       <div id="workspace-menu" class="workspace-menu" popover>
+        <%!-- The workspace's own settings live in its menu: the sidebar
+          footer's Settings is the page's one settings entry point. --%>
+        <.link
+          id="workspace-settings"
+          navigate={"/w/#{@current.id}"}
+          class="account-item"
+          aria-label={"Settings and members of #{@current.name}"}
+        >
+          <.icon name="person" size={14} />Members and settings
+        </.link>
+        <hr />
         <div role="group" aria-label="Workspaces">
           <button
             :for={%{workspace: workspace} <- @workspaces}

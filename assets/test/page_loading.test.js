@@ -1,11 +1,45 @@
 import {test, expect} from "bun:test"
 import {trackPageLoading} from "../js/page_loading"
 
+const start = (kind) => window.dispatchEvent(new CustomEvent("phx:page-loading-start", {detail: {kind}}))
+const stop = () => window.dispatchEvent(new CustomEvent("phx:page-loading-stop"))
+const busy = () => document.documentElement.classList.contains("page-loading")
+
+test("the first connect shows no toast; a rejoin after an established socket drops does", () => {
+  const cleanup = trackPageLoading(window)
+  start("initial")
+  expect(busy()).toBe(false)
+  stop()
+  expect(busy()).toBe(false)
+  // The socket drops, then rejoins.
+  start("error")
+  expect(busy()).toBe(false)
+  start("initial")
+  expect(busy()).toBe(true)
+  stop()
+  expect(busy()).toBe(false)
+  cleanup()
+})
+
+test("a first connect that fails and retries stays quiet until it has joined once", () => {
+  const cleanup = trackPageLoading(window)
+  start("initial")
+  start("error")
+  start("initial")
+  expect(busy()).toBe(false)
+  stop()
+  expect(busy()).toBe(false)
+  start("patch")
+  expect(busy()).toBe(true)
+  stop()
+  expect(busy()).toBe(false)
+  cleanup()
+})
+
 test("navigation feedback tracks overlap, errors, recovery and browser history restore", () => {
   const cleanup = trackPageLoading(window)
-  const start = (kind) => window.dispatchEvent(new CustomEvent("phx:page-loading-start", {detail: {kind}}))
-  const stop = () => window.dispatchEvent(new CustomEvent("phx:page-loading-stop"))
-  const busy = () => document.documentElement.classList.contains("page-loading")
+  start("initial")
+  stop()
   start("patch")
   start("redirect")
   expect(busy()).toBe(true)

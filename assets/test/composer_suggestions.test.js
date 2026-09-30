@@ -261,7 +261,7 @@ test("Comment mode keeps its people list and opens neither Ask menu", () => {
   expect(events).toEqual([])
 })
 
-test("⌘L or Ctrl+L focuses the box from the page, but not from the terminal", () => {
+test("⌘L or Ctrl+L focuses the box from the page, but not from the terminal", async () => {
   const {hook} = mountHook(Composer, "#composer-t1")
   expect(document.querySelector("[data-composer-shortcut]").textContent).toBe(`${shortcutLabel()} to focus`)
   hook.el.value = "half a thought"
@@ -288,4 +288,7 @@ test("⌘L or Ctrl+L focuses the box from the page, but not from the terminal", 
   hook.destroyed()
   hook.el.disabled = false
   expect(key(document.body, "l", {ctrlKey: true}).defaultPrevented).toBe(false)
+  // Let the blur's timer run: one still pending when the teardown aborts
+  // Happy DOM leaves its timers dead for every test file that follows.
+  await new Promise(resolve => setTimeout(resolve))
 })
