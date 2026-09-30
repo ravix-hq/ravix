@@ -1115,7 +1115,15 @@ test('composer Send stays compact and keeps its arrow after repeated submissions
     if (method === 'click') await send.click();
     else await composer.press('Enter');
     await expect(page.locator('#composer-form')).toHaveClass(/phx-submit-loading/);
-    await checkSend();
+    // One snapshot of the acknowledgement window, since RAV-87 lets send
+    // leave the slot as soon as the box clears and the turn starts: while the
+    // submit is out, send is there and still carries its arrow.
+    const inFlight = await page.evaluate(() => {
+      const form = document.querySelector('#composer-form');
+      const path = form.querySelector('button[aria-label="Send"] svg path');
+      return { loading: form.classList.contains('phx-submit-loading'), d: path?.getAttribute('d') };
+    });
+    if (inFlight.loading) expect(inFlight.d).toBe('M12 19V5M6 11l6-6 6 6');
     await expect(composer).toHaveValue('');
     // RAV-87: an empty box has nothing to send, so send is disabled or, while
     // the turn runs, stands aside for Stop. Typing brings it back, enabled.
