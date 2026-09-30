@@ -486,6 +486,64 @@ async function act(prompt: string, emit: Emit, say: Say, conv: Conv, disk: Disk,
     return;
   }
 
+  // A turn shaped like a real one: thinking between most calls, several shell
+  // calls (one a multi-line heredoc), a read and an edit, arriving a second
+  // apart so a running turn can be watched filling in.
+  if (prompt.endsWith("Demonstrate a tool-heavy turn")) {
+    const slug = parseChannel(conv.channel_id)?.trackSlug;
+    const home = slug ? `${WORK_ROOT}/${slug}` : WORK_ROOT;
+    const file = `${home}/src/lib/window.ts`;
+    const out = (data: string) => emit({ kind: "output", stream: "acp", data });
+    const shell = (id: string, command: string, description: string) =>
+      out(acp({ sessionUpdate: "tool_call", toolCallId: id, title: `\`${command.split("\n")[0]}\``, kind: "execute", rawInput: { command, description } }));
+    const step = pause.bind(null, 900);
+    out(thought("Find where day boundaries are computed before touching anything."));
+    shell("h1", `rg -n "86400000|dayOf" src --glob '!*.test.ts'`, "Find day arithmetic");
+    await step();
+    out(toolDone("h1", "src/lib/window.ts:2:export const dayOf = (ms: number) => Math.floor(ms / 86400000);\nsrc/lib/schedule.ts:14:  const today = dayOf(Date.now());"));
+    out(thought("Two call sites. Read the helper."));
+    out(acp({ sessionUpdate: "tool_call", toolCallId: "r1", title: `Read ${file}`, kind: "read", rawInput: { file_path: file }, locations: [{ path: file }] }));
+    await step();
+    out(toolDone("r1", "// TODO: rounding here is wrong across a DST boundary\nexport const dayOf = (ms: number) => Math.floor(ms / 86400000);\n"));
+    out(thought("Check how far off it is on a real DST transition before changing it."));
+    shell("h2", [
+      "python3 - <<'PY'",
+      "from datetime import datetime",
+      "from zoneinfo import ZoneInfo",
+      "tz = ZoneInfo('America/New_York')",
+      "for d in ('2026-03-08', '2026-11-01'):",
+      "    start = datetime.fromisoformat(d).replace(tzinfo=tz)",
+      "    print(d, start.utcoffset())",
+      "PY",
+    ].join("\n"), "Show the UTC offset on each DST change");
+    await step();
+    out(toolDone("h2", "2026-03-08 -1 day, 19:00:00\n2026-11-01 -1 day, 20:00:00"));
+    out(thought("An hour of drift twice a year. Use the calendar date instead of dividing milliseconds."));
+    out(acp({
+      sessionUpdate: "tool_call", toolCallId: "e1", title: `Edit ${file}`, kind: "edit",
+      rawInput: { file_path: file, old_string: "Math.floor(ms / 86400000)", new_string: "localDay(new Date(ms))" },
+      locations: [{ path: file }],
+    }));
+    await step();
+    out(acp({
+      sessionUpdate: "tool_call_update", toolCallId: "e1", status: "completed",
+      content: [{
+        type: "diff", path: file,
+        oldText: "// TODO: rounding here is wrong across a DST boundary\nexport const dayOf = (ms: number) => Math.floor(ms / 86400000);\n",
+        newText: "const localDay = (d: Date) => Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()) / 86400000;\nexport const dayOf = (ms: number) => localDay(new Date(ms));\n",
+      }],
+    }));
+    out(thought("Run the tests for both call sites."));
+    shell("h3", "bun test src/lib/window.test.ts src/lib/schedule.test.ts --timeout 20000 --reporter=dots --coverage", "Run the affected tests");
+    await step();
+    out(toolDone("h3", "bun test v1.3.11\n\n src/lib/window.test.ts: 6 pass\n src/lib/schedule.test.ts: 11 pass\n\n 17 pass\n 0 fail"));
+    shell("h4", "git diff --stat", "Summarise the change");
+    await step();
+    out(toolDone("h4", " src/lib/window.ts | 4 ++--\n 1 file changed, 2 insertions(+), 2 deletions(-)"));
+    await say("`dayOf` now counts calendar days in local time, so it no longer drifts by an hour across a DST change. The window and schedule tests pass (17 of 17).");
+    return;
+  }
+
   const dir = /\/home\/sprite\/work\/[A-Za-z0-9._-]+/.exec(prompt)?.[0] ?? null;
 
   if (prompt.startsWith("[ravix] Open this track") && dir) {

@@ -5435,10 +5435,16 @@ defmodule RavixWeb.TrackLiveTest do
     refute has_element?(ctx.view, "#turns-turn .workspace-work", "The answer")
     assert has_element?(ctx.view, "#turns-turn .agent-terminal-output > div > .md", "The answer")
 
-    # A command the title already names is not repeated, the working
-    # directory stays in the expanded arguments, and success needs no chip.
-    refute has_element?(ctx.view, "#turns-turn .tool-summary", "git ls-remote")
-    assert has_element?(ctx.view, "#turns-turn .tool-summary", "mix test")
+    # Each call is its tool's name and its command, once: a title that is
+    # the command is not repeated, one that says more is kept for the body,
+    # the working directory stays in the expanded arguments, and success
+    # needs no chip.
+    assert has_element?(ctx.view, "#turns-turn .workspace-tool .tool-name", "Bash")
+    assert has_element?(ctx.view, "#turns-turn .tool-target", "git ls-remote origin HEAD")
+    refute has_element?(ctx.view, "#turns-turn .tool-note", "git ls-remote")
+    assert has_element?(ctx.view, "#turns-turn .tool-target", "mix test")
+    assert has_element?(ctx.view, "#turns-turn .tool-note", "Run tests")
+    assert has_element?(ctx.view, "#turns-turn .tool-args dd", "/home/sprite/work/track")
     refute render(ctx.view) =~ "cwd="
     refute has_element?(ctx.view, "#turns-turn .workspace-tool .chip", "done")
     assert has_element?(ctx.view, "#turns-turn .workspace-tool .chip.tool-error", "error")
@@ -5464,10 +5470,165 @@ defmodule RavixWeb.TrackLiveTest do
     )
 
     drawn(ctx.view)
-    assert has_element?(ctx.view, "#turns-turn .workspace-work .work-now", "mix compile")
+    assert has_element?(ctx.view, "#turns-turn .workspace-work .work-now", "Bash mix compile")
     assert has_element?(ctx.view, "#turns-turn .workspace-work > summary", "3 tool calls")
     assert has_element?(ctx.view, "#turns-turn .workspace-work-body .md", "The answer")
   end
+
+  test "a turn's calls are one labelled line each, with its thoughts in one toggle", ctx do
+    update = fn data ->
+      Jason.encode!(%{jsonrpc: "2.0", method: "session/update", params: %{update: data}})
+    end
+
+    dir = ctx.track.workdir
+    thought = &%{sessionUpdate: "agent_thought_chunk", content: %{type: "text", text: &1}}
+    heredoc = "python3 - <<'PY'\nprint('<script>alert(1)</script>')\nPY"
+    long = String.duplicate("x", 400)
+
+    frames = [
+      thought.("First, look around."),
+      %{
+        sessionUpdate: "tool_call",
+        toolCallId: "py",
+        title: "`python3 - <<'PY'`",
+        kind: "execute",
+        rawInput: %{command: heredoc}
+      },
+      %{
+        sessionUpdate: "tool_call_update",
+        toolCallId: "py",
+        status: "completed",
+        content: [%{type: "content", content: %{type: "text", text: "<script>alert(1)</script>"}}]
+      },
+      thought.("Then read the file."),
+      %{
+        sessionUpdate: "tool_call",
+        toolCallId: "read",
+        title: "Read #{dir}/lib/app.ex",
+        kind: "read",
+        rawInput: %{file_path: "#{dir}/lib/app.ex"},
+        locations: [%{path: "#{dir}/lib/app.ex"}]
+      },
+      %{sessionUpdate: "tool_call_update", toolCallId: "read", status: "completed"},
+      thought.("And <b>grep</b> for it."),
+      %{
+        sessionUpdate: "tool_call",
+        toolCallId: "grep",
+        title: "grep",
+        kind: "search",
+        rawInput: %{pattern: long}
+      },
+      %{sessionUpdate: "tool_call_update", toolCallId: "grep", status: "completed"},
+      %{sessionUpdate: "agent_message_chunk", content: %{type: "text", text: "Done."}}
+    ]
+
+    events =
+      frames
+      |> Enum.with_index(1)
+      |> Enum.map(fn {data, id} ->
+        %{
+          "id" => id,
+          "turn_id" => "turn",
+          "kind" => "output",
+          "stream" => "acp",
+          "data" => update.(data)
+        }
+      end)
+
+    stub(Tracks, :events, fn _, _, _ ->
+      {:ok, Transcript.page([opened(0, "turn", "Prompt") | events], "claude")}
+    end)
+
+    render_click(ctx.view, "retry-load")
+    render_async(ctx.view)
+
+    # Three thoughts, one toggle, ahead of the calls rather than between them.
+    assert has_element?(ctx.view, "#turns-turn .workspace-work > summary", "3 thoughts")
+
+    assert has_element?(
+             ctx.view,
+             "#turns-turn .workspace-work-body > details.workspace-thinking:first-child > summary",
+             "3 thoughts"
+           )
+
+    assert ctx.view
+           |> element("#turns-turn .workspace-work-body")
+           |> render()
+           |> count("workspace-thinking") == 1
+
+    assert has_element?(ctx.view, "#turns-turn .workspace-thinking .md", "Then read the file.")
+    refute has_element?(ctx.view, "#turns-turn .workspace-thinking b")
+
+    # The fold, the thoughts and each call keep an id across patches, so an
+    # opened one is the same element when the next call is drawn.
+    assert has_element?(ctx.view, "#turns-turn details#work-turn.workspace-work")
+    assert has_element?(ctx.view, "#turns-turn details#thoughts-turn.workspace-thinking")
+    assert has_element?(ctx.view, "#turns-turn details#work-turn-2.workspace-tool", "Search")
+
+    # One line per call: an icon, the name, the first line of the command.
+    rows = "#turns-turn .workspace-work-body > div > .workspace-tool"
+
+    assert ctx.view
+           |> element("#turns-turn .workspace-work-body")
+           |> render()
+           |> count("workspace-tool\"") == 3
+
+    assert has_element?(ctx.view, "#{rows} > summary > svg.tool-icon")
+
+    assert has_element?(
+             ctx.view,
+             ~s|#{rows} > summary[title="python3 - <<'PY'"][aria-label="Bash: python3 - <<'PY'"]|
+           )
+
+    assert has_element?(ctx.view, "#{rows} > summary .tool-target", "python3 - <<'PY'")
+    assert has_element?(ctx.view, "#{rows} > summary .tool-more", "+2 lines")
+    refute has_element?(ctx.view, "#{rows} > summary .tool-target", "print(")
+
+    # Paths are named from the track's own directory.
+    assert has_element?(ctx.view, "#{rows} > summary .tool-name", "Read")
+    assert has_element?(ctx.view, ~s|#{rows} > summary .tool-target|, "lib/app.ex")
+    refute has_element?(ctx.view, ~s|#{rows} > summary .tool-target|, dir)
+
+    # The command keeps its own newlines, and none of the agent's output is markup.
+    command = ctx.view |> element("#{rows} .tool-command") |> render()
+    assert command =~ "&lt;&lt;&#39;PY&#39;\nprint("
+    refute command =~ "\\n"
+    html = render(ctx.view)
+    refute has_element?(ctx.view, "#transcript-turns script")
+    assert html =~ "&lt;script&gt;alert(1)&lt;/script&gt;"
+
+    # A long pattern is the whole of one line, clamped by the stylesheet.
+    assert has_element?(ctx.view, "#{rows} > summary .tool-name", "Search")
+    assert has_element?(ctx.view, ~s|#{rows} > summary[title="#{long}"] .tool-target|, long)
+
+    # A call that starts while the turn runs arrives as one more row.
+    send(
+      ctx.view.pid,
+      {:transcript, ctx.track.id,
+       %{
+         "id" => 30,
+         "turn_id" => "turn",
+         "kind" => "output",
+         "stream" => "acp",
+         "data" =>
+           update.(%{
+             sessionUpdate: "tool_call",
+             toolCallId: "edit",
+             title: "Edit #{dir}/lib/app.ex",
+             kind: "edit",
+             rawInput: %{file_path: "#{dir}/lib/app.ex"}
+           })
+       }}
+    )
+
+    drawn(ctx.view)
+    assert has_element?(ctx.view, "#turns-turn .workspace-work > summary", "4 tool calls")
+    assert has_element?(ctx.view, "#work-turn-4 > summary .tool-name", "Edit")
+    assert has_element?(ctx.view, "#work-turn-4 > summary .chip.tool-running", "running")
+    assert has_element?(ctx.view, "#turns-turn .work-now", "Edit lib/app.ex")
+  end
+
+  defp count(html, needle), do: length(String.split(html, needle)) - 1
 
   for {scenario, status, following, ending, recovered, failed} <- [
         {"recovered by another call", "failed", :tool, "completed", 1, 0},
