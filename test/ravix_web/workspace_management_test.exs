@@ -809,7 +809,7 @@ defmodule RavixWeb.WorkspaceManagementTest do
     assert has_element?(
              ctx.view,
              "#search-dialog [role=status]",
-             "No projects, tracks or plans match"
+             "No tracks match 'does-not-exist'"
            )
 
     refute has_element?(ctx.view, "#search-dialog h3")

@@ -60,6 +60,9 @@ defmodule RavixWeb.WorkspaceLive do
         # schedule is prefilled with and schedule times are shown in. UTC
         # before the socket connects, or when the browser names no known zone.
         timezone: Schedules.timezone((get_connect_params(socket) || %{})["timezone"]),
+        # Shortcut hints name the viewer's key: ⌘ on a Mac, Ctrl elsewhere
+        # (and before the socket connects), as `QuickJump` binds them.
+        mac: (get_connect_params(socket) || %{})["platform"] == "mac",
         github_available: Accounts.capabilities().github,
         reconnect_agent: nil,
         health_refresh: 0,
@@ -2302,6 +2305,8 @@ defmodule RavixWeb.WorkspaceLive do
     end
   end
 
+  # A track's display name, wherever a track is listed by name: the sidebar
+  # and quick jump. One place, so real titles (RAV-83) change both.
   defp tab_label(%{title: title}) do
     namespace = Ids.branch_namespace()
     if title != namespace, do: String.replace_prefix(title, namespace, ""), else: title
@@ -2484,10 +2489,13 @@ defmodule RavixWeb.WorkspaceLive do
     assigns = assign(assigns, results: results, query: query)
 
     ~H"""
-    <p :if={@results == []} role="status">No projects, tracks or plans match</p>
+    <p :if={@results == []} class="search-empty" role="status">
+      {if @query == "", do: "No tracks yet", else: "No tracks match '#{@query}'"}
+    </p>
     <section
       :for={{project, tracks, plans} <- @results}
       id={"search-group-#{project.id}"}
+      class="search-group"
       aria-labelledby={"search-project-#{project.id}"}
     >
       <h3 id={"search-project-#{project.id}"}>
@@ -2497,7 +2505,7 @@ defmodule RavixWeb.WorkspaceLive do
           patch={"/p/#{project.id}"}
           data-jump-result
         >
-          {project.display_name}
+          <span class="search-label">{project.display_name}</span>
           <span
             :if={project_attention(@tracks, project.id) > 0}
             class="badge"
@@ -2507,16 +2515,23 @@ defmodule RavixWeb.WorkspaceLive do
             project.id
           )}</span>
         </.link>
-        <span :if={!project_matches?(project, @query)}>{project.display_name}</span>
+        <span :if={!project_matches?(project, @query)} class="search-label">
+          {project.display_name}
+        </span>
+        <span class="search-count" aria-label={count_label(length(tracks) + length(plans))}>
+          {length(tracks) + length(plans)}
+        </span>
       </h3>
       <.link
         :for={track <- tracks}
         id={"search-track-link-#{track.id}"}
         patch={"/p/#{project.id}/t/#{track.id}"}
         class="workspace-track"
+        title={track.title}
         data-jump-result
       >
-        {track.title}<span :if={track.visibility == :private}><.icon name="lock" /> Private</span>
+        <span class="search-label">{tab_label(track)}</span><span :if={track.visibility == :private}><.icon name="lock" />
+        Private</span>
         <span :if={attention?(track)} class="badge" aria-label="1 unread">1</span>
       </.link>
       <.link
@@ -2524,9 +2539,10 @@ defmodule RavixWeb.WorkspaceLive do
         id={"search-plan-link-#{plan.id}"}
         patch={"/p/#{project.id}/plans?plan=#{plan.id}"}
         class="workspace-track"
+        title={plan.title}
         data-jump-result
       >
-        <.icon name="document" size={13} /><span>Plan: {plan.title}</span><span
+        <.icon name="document" size={13} /><span class="search-label">Plan: {plan.title}</span><span
           :if={plan.archived}
           class="chip"
         >Archived</span>
@@ -2534,6 +2550,9 @@ defmodule RavixWeb.WorkspaceLive do
     </section>
     """
   end
+
+  defp count_label(1), do: "1 result"
+  defp count_label(n), do: "#{n} results"
 
   defp plan_matches?(plan, query),
     do: String.contains?(String.downcase(plan.title), String.downcase(query))

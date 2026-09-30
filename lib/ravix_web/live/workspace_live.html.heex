@@ -65,7 +65,8 @@
           id="quick-jump-trigger"
           type="button"
           class="ghost"
-          title="Search projects, tracks and plans (⌘/Ctrl K)"
+          title={"Search projects, tracks and plans (#{if @mac, do: "⌘K", else: "Ctrl K"})"}
+          aria-keyshortcuts={if @mac, do: "Meta+K", else: "Control+K"}
           data-quick-jump-trigger
           phx-click={JS.push_focus() |> JS.push("dialog")}
           phx-value-name="search"
@@ -1007,7 +1008,7 @@
       id="search-dialog"
       title="Search"
       on_close="dismiss-switcher"
-      initial_focus="#search-query"
+      focus_on_mount={false}
     >
       <form id="search-form" phx-change="search" phx-submit="search">
         <%!-- Every keystroke re-renders the list below it, which is every
@@ -1018,7 +1019,9 @@
           id="search-query"
           value={@query}
           label="Search projects, tracks and plans"
+          autocomplete="off"
           phx-debounce="150"
+          phx-hook="QuickJumpQuery"
         />
       </form>
       <p :if={!@rail_loaded && !@rail_error} role="status">Loading projects…</p>
