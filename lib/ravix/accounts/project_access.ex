@@ -14,13 +14,17 @@ defmodule Ravix.Accounts.ProjectAccess do
   Every existing reader keeps working: a map pattern matches a struct, so
   `%{project: project, role: role}` at 69 call sites is unchanged. What
   changes is that nothing else can now *satisfy* one by accident.
+
+  `level` is what the caller may do across the project (ADR 0010): the owner
+  is `:admin`, a project member has their membership's role, and a
+  workspace member works as `:write`.
   """
 
   alias Ravix.Accounts.Access
   alias Ravix.Projects.Project
 
-  @enforce_keys [:project, :role]
-  defstruct [:project, :role]
+  @enforce_keys [:project, :role, :level]
+  defstruct [:project, :role, :level]
 
-  @type t :: %__MODULE__{project: Project.t(), role: Access.role()}
+  @type t :: %__MODULE__{project: Project.t(), role: Access.role(), level: Access.level()}
 end

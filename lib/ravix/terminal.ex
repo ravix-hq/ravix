@@ -225,7 +225,7 @@ defmodule Ravix.Terminal do
   @spec exec(User.t(), String.t(), Request.t() | map()) ::
           {:ok, Result.t()} | {:error, reason()}
   def exec(%User{} = user, track_id, request) do
-    with {:ok, %{track: track, project: project}} <- Access.track_access(user, track_id),
+    with {:ok, %{track: track, project: project}} <- Access.track_access(user, track_id, :write),
          {:ok, sprites} <- sprites(),
          {:ok, %Request{} = request} <- Request.parse(request),
          {:ok, sprite} <- sprite_of(project, track) do

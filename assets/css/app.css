@@ -1918,6 +1918,32 @@ body:has(.phx-error) #request-progress { display: none; }
 .people-identity small { color: var(--dim); }
 .people-row button { flex: none; }
 
+/* A person's role (ADR 0010): a quiet label, or for an admin a trigger
+   opening the role menu beside it, the model menu's look in a list row. */
+.role-label { flex: none; font-size: 12px; }
+.role-trigger { display: inline-flex; align-items: center; gap: 4px; }
+.role-trigger:has(+ .role-menu:popover-open) { background: var(--surface-hover); color: var(--ink); }
+.role-menu {
+  position: fixed; inset: auto; margin: 0; top: 50%; left: 50%; translate: -50% -50%;
+  width: min(280px, calc(100vw - 32px)); padding: 4px; color: var(--ink); background: var(--panel);
+  border: 1px solid var(--line); border-radius: var(--radius-lg); box-shadow: 0 8px 28px var(--shadow);
+}
+@supports (position-anchor: --a) {
+  .role-menu {
+    translate: none; top: calc(anchor(bottom) + 4px); left: auto; right: anchor(right);
+    position-try-fallbacks: flip-block;
+  }
+}
+.role-menu hr { margin: 4px 0; border: 0; border-top: 1px solid var(--line); }
+.role-option { width: 100%; }
+.role-option-text { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; text-align: left; }
+.role-option-text small { color: var(--dimmer); font-size: 11px; }
+.role-option[aria-checked="true"] { color: var(--ink); }
+.role-option .check { flex: none; color: var(--accent); }
+.role-option.danger { color: var(--bad); }
+.copy-link { margin-top: 16px; }
+.composer-read-only { color: var(--dim); }
+
 /* The Share dialog (ADR 0009 phase 5): visibility, the @-mention box over
    workspace members, and the track's own link. */
 .share-dialog { display: flex; flex-direction: column; gap: 14px; }

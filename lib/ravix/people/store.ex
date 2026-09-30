@@ -227,29 +227,121 @@ defmodule Ravix.People.Store do
   @spec member?(String.t(), String.t()) :: boolean()
   def member?(track_id, user_id), do: seated?(TrackMember, :track_id, track_id, user_id)
 
+  @typedoc "A role on a seat (ADR 0010); a row from before roles reads as `:write`."
+  @type level :: :read | :write | :admin
+
+  @doc "The role `user_id` holds on this track's seat, or nil with no seat."
+  @spec member_role(String.t(), String.t()) :: level() | nil
+  def member_role(track_id, user_id), do: seat_role(TrackMember, :track_id, track_id, user_id)
+
+  @doc "The role `user_id` holds in the whole project, or nil when they are not in it."
+  @spec project_member_role(String.t(), String.t()) :: level() | nil
+  def project_member_role(project_id, user_id),
+    do: seat_role(ProjectMember, :project_id, project_id, user_id)
+
+  @doc "Every seat's role on a track, by login, for the people list."
+  @spec member_roles(String.t()) :: %{String.t() => level()}
+  def member_roles(track_id), do: seat_roles(TrackMember, :track_id, track_id)
+
+  @doc """
+  Change the role on `user_id`'s seat. False when there is no seat to change.
+  The hub is told here, as `remove_member/2` tells it: a page holding what
+  this person may do re-reads on `:people`.
+  """
+  @spec set_member_role(String.t(), String.t(), level()) :: boolean()
+  def set_member_role(track_id, user_id, role) do
+    changed? = set_seat_role(TrackMember, :track_id, track_id, user_id, role)
+
+    # ownership: `Ravix.People.set_role/4` admitted the caller through
+    # `Access.track_access/3` as an admin of this track; the row is read only
+    # to learn which project's hub to tell.
+    with true <- changed?,
+         %Track{project_id: project_id} <- Tracks.get_track(track_id),
+         do: Ravix.Hub.publish(project_id, :people, track_id: track_id)
+
+    changed?
+  end
+
+  @doc "Change a project member's role. False when they are not a member."
+  @spec set_project_member_role(String.t(), String.t(), level()) :: boolean()
+  def set_project_member_role(project_id, user_id, role) do
+    changed? = set_seat_role(ProjectMember, :project_id, project_id, user_id, role)
+    if changed?, do: Ravix.Hub.publish(project_id, :people)
+    changed?
+  end
+
+  defp seat_role(schema, key, id, user_id) do
+    case Repo.one(
+           from(m in schema,
+             where: field(m, ^key) == ^id and m.user_id == ^user_id,
+             select: %{role: m.role}
+           )
+         ) do
+      nil -> nil
+      %{role: role} -> role || :write
+    end
+  end
+
+  # The project's members and their roles by login, in the one read the
+  # people lists already made of them.
+  defp project_seats(project_id) do
+    rows =
+      Repo.all(
+        from(m in ProjectMember,
+          join: u in assoc(m, :user),
+          where: m.project_id == ^project_id,
+          order_by: m.created_at,
+          select: {u, m.role}
+        )
+      )
+
+    {Enum.map(rows, &elem(&1, 0)), Map.new(rows, fn {u, role} -> {u.login, role || :write} end)}
+  end
+
+  # Every seat on these tracks, grouped by track id, and each seat's role
+  # by login, in one read. A track nobody was named on is absent;
+  # `people_by_track/3` supplies the default.
+  defp seats_by_track(track_ids) do
+    rows =
+      Repo.all(
+        from(m in TrackMember,
+          join: u in assoc(m, :user),
+          where: m.track_id in ^track_ids,
+          order_by: m.created_at,
+          select: {m.track_id, u, m.role}
+        )
+      )
+
+    {Enum.group_by(rows, &elem(&1, 0), &elem(&1, 1)),
+     rows
+     |> Enum.group_by(&elem(&1, 0), fn {_, u, role} -> {u.login, role || :write} end)
+     |> Map.new(fn {track_id, pairs} -> {track_id, Map.new(pairs)} end)}
+  end
+
+  defp seat_roles(schema, key, id) do
+    Repo.all(
+      from(m in schema,
+        join: u in assoc(m, :user),
+        where: field(m, ^key) == ^id,
+        select: {u.login, m.role}
+      )
+    )
+    |> Map.new(fn {login, role} -> {login, role || :write} end)
+  end
+
+  defp set_seat_role(schema, key, id, user_id, role) when role in [:read, :write, :admin] do
+    {count, _} =
+      Repo.update_all(
+        from(m in schema, where: field(m, ^key) == ^id and m.user_id == ^user_id),
+        set: [role: role]
+      )
+
+    count == 1
+  end
+
   @doc "Everyone invited to a track, oldest invitation first. Excludes the owner."
   @spec members_of(String.t()) :: [User.t()]
   def members_of(track_id), do: seats_on(TrackMember, :track_id, track_id)
-
-  @doc """
-  `members_of/1` for several tracks at once, grouped by track id.
-
-  A track nobody was named on is absent rather than empty; `people_by_track/3`
-  supplies the default, since it is the one that knows every id it was asked
-  about.
-  """
-  @spec members_by_track([String.t()]) :: %{String.t() => [User.t()]}
-  def members_by_track(track_ids) do
-    Repo.all(
-      from(m in TrackMember,
-        join: u in assoc(m, :user),
-        where: m.track_id in ^track_ids,
-        order_by: m.created_at,
-        select: {m.track_id, u}
-      )
-    )
-    |> Enum.group_by(&elem(&1, 0), &elem(&1, 1))
-  end
 
   @doc """
   The open tracks this person reaches one at a time -- a seat, a private
@@ -1021,13 +1113,34 @@ defmodule Ravix.People.Store do
   """
   @spec people_of(String.t(), String.t(), String.t()) :: [person()]
   def people_of(track_id, owner_id, project_id) do
-    wide = project_members_of(project_id)
+    {wide, project_roles} = project_seats(project_id)
     # ownership: the caller passed `Access.track_access/2` for this track.
     audience = Ravix.Accounts.Access.workspace_audience(project_id, [track_id])
     {shared, seen} = shared_people(owner_id, wide, audience.members)
 
     people = assemble(shared, seen, members_of(track_id), invites_of(track_id))
-    private_people(track_id, people, Map.get(audience.permitted, track_id, []))
+
+    track_id
+    |> private_people(people, Map.get(audience.permitted, track_id, []))
+    |> with_roles(member_roles(track_id), project_roles)
+  end
+
+  # ADR 0010: each person's role as the list shows it. A track seat and a
+  # project membership carry their own; the owner and a private track's
+  # creator are always admin; the workspace's people work as write.
+  defp with_roles(people, track_roles, project_roles) do
+    Enum.map(people, fn person ->
+      role =
+        case person.via do
+          via when via in [:owner, :creator] -> :admin
+          :project -> Map.get(project_roles, person.login, :write)
+          :track -> Map.get(track_roles, person.login, :write)
+          via when via in [:workspace, :shared] -> :write
+          :pending -> nil
+        end
+
+      %{person | role: role}
+    end)
   end
 
   @doc """
@@ -1048,11 +1161,11 @@ defmodule Ravix.People.Store do
   def people_by_track([], _owner_id, _project_id), do: %{}
 
   def people_by_track(track_ids, owner_id, project_id) do
-    wide = project_members_of(project_id)
+    {wide, project_roles} = project_seats(project_id)
     # ownership: Access.track_access or Access.open_tracks admitted these track IDs.
     audience = Ravix.Accounts.Access.workspace_audience(project_id, track_ids)
     {shared, seen} = shared_people(owner_id, wide, audience.members)
-    members = members_by_track(track_ids)
+    {members, roles} = seats_by_track(track_ids)
     invites = invites_by_track(track_ids)
 
     # ownership: Access.track_access or Access.open_tracks admitted these track IDs.
@@ -1069,7 +1182,8 @@ defmodule Ravix.People.Store do
            Map.get(invites, track_id, [])
          ),
          Map.get(audience.permitted, track_id, [])
-       )}
+       )
+       |> with_roles(Map.get(roles, track_id, %{}), project_roles)}
     end)
   end
 
@@ -1137,13 +1251,10 @@ defmodule Ravix.People.Store do
   """
   @spec project_people_of(String.t(), String.t()) :: [person()]
   def project_people_of(project_id, owner_id) do
-    members =
-      project_id
-      |> project_members_of()
-      |> Enum.map(&Person.new(&1, :project))
-
+    {users, roles} = project_seats(project_id)
+    members = Enum.map(users, &Person.new(&1, :project))
     pending = project_id |> project_invites_of() |> Enum.map(&pending_person/1)
-    owner_entry(owner_id) ++ members ++ pending
+    with_roles(owner_entry(owner_id) ++ members ++ pending, %{}, roles)
   end
 
   @doc "A `Ravix.People.Profile` for a user row: login, name, avatar, nothing else."

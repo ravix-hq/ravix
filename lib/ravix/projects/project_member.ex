@@ -25,6 +25,9 @@ defmodule Ravix.Projects.ProjectMember do
     belongs_to :project, Ravix.Projects.Project, primary_key: true
     belongs_to :user, Ravix.Accounts.User, primary_key: true
     field :invited_by, :string
+    # ADR 0010. Nil on rows from before roles, and on rows the previous
+    # release writes during a deploy; `Ravix.Accounts.Access` reads it as `:write`.
+    field :role, Ecto.Enum, values: [:read, :write, :admin]
     field :created_at, :utc_datetime_usec
   end
 
@@ -34,11 +37,12 @@ defmodule Ravix.Projects.ProjectMember do
   @spec changeset(t(), map()) :: Ecto.Changeset.t()
   def changeset(member, attrs) do
     member
-    |> cast(attrs, @fields)
+    |> cast(attrs, [:role | @fields])
     |> Ravix.Schema.stamp(:created_at)
     |> validate_required(@fields)
     |> foreign_key_constraint(:project_id)
     |> foreign_key_constraint(:user_id)
+    |> check_constraint(:role, name: :project_members_role)
     |> unique_constraint([:project_id, :user_id], name: :project_members_pkey)
   end
 end

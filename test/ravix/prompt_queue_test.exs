@@ -443,6 +443,18 @@ defmodule Ravix.PromptQueueTest do
     assert track_id == f.track.id
   end
 
+  test "a sender demoted to read after queueing is not delivered for (ADR 0010)", f do
+    fountain_hooks(fn -> "idle" end, fn -> :ok end)
+    insert_track_member(f.track, f.guest)
+    {:ok, _} = send_prompt(f.track, f.guest, "queued as a writer", id: id = request_id())
+
+    assert {:ok, _} = Ravix.People.set_role(f.owner, f.track.id, f.guest.login, "read")
+
+    Server.tick(f.server)
+    assert hooked_posts() == []
+    assert status_of(id) == :cancelled
+  end
+
   test "retries of the same request id use the same receipt before and after delivery", f do
     client = fountain([read("idle"), accept()])
     id = request_id()

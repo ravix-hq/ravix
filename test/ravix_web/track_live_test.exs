@@ -4241,7 +4241,11 @@ defmodule RavixWeb.TrackLiveTest do
     assert has_element?(ctx.view, "#track-people-dialog a[href*='/j/']")
     ctx.view |> element("button", "Revoke invite link") |> render_click()
     refute has_element?(ctx.view, "#track-people-dialog a[href*='/j/']")
-    ctx.view |> element("button[phx-value-login='#{member.login}']") |> render_click()
+
+    ctx.view
+    |> element("button[phx-click=remove-person][phx-value-login='#{member.login}']")
+    |> render_click()
+
     refute People.Store.member?(ctx.track.id, member.id)
     render_click(ctx.view, "dismiss")
     refute has_element?(ctx.view, "#track-people-dialog")

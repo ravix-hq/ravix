@@ -15,7 +15,8 @@ defmodule Ravix.Tooling.Tasks do
 
   def send(principal, track_id, prompt, request_id, thread_id \\ nil) do
     with {:ok, principal} <- Authorization.check(principal, "tracks:write"),
-         {:ok, %{thread: thread}} <- Access.thread_access(principal.user, track_id, thread_id) do
+         {:ok, %{thread: thread}} <-
+           Access.thread_access(principal.user, track_id, thread_id, :write) do
       id = id(principal, request_id)
 
       fingerprint =

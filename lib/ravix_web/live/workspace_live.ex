@@ -1255,8 +1255,14 @@ defmodule RavixWeb.WorkspaceLive do
   def handle_info({:hub, %Event{name: :read} = event}, socket),
     do: {:noreply, clear_unread(socket, event)}
 
-  def handle_info({:hub, %Event{name: name}}, socket) when name in [:people, :tracks],
-    do: {:noreply, socket |> recheck_or_leave() |> reload_async()}
+  def handle_info({:hub, %Event{name: name}}, socket) when name in [:people, :tracks] do
+    # An open project people dialog re-reads who is in it and whether the
+    # viewer may still manage them (ADR 0010).
+    if name == :people and socket.assigns[:dialog] == :people,
+      do: send_update(RavixWeb.Live.PeopleDialog, id: "people", reload: true)
+
+    {:noreply, socket |> recheck_or_leave() |> reload_async()}
+  end
 
   def handle_info({:hub, %Event{}}, socket), do: {:noreply, reload_async(socket)}
 

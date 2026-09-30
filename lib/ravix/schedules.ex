@@ -14,7 +14,7 @@ defmodule Ravix.Schedules do
   end
 
   def create(%User{} = user, project_id, attrs) do
-    with {:ok, _} <- Access.project_access(user, project_id) do
+    with {:ok, _} <- Access.project_access(user, project_id, :write) do
       %Schedule{user_id: user.id, project_id: project_id}
       |> Schedule.changeset(attrs)
       |> next_run()

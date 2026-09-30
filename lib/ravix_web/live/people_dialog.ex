@@ -25,11 +25,27 @@ defmodule RavixWeb.Live.PeopleDialog do
   linked only for somebody who can open it, and a track is shared from its
   Share dialog. `Ravix.People` refuses both
   as well, so hiding them here is the courtesy rather than the boundary.
+
+  Roles (ADR 0010): each person named on this unit shows a role, Read,
+  Write or Admin, and an admin changes it or removes their access from a
+  menu beside them. Whether the caller is an admin is read here, through
+  `Ravix.Accounts.Access`, and again whenever the page hears the people
+  changed; `Ravix.People` checks it again on every change regardless. The
+  copy link at the bottom is the track's (or project's) own address, for
+  anybody in the dialog: it opens only for people who already have access,
+  and is never an invitation.
   """
   use RavixWeb, :live_component
 
+  alias Ravix.Accounts.Access
   alias Ravix.{People, Workspaces}
   alias Ravix.People.Person
+
+  @roles [
+    {"read", "Read", "See the transcript and preview"},
+    {"write", "Write", "Also send prompts and use the machine"},
+    {"admin", "Admin", "Also manage people"}
+  ]
 
   @doc "The two units of sharing, and everything that differs between them."
   @spec scopes() :: [:track | :project]
@@ -37,9 +53,22 @@ defmodule RavixWeb.Live.PeopleDialog do
 
   @impl true
   def mount(socket),
-    do: {:ok, assign(socket, invite: nil, inviting?: false, login: "", workspace_link?: false)}
+    do:
+      {:ok,
+       assign(socket,
+         invite: nil,
+         inviting?: false,
+         login: "",
+         workspace_link?: false,
+         admin?: false,
+         url: nil
+       )}
 
   @impl true
+  # The page heard that the people changed: somebody's role, or the
+  # caller's own, may be different now.
+  def update(%{reload: true}, socket), do: {:ok, load(socket)}
+
   def update(assigns, socket) do
     socket = assign(socket, assigns)
     socket = assign(socket, workspace_project?: workspace_project?(socket.assigns))
@@ -98,6 +127,12 @@ defmodule RavixWeb.Live.PeopleDialog do
      end)}
   end
 
+  def handle_event("set-role", %{"login" => login, "role" => role}, socket) do
+    %{scope: scope, subject_id: id, current_user: user} = socket.assigns
+
+    {:noreply, result(socket, set_role(scope, user, id, login, role), &assign(&1, people: &2))}
+  end
+
   def handle_event("invite-link", %{"action" => action}, socket) do
     %{scope: scope, subject_id: id, current_user: user} = socket.assigns
     minting? = action == "create"
@@ -127,12 +162,24 @@ defmodule RavixWeb.Live.PeopleDialog do
     socket =
       socket
       |> result(list(scope, user, id), &assign(&1, people: &2))
-      |> assign(workspace_link?: workspace_link?(socket.assigns))
+      |> assign(workspace_link?: workspace_link?(socket.assigns), admin?: admin?(scope, user, id))
+      |> result(copy_url(scope, user, id), &assign(&1, url: &2))
 
-    if socket.assigns.owner and not socket.assigns.workspace_project?,
+    if socket.assigns.admin? and not socket.assigns.workspace_project?,
       do: result(socket, link(scope, user, id), &assign(&1, invite: &2)),
       else: socket
   end
+
+  defp admin?(:track, user, id), do: match?({:ok, _}, Access.track_access(user, id, :admin))
+  defp admin?(:project, user, id), do: match?({:ok, _}, Access.project_access(user, id, :admin))
+
+  defp copy_url(:track, user, id), do: People.track_url(user, id)
+  defp copy_url(:project, user, id), do: People.project_url(user, id)
+
+  defp set_role(:track, user, id, login, role), do: People.set_role(user, id, login, role)
+
+  defp set_role(:project, user, id, login, role),
+    do: People.set_project_role(user, id, login, role)
 
   defp list(:track, user, id), do: People.list(user, id)
   defp list(:project, user, id), do: People.list_project(user, id)
@@ -199,19 +246,41 @@ defmodule RavixWeb.Live.PeopleDialog do
   # whose access comes from the project cannot be taken off one of its tracks
   # -- `Ravix.People.remove/3` refuses both, and the badge beside them now
   # says where to go instead.
-  defp removable?(%Person{via: :creator}, _scope, _owner?, _user), do: false
-  defp removable?(%Person{via: :owner}, _scope, _owner?, _user), do: false
-  defp removable?(%Person{via: :project}, :track, _owner?, _user), do: false
-  defp removable?(%Person{via: :workspace}, _scope, _owner?, _user), do: false
-  defp removable?(%Person{via: :shared}, _scope, _owner?, _user), do: false
+  defp removable?(%Person{via: :creator}, _scope, _admin?, _user), do: false
+  defp removable?(%Person{via: :owner}, _scope, _admin?, _user), do: false
+  defp removable?(%Person{via: :project}, :track, _admin?, _user), do: false
+  defp removable?(%Person{via: :workspace}, _scope, _admin?, _user), do: false
+  defp removable?(%Person{via: :shared}, _scope, _admin?, _user), do: false
 
-  defp removable?(%Person{} = person, _scope, owner?, user),
-    do: owner? or person.login == user.login
+  defp removable?(%Person{} = person, _scope, admin?, user),
+    do: admin? or person.login == user.login
+
+  # Whose role this dialog changes: somebody named on this unit, and not
+  # the caller. Everybody else's role is shown and changed where it lives.
+  defp role_editable?(%Person{via: :track}, :track, true, _user), do: true
+  defp role_editable?(%Person{via: :project}, :project, true, _user), do: true
+  defp role_editable?(_person, _scope, _admin?, _user), do: false
+
+  defp editable?(person, scope, admin?, user),
+    do: role_editable?(person, scope, admin?, user) and person.login != user.login
+
+  @doc "The label a role is shown with."
+  @spec role_label(Person.role() | nil) :: String.t() | nil
+  def role_label(:read), do: "Read"
+  def role_label(:write), do: "Write"
+  def role_label(:admin), do: "Admin"
+  def role_label(nil), do: nil
+
+  defp roles, do: @roles
+
+  # Popover ids and anchor names come from a login, which GitHub limits to
+  # letters, digits and hyphens.
+  defp menu_id(id, login), do: "#{id}-role-menu-#{login}"
 
   @impl true
   def render(assigns) do
     ~H"""
-    <div>
+    <div id={@id}>
       <.dialog id={"#{@id}-dialog"} title={title(@scope)} on_close="dismiss">
         <p><.project_name project={@project} /></p>
         <p :if={@scope == :project && !@workspace_project?} class="hint">
@@ -240,23 +309,86 @@ defmodule RavixWeb.Live.PeopleDialog do
             Private tracks need their own machine. This track shares the project machine.
           </p>
         </form>
+        <p :if={@scope == :track && @track.visibility == :project} class="hint">
+          Project members work here with their project role.
+        </p>
         <ul class="people-list" aria-label="Members">
           <li :for={person <- @people} class="people-row">
             <div class="people-identity">
               <span>@{person.login}</span>
               <small :if={badge(person, @scope)}>{badge(person, @scope)}</small>
             </div>
-            <button
-              :if={removable?(person, @scope, @owner, @current_user)}
-              class="ghost"
-              phx-click="remove-person"
-              phx-value-login={person.login}
-              phx-target={@myself}
-            >
-              {if person.login == @current_user.login,
-                do: leave_label(@scope),
-                else: "Remove"}
-            </button>
+            <%= if editable?(person, @scope, @admin?, @current_user) do %>
+              <button
+                type="button"
+                id={"#{@id}-role-#{person.login}"}
+                class="ghost role-trigger"
+                popovertarget={menu_id(@id, person.login)}
+                aria-haspopup="menu"
+                aria-label={"Role for @#{person.login}: #{role_label(person.role)}"}
+                style={"anchor-name: --#{menu_id(@id, person.login)}"}
+              >
+                {role_label(person.role)}<.icon name="chevron" size={10} open={true} />
+              </button>
+              <div
+                id={menu_id(@id, person.login)}
+                class="role-menu"
+                popover
+                role="menu"
+                aria-label={"Role for @#{person.login}"}
+                style={"position-anchor: --#{menu_id(@id, person.login)}"}
+              >
+                <button
+                  :for={{value, label, hint} <- roles()}
+                  type="button"
+                  class="account-item role-option"
+                  role="menuitemradio"
+                  aria-checked={to_string(Atom.to_string(person.role || :write) == value)}
+                  popovertarget={menu_id(@id, person.login)}
+                  popovertargetaction="hide"
+                  phx-click="set-role"
+                  phx-value-login={person.login}
+                  phx-value-role={value}
+                  phx-target={@myself}
+                >
+                  <span class="role-option-text">
+                    <span>{label}</span><small>{hint}</small>
+                  </span>
+                  <span class="spacer"></span>
+                  <span
+                    :if={Atom.to_string(person.role || :write) == value}
+                    class="check"
+                    aria-hidden="true"
+                  >✓</span>
+                </button>
+                <hr />
+                <button
+                  type="button"
+                  class="account-item role-option danger"
+                  role="menuitem"
+                  popovertarget={menu_id(@id, person.login)}
+                  popovertargetaction="hide"
+                  phx-click="remove-person"
+                  phx-value-login={person.login}
+                  phx-target={@myself}
+                >
+                  Remove access
+                </button>
+              </div>
+            <% else %>
+              <span :if={person.role} class="role-label dim">{role_label(person.role)}</span>
+              <button
+                :if={removable?(person, @scope, @admin?, @current_user)}
+                class="ghost"
+                phx-click="remove-person"
+                phx-value-login={person.login}
+                phx-target={@myself}
+              >
+                {if person.login == @current_user.login,
+                  do: leave_label(@scope),
+                  else: "Remove access"}
+              </button>
+            <% end %>
           </li>
         </ul>
         <p :if={@workspace_project?} id={"#{@id}-workspace-hint"} class="hint workspace-hint">
@@ -270,7 +402,7 @@ defmodule RavixWeb.Live.PeopleDialog do
           </span>
         </p>
         <form
-          :if={@owner && !@workspace_project?}
+          :if={@admin? && !@workspace_project?}
           id={"#{@id}-invite-form"}
           phx-change="type-login"
           phx-submit="invite-person"
@@ -288,10 +420,24 @@ defmodule RavixWeb.Live.PeopleDialog do
         </form>
         <.invite_link
           :if={!@workspace_project?}
-          owner={@owner}
+          owner={@admin?}
           invite={@invite}
           target={@myself}
         />
+        <div
+          :if={@url}
+          id={"#{@id}-copy-link"}
+          class="share-link copy-link"
+          phx-hook="CopyCode"
+          data-copy-failed="Copy failed. Select the link and copy it."
+        >
+          <code>{@url}</code>
+          <button type="button" class="ghost">Copy link</button>
+          <span role="status" aria-live="polite"></span>
+        </div>
+        <p :if={@url} class="hint">
+          Opens this {@scope} for people who already have access. It does not invite anyone.
+        </p>
       </.dialog>
     </div>
     """
