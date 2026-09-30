@@ -228,7 +228,7 @@ defmodule Ravix.Terminal do
           | {:unavailable, String.t(), String.t()}
           | Ravix.Sprites.Error.t()
 
-  @no_exec "This Ravix deployment has no Sprites token, so it cannot run commands on the machine directly."
+  @no_exec "This Ravix deployment has no machine connection configured, so it cannot run commands on the machine directly."
   @no_sprite "This machine does not expose a sprite, so Ravix cannot run commands on it directly."
 
   @doc """
