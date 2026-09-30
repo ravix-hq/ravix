@@ -100,6 +100,8 @@ defmodule RavixWeb.WorkspaceLive do
         track_loading: MapSet.new(),
         # An Inbox reply-excerpt fetch in flight; see `backfill_inbox/1`.
         replies_loading: false,
+        # Projects whose `:reply` waits on a rail read in flight.
+        replies_behind: MapSet.new(),
         # How many tracks across every project want somebody. Counted where
         # the rail is read rather than in the template, which asked for it
         # four times a render --- twice in the sidebar badge and twice in the
@@ -1252,9 +1254,14 @@ defmodule RavixWeb.WorkspaceLive do
     do: {:noreply, refresh_tracks(socket, id, fresh: false)}
 
   # An Inbox card's reply excerpt was kept on its thread row: the database
-  # has it, and the memo serves the rest.
-  def handle_info({:hub, %Event{name: :reply, project_id: id}}, socket),
-    do: {:noreply, refresh_tracks(socket, id, fresh: false)}
+  # has it, and the memo serves the rest. It arrives as a turn settles, when
+  # the project's live read may be in flight; a memo read started now would
+  # replace that one, so it waits for it instead (`finish_track_load/2`).
+  def handle_info({:hub, %Event{name: :reply, project_id: id}}, socket) do
+    if MapSet.member?(socket.assigns.track_loading, id),
+      do: {:noreply, update(socket, :replies_behind, &MapSet.put(&1, id))},
+      else: {:noreply, refresh_tracks(socket, id, fresh: false)}
+  end
 
   # A read mark is one person's own, and the only thing on this page it can
   # move is that person's unread dot on the track it names. So it is applied
@@ -1479,8 +1486,17 @@ defmodule RavixWeb.WorkspaceLive do
     end)
   end
 
-  defp finish_track_load(socket, id),
-    do: assign(socket, :track_loading, MapSet.delete(socket.assigns.track_loading, id))
+  defp finish_track_load(socket, id) do
+    socket = assign(socket, :track_loading, MapSet.delete(socket.assigns.track_loading, id))
+
+    if MapSet.member?(socket.assigns.replies_behind, id) do
+      socket
+      |> update(:replies_behind, &MapSet.delete(&1, id))
+      |> refresh_tracks(id, fresh: false)
+    else
+      socket
+    end
+  end
 
   defp track_load_failed(socket, id) do
     socket = finish_track_load(socket, id)

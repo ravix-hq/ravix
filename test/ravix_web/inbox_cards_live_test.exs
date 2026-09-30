@@ -164,6 +164,57 @@ defmodule RavixWeb.InboxCardsLiveTest do
     assert length(fetched) == 1
   end
 
+  test "an excerpt kept while a live read is in flight shows once that read lands", %{
+    conn: conn
+  } do
+    user = insert_user()
+    project = insert_project(user: user)
+    busy = track(project, title: "Busy work")
+    keep_reply(busy, "Before")
+    test = self()
+
+    # The turn's live read waits until the test lets it answer, so the
+    # `:reply` below arrives while it is in flight.
+    held = fn _call ->
+      send(test, {:listing, self()})
+
+      receive do
+        :answer -> :ok
+      after
+        5_000 -> :ok
+      end
+
+      {200, [],
+       %{
+         data: [
+           %{
+             id: busy.conversation_id,
+             status: "idle",
+             sandbox_id: "s",
+             last_active_at: DateTime.to_iso8601(DateTime.add(DateTime.utc_now(), -60))
+           }
+         ]
+       }}
+    end
+
+    listing = %{method: "GET", path: "/api/conversations", query: %{agent_id: project.agent_id}}
+    listing(project, [busy], [{listing, held}])
+
+    view = inbox(conn, user)
+    assert has_element?(view, "#inbox-excerpt-#{busy.id}", "Before")
+
+    send(view.pid, {:hub, Event.new(:turn, project.id, track_id: busy.id)})
+    assert_receive {:listing, reader}, 5_000
+    keep_reply(busy, "After")
+    send(view.pid, {:hub, Event.new(:reply, project.id)})
+    # Handled, and deferred: the live read is still the one in flight.
+    render(view)
+    send(reader, :answer)
+    render_async(view, 5_000)
+    render_async(view, 5_000)
+    assert has_element?(view, "#inbox-excerpt-#{busy.id}", "After")
+  end
+
   test "an excerpt never shows on a card the viewer could not open", %{conn: conn} do
     owner = insert_user()
     member = insert_user()
