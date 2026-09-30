@@ -250,6 +250,25 @@ defmodule Ravix.Previews.WakeTest do
     assert {:error, {:conflict, "closed_track", _}} = Previews.subscribe(ctx.owner, ctx.track.id)
   end
 
+  test "a tick that finds the preview as it was publishes nothing", ctx do
+    assert {:ok, %{state: :starting}} = Previews.run(ctx.owner, ctx.track.id)
+    await_background()
+    assert {:ok, %{state: :ready}} = Previews.status(ctx.owner, ctx.track.id)
+    row = Store.get(ctx.track.id)
+    assert :ok = Previews.subscribe(ctx.owner, ctx.track.id)
+
+    # The lease `run/3` took is live, so the reconciler ensures the running
+    # preview again: it probes, finds it ready, and would write `:ready` onto
+    # a row that already says so. Every page following the track used to
+    # hear that and read the preview again, every fifteen seconds.
+    assert Reconciler.decide(row, ctx.track, ctx.project, now(ctx.p)) == :ensure
+    Reconciler.tick()
+    await_background()
+
+    assert Store.get(ctx.track.id) == row
+    refute_received {:preview, _}
+  end
+
   test "a stop is told to followers too", ctx do
     assert {:ok, %{state: :starting}} = Previews.run(ctx.owner, ctx.track.id)
     await_background()

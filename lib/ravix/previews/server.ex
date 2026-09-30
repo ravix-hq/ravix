@@ -436,18 +436,22 @@ defmodule Ravix.Previews.Server do
 
   @doc false
   # Change a row, but only if it is still the generation `row` names, and
-  # tell whoever follows the track once it has committed.
+  # tell whoever follows the track once it has committed. A change to what
+  # the row already says is no change: the reconciler re-publishes `:ready`
+  # onto a ready row every fifteen seconds while somebody is looking, and
+  # each of those used to be a write, a broadcast and a re-read on every
+  # page following the track.
   @spec update(Row.t(), keyword()) :: :ok
   def update(%Row{} = row, changes) do
     {:ok, written?} =
       Repo.transaction(fn ->
-        case Store.get(row.track_id) do
-          %Row{generation: generation} = fresh when generation == row.generation ->
-            Store.save!(struct!(fresh, changes))
-            true
-
-          _ ->
-            false
+        with %Row{generation: generation} = fresh when generation == row.generation <-
+               Store.get(row.track_id),
+             next when next != fresh <- struct!(fresh, changes) do
+          Store.save!(next)
+          true
+        else
+          _ -> false
         end
       end)
 
