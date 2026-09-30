@@ -1,5 +1,6 @@
 // Help examples are copied in the browser: a server event cannot access the
 // clipboard. Read the rendered code so escaping and multiline JSON stay exact.
+// The Share popover's link is not printed (RAV-84): it is in `data-copy`.
 export const CopyCode = {
   mounted() {
     this.button = this.el.querySelector("button")
@@ -10,7 +11,7 @@ export const CopyCode = {
       this.status.textContent = "Copying…"
       let message
       try {
-        await navigator.clipboard.writeText(this.el.querySelector("code").textContent)
+        await navigator.clipboard.writeText(this.el.dataset.copy ?? this.el.querySelector("code").textContent)
         message = "Copied"
       } catch {
         // The Share dialog copies a link, not code, and says so.

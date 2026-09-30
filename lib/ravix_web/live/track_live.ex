@@ -541,9 +541,16 @@ defmodule RavixWeb.TrackLive do
   def handle_event("queue", %{"action" => "retry", "id" => id}, socket),
     do: {:noreply, queued(socket, &PromptQueue.retry/3, id)}
 
+  # Files and Changes come back from `Panel`'s cache at once and are read
+  # again behind it; switching between them used to blank the tab for a
+  # round trip to the machine every time. See `RavixWeb.Live.Panel`.
   def handle_event("panel", %{"name" => name}, socket) when is_map_key(@tabs, name) do
     panel = Panel.select(socket.assigns.panel, Map.fetch!(@tabs, name))
-    {:noreply, socket |> assign(panel: panel, narrow_view: "files") |> reload_panel()}
+    socket = assign(socket, panel: panel, narrow_view: "files")
+
+    if Panel.cached?(panel),
+      do: {:noreply, load_panel(socket, &Panel.reloading/1)},
+      else: {:noreply, reload_panel(socket)}
   end
 
   def handle_event("select-diff", %{"path" => path}, socket) do
@@ -1198,6 +1205,17 @@ defmodule RavixWeb.TrackLive do
   defp async_result(:transcript, {:ok, {:error, reason}}, socket),
     do: socket |> assign(transcript_loading: false) |> error(reason)
 
+  # Each tab's read is named after the tab, so reading one never cancels the
+  # other and LiveView drops any answer older than the tab's latest read. An
+  # answer for the tab on screen is shown; one for a tab somebody has since
+  # left refreshes that tab's cache, and a refusal waits for the next visit,
+  # which reads again.
+  defp async_result({:panel, tab}, response, socket) do
+    if tab == socket.assigns.panel.tab,
+      do: async_result(:panel, response, socket),
+      else: cache_result(tab, response, socket)
+  end
+
   defp async_result(name, {:ok, {:error, :machine_asleep}}, socket)
        when name in [:panel, :file],
        do: asleep_panel(socket)
@@ -1396,6 +1414,14 @@ defmodule RavixWeb.TrackLive do
       |> assign(loading: false, transcript_loading: false)
       |> update_panel(&Panel.settled/1)
       |> flash(:error, "Could not finish loading. Please try again.")
+
+  defp cache_result(tab, {:ok, {:ok, {%Diff{} = diff, merged?}}}, socket),
+    do: socket |> assign(branch_merged?: merged?) |> update_panel(&Panel.cache(&1, tab, diff))
+
+  defp cache_result(tab, {:ok, {:ok, %Files.Listing{} = listing}}, socket),
+    do: update_panel(socket, &Panel.cache(&1, tab, listing))
+
+  defp cache_result(_tab, _response, socket), do: socket
 
   defp history_cursor(page),
     do:
@@ -2468,9 +2494,6 @@ defmodule RavixWeb.TrackLive do
       <div class="file-root" title={@data.path}>
         <.icon name="folder" />{Path.basename(@data.path)}
       </div>
-      <button phx-click="toggle-ignored" aria-pressed={to_string(@show_ignored?)}>
-        Show ignored files
-      </button>
       <p
         :if={!@data.ignore_available? && !Map.has_key?(@metadata, @data.path)}
         class="file-note"
@@ -2946,7 +2969,7 @@ defmodule RavixWeb.TrackLive do
         assigns,
         :entries,
         assigns.listing.entries
-        |> Enum.reject(&(&1.ignored? && !assigns.show_ignored?))
+        |> Enum.reject(&(&1.name == ".git" or (&1.ignored? && !assigns.show_ignored?)))
         |> Enum.sort_by(&{!file_directory?(&1), String.downcase(&1.name)})
       )
 
@@ -2973,7 +2996,11 @@ defmodule RavixWeb.TrackLive do
             open={child != nil}
             size={12}
           /></span>
-          <.icon name={file_icon(entry)} class="file-kind" />
+          <% {glyph, kind} = file_icon(entry) %>
+          <span class={"file-kind kind-#{kind}"} data-kind={kind} aria-hidden="true"><.icon
+            name={glyph}
+            size={14}
+          /></span>
           <span class="file-name">{entry.name}<span :if={entry.target}> → {entry.target}</span></span>
         </button>
         <.file_listing
@@ -2996,18 +3023,93 @@ defmodule RavixWeb.TrackLive do
   defp file_directory?(%{type: "directory"}), do: true
   defp file_directory?(entry), do: is_binary(entry.directory_target)
 
-  defp file_icon(%{type: "directory"}), do: "folder"
-  defp file_icon(%{type: type}) when type in ["symlink", "link"], do: "external"
+  # What kind of file an entry is, as the glyph and the colour class the tree
+  # draws it with. A name the person would recognise at a glance --- a
+  # Dockerfile, a lock file, a dotfile --- is matched before its extension,
+  # so `mix.lock` is a lock and not "something ending in .lock". Colours are
+  # theme tokens (see `.file-kind` in app.css), so every palette recolours
+  # them and none of them is a hex value that one palette cannot read.
+  @file_names %{
+    "dockerfile" => {"container", "docker"},
+    "containerfile" => {"container", "docker"},
+    "docker-compose.yml" => {"container", "docker"},
+    "docker-compose.yaml" => {"container", "docker"},
+    "compose.yml" => {"container", "docker"},
+    "compose.yaml" => {"container", "docker"},
+    "package-lock.json" => {"lock", "lock"},
+    "npm-shrinkwrap.json" => {"lock", "lock"},
+    "bun.lockb" => {"lock", "lock"}
+  }
 
-  defp file_icon(entry) do
-    case String.downcase(Path.extname(entry.name)) do
-      ext when ext in ~w(.ex .exs .js .jsx .ts .tsx .py .rb .rs .go .html .css .sh) -> "code"
-      ext when ext in ~w(.png .jpg .jpeg .gif .svg .webp .ico) -> "picture"
-      ext when ext in ~w(.json .yaml .yml .toml .ini .lock .config) -> "settings"
-      ext when ext in ~w(.md .txt .rst .pdf) -> "document"
-      _ -> "file"
+  @file_extensions %{
+    ".ex" => {"drop", "elixir"},
+    ".exs" => {"drop", "elixir"},
+    ".heex" => {"drop", "elixir"},
+    ".eex" => {"drop", "elixir"},
+    ".js" => {"code", "script"},
+    ".jsx" => {"code", "script"},
+    ".mjs" => {"code", "script"},
+    ".cjs" => {"code", "script"},
+    ".ts" => {"code", "typescript"},
+    ".tsx" => {"code", "typescript"},
+    ".mts" => {"code", "typescript"},
+    ".json" => {"braces", "json"},
+    ".md" => {"markdown", "markdown"},
+    ".mdx" => {"markdown", "markdown"},
+    ".css" => {"hash", "style"},
+    ".scss" => {"hash", "style"},
+    ".sass" => {"hash", "style"},
+    ".less" => {"hash", "style"},
+    ".html" => {"angles", "markup"},
+    ".htm" => {"angles", "markup"},
+    ".xml" => {"angles", "markup"},
+    ".yml" => {"list", "yaml"},
+    ".yaml" => {"list", "yaml"},
+    ".toml" => {"list", "yaml"},
+    ".lock" => {"lock", "lock"},
+    ".png" => {"picture", "image"},
+    ".jpg" => {"picture", "image"},
+    ".jpeg" => {"picture", "image"},
+    ".gif" => {"picture", "image"},
+    ".svg" => {"picture", "image"},
+    ".webp" => {"picture", "image"},
+    ".ico" => {"picture", "image"},
+    ".sh" => {"terminal", "shell"},
+    ".bash" => {"terminal", "shell"},
+    ".zsh" => {"terminal", "shell"},
+    ".py" => {"code", "code"},
+    ".rb" => {"code", "code"},
+    ".rs" => {"code", "code"},
+    ".go" => {"code", "code"},
+    ".txt" => {"document", "text"},
+    ".rst" => {"document", "text"},
+    ".pdf" => {"document", "text"}
+  }
+
+  @doc false
+  def file_icon(%{type: "directory"}), do: {"folder", "folder"}
+  def file_icon(%{type: type}) when type in ["symlink", "link"], do: {"external", "link"}
+
+  def file_icon(%{name: name}) do
+    lower = String.downcase(name)
+    extension = Path.extname(lower)
+
+    cond do
+      Map.has_key?(@file_names, lower) -> @file_names[lower]
+      String.starts_with?(lower, "dockerfile") -> {"container", "docker"}
+      Map.has_key?(@file_extensions, extension) -> @file_extensions[extension]
+      # `.gitignore`, `.env`: a name that is all extension is a dotfile.
+      String.starts_with?(lower, ".") -> {"dot-file", "dotfile"}
+      true -> {"file", "file"}
     end
   end
+
+  # Whether the Changes tab is showing one file's diff, which is when the
+  # inspector widens for it (`.inspector.diff-open` in app.css).
+  defp diff_open?(%Panel{tab: :changes, data: %Diff{files: files}}, path) when is_binary(path),
+    do: Enum.any?(files, &(&1.change.path == path))
+
+  defp diff_open?(_panel, _path), do: false
 
   defp diff_directory(path),
     do: if(Path.dirname(path) == ".", do: "", else: Path.dirname(path) <> "/")
@@ -3061,7 +3163,10 @@ defmodule RavixWeb.TrackLive do
     do:
       update_panel(
         socket,
-        &(Panel.loading(&1) |> Panel.loaded(:machine_asleep) |> Panel.close_file())
+        &(Panel.loading(&1)
+          |> Panel.loaded(:machine_asleep)
+          |> Panel.close_file()
+          |> Panel.forget_cache())
       )
 
   defp reload_panel(socket), do: socket |> update_panel(&Panel.loading/1) |> load_panel()
@@ -3080,7 +3185,7 @@ defmodule RavixWeb.TrackLive do
 
     socket
     |> update_panel(mark)
-    |> workspace_async(:panel, fn ->
+    |> workspace_async({:panel, tab}, fn ->
       case tab do
         :files -> Tracks.files(user, id, nil)
         :changes -> load_changes(user, id)

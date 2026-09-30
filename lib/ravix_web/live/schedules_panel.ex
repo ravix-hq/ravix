@@ -134,150 +134,163 @@ defmodule RavixWeb.Live.SchedulesPanel do
   @impl true
   def render(assigns) do
     ~H"""
-    <div id="schedules-panel" class="inbox schedules-page">
-      <header>
-        <div class="row">
-          <h1>Schedules</h1><span class="spacer"></span>
+    <div class="stage-host">
+      <.stage_page id="schedules-panel" class="schedules-page">
+        <:title>Schedules</:title>
+        <:subtitle>
+          A prompt that runs on a timer, each run in a fresh track.
+          <details class="page-more">
+            <summary>Learn more</summary>
+            <p>
+              Each run opens a fresh track in the project you choose, so you can read what the agent did
+              and earlier runs stay as they were. For example: every weekday at 9:00, triage new GitHub
+              issues and open a track for anything urgent.
+            </p>
+            <p id="schedules-refresh-note">
+              Refresh to see the latest run status and changes made in another tab.
+            </p>
+          </details>
+        </:subtitle>
+        <:actions>
           <button
             class="ghost"
             phx-click="refresh"
             phx-target={@myself}
             aria-describedby="schedules-refresh-note"
           >Refresh</button>
+        </:actions>
+        <p :if={@error} role="alert" class="schedule-error">{@error}</p>
+        <div class="schedules-layout">
+          <section class="schedule-editor" aria-labelledby="schedule-form-title">
+            <h2 id="schedule-form-title">{if @editing, do: "Edit schedule", else: "New schedule"}</h2>
+            <.form
+              for={@form}
+              id="schedule-form"
+              phx-change="change"
+              phx-submit="save"
+              phx-target={@myself}
+            >
+              <.input
+                field={@form[:name]}
+                label="Name"
+                required
+                maxlength="100"
+                placeholder="Weekly code review"
+              />
+              <.input
+                field={@form[:project_id]}
+                type="select"
+                label="Project"
+                required
+                disabled={not is_nil(@editing)}
+                prompt="Select a project"
+                options={for p <- @projects, p.access != :tracks, do: {p.display_name, p.id}}
+              />
+              <.input
+                field={@form[:prompt]}
+                type="textarea"
+                label="Prompt"
+                required
+                maxlength="100000"
+                rows="6"
+                placeholder="Review recent changes and suggest improvements…"
+              />
+              <.input
+                field={@form[:frequency]}
+                type="select"
+                label="Repeat"
+                options={[{"Every hour", :hourly}, {"Every day", :daily}, {"Every week", :weekly}]}
+              />
+              <.input field={@form[:time]} type="time" label="Time" required />
+              <.input
+                field={@form[:timezone]}
+                label="Time zone"
+                maxlength="64"
+                autocomplete="off"
+                spellcheck="false"
+                placeholder="America/New_York"
+              />
+              <.input
+                :if={@form[:frequency].value in [:weekly, "weekly"]}
+                field={@form[:weekday]}
+                type="select"
+                label="Day"
+                options={[
+                  {"Monday", 1},
+                  {"Tuesday", 2},
+                  {"Wednesday", 3},
+                  {"Thursday", 4},
+                  {"Friday", 5},
+                  {"Saturday", 6},
+                  {"Sunday", 7}
+                ]}
+              />
+              <p class="hint schedule-hint">
+                Times are in the schedule's time zone, filled in from your browser for new schedules; an unknown zone falls back to UTC. Hourly schedules use the minute of the selected time. Missed occurrences combine into one run when service resumes.
+              </p>
+              <div class="row">
+                <button type="submit" class="primary" phx-disable-with="Saving…">{if @editing,
+                  do: "Save changes",
+                  else: "Create schedule"}</button>
+                <button
+                  :if={@editing}
+                  type="button"
+                  class="ghost"
+                  phx-click="cancel"
+                  phx-target={@myself}
+                >Cancel</button>
+              </div>
+            </.form>
+          </section>
+          <section class="schedule-list" aria-label="Your schedules">
+            <div :if={@schedules == []} id="schedules-empty" class="schedule-card schedules-empty">
+              <.empty icon="clock" title="No schedules yet">
+                Choose a project, write the prompt you would type yourself, and set when it runs.
+                Each run starts in a new track.
+                <:action label="Create schedule" click={JS.focus(to: "#schedule_name")} />
+              </.empty>
+            </div>
+            <article
+              :for={schedule <- @schedules}
+              id={"schedule-#{schedule.id}"}
+              class="schedule-card"
+            >
+              <div class="row">
+                <h2>{schedule.name}</h2><span class="spacer"></span><span class="badge">{if schedule.enabled,
+                  do: "Active",
+                  else: "Paused"}</span>
+              </div>
+              <p class="meta">{project_name(@projects, schedule.project_id)} · {cadence(schedule)}</p>
+              <p class="schedule-prompt">{schedule.prompt}</p>
+              <p :if={schedule.enabled}>Next: {timestamp(schedule.next_run_at, @timezone)}</p>
+              <p>Last dispatch: {timestamp(schedule.last_run_at, @timezone)}</p>
+              <p :if={schedule.last_status}>{schedule.last_status}</p>
+              <.link
+                :if={schedule.last_track_id}
+                patch={"/p/#{schedule.project_id}/t/#{schedule.last_track_id}"}
+              >Open latest run</.link>
+              <div class="row schedule-controls">
+                <button class="ghost" phx-click="edit" phx-value-id={schedule.id} phx-target={@myself}>Edit</button>
+                <button
+                  class="ghost"
+                  phx-click="toggle"
+                  phx-value-id={schedule.id}
+                  phx-target={@myself}
+                >{if schedule.enabled,
+                  do: "Pause",
+                  else: "Resume"}</button>
+                <button
+                  class="ghost"
+                  phx-click="delete"
+                  phx-value-id={schedule.id}
+                  phx-target={@myself}
+                  data-confirm="Delete this schedule? Existing tracks will remain."
+                >Delete</button>
+              </div>
+            </article>
+          </section>
         </div>
-        <p>
-          A schedule is a routine: a prompt that runs on a timer. Each run opens a fresh
-          track in the project you choose, so you can read what the agent did.
-        </p>
-        <p class="dim">
-          For example: every weekday at 9:00, triage new GitHub issues and open a track for anything urgent.
-        </p>
-        <p id="schedules-refresh-note" class="dim">
-          Refresh to see the latest run status and changes made in another tab.
-        </p>
-      </header>
-      <p :if={@error} role="alert" class="schedule-error">{@error}</p>
-      <div class="schedules-layout">
-        <section class="schedule-editor" aria-labelledby="schedule-form-title">
-          <h2 id="schedule-form-title">{if @editing, do: "Edit schedule", else: "New schedule"}</h2>
-          <.form
-            for={@form}
-            id="schedule-form"
-            phx-change="change"
-            phx-submit="save"
-            phx-target={@myself}
-          >
-            <.input
-              field={@form[:name]}
-              label="Name"
-              required
-              maxlength="100"
-              placeholder="Weekly code review"
-            />
-            <.input
-              field={@form[:project_id]}
-              type="select"
-              label="Project"
-              required
-              disabled={not is_nil(@editing)}
-              prompt="Select a project"
-              options={for p <- @projects, p.access != :tracks, do: {p.display_name, p.id}}
-            />
-            <.input
-              field={@form[:prompt]}
-              type="textarea"
-              label="Prompt"
-              required
-              maxlength="100000"
-              rows="6"
-              placeholder="Review recent changes and suggest improvements…"
-            />
-            <.input
-              field={@form[:frequency]}
-              type="select"
-              label="Repeat"
-              options={[{"Every hour", :hourly}, {"Every day", :daily}, {"Every week", :weekly}]}
-            />
-            <.input field={@form[:time]} type="time" label="Time" required />
-            <.input
-              field={@form[:timezone]}
-              label="Time zone"
-              maxlength="64"
-              autocomplete="off"
-              spellcheck="false"
-              placeholder="America/New_York"
-            />
-            <.input
-              :if={@form[:frequency].value in [:weekly, "weekly"]}
-              field={@form[:weekday]}
-              type="select"
-              label="Day"
-              options={[
-                {"Monday", 1},
-                {"Tuesday", 2},
-                {"Wednesday", 3},
-                {"Thursday", 4},
-                {"Friday", 5},
-                {"Saturday", 6},
-                {"Sunday", 7}
-              ]}
-            />
-            <p class="meta">
-              Times are in the schedule's time zone, filled in from your browser for new schedules; an unknown zone falls back to UTC. Hourly schedules use the minute of the selected time. Missed occurrences combine into one run when service resumes.
-            </p>
-            <div class="row">
-              <button type="submit" class="primary" phx-disable-with="Saving…">{if @editing,
-                do: "Save changes",
-                else: "Create schedule"}</button>
-              <button
-                :if={@editing}
-                type="button"
-                class="ghost"
-                phx-click="cancel"
-                phx-target={@myself}
-              >Cancel</button>
-            </div>
-          </.form>
-        </section>
-        <section class="schedule-list" aria-label="Your schedules">
-          <div :if={@schedules == []} class="inbox-empty">
-            <h2>No schedules yet</h2>
-            <p>
-              Choose a project, write the prompt you would type yourself, and set when it runs.
-              Each run starts in a new track, so earlier runs stay as they were.
-            </p>
-          </div>
-          <article :for={schedule <- @schedules} id={"schedule-#{schedule.id}"} class="schedule-card">
-            <div class="row">
-              <h2>{schedule.name}</h2><span class="spacer"></span><span class="badge">{if schedule.enabled,
-                do: "Active",
-                else: "Paused"}</span>
-            </div>
-            <p class="meta">{project_name(@projects, schedule.project_id)} · {cadence(schedule)}</p>
-            <p class="schedule-prompt">{schedule.prompt}</p>
-            <p :if={schedule.enabled}>Next: {timestamp(schedule.next_run_at, @timezone)}</p>
-            <p>Last dispatch: {timestamp(schedule.last_run_at, @timezone)}</p>
-            <p :if={schedule.last_status}>{schedule.last_status}</p>
-            <.link
-              :if={schedule.last_track_id}
-              patch={"/p/#{schedule.project_id}/t/#{schedule.last_track_id}"}
-            >Open latest run</.link>
-            <div class="row schedule-controls">
-              <button class="ghost" phx-click="edit" phx-value-id={schedule.id} phx-target={@myself}>Edit</button>
-              <button class="ghost" phx-click="toggle" phx-value-id={schedule.id} phx-target={@myself}>{if schedule.enabled,
-                do: "Pause",
-                else: "Resume"}</button>
-              <button
-                class="ghost"
-                phx-click="delete"
-                phx-value-id={schedule.id}
-                phx-target={@myself}
-                data-confirm="Delete this schedule? Existing tracks will remain."
-              >Delete</button>
-            </div>
-          </article>
-        </section>
-      </div>
+      </.stage_page>
     </div>
     """
   end

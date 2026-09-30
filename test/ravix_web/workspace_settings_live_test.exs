@@ -193,7 +193,9 @@ defmodule RavixWeb.WorkspaceSettingsLiveTest do
       {view, _html} = open(member, ctx.team.id)
 
       :ok = Workspaces.remove_member(ctx.owner, ctx.team.id, member.id)
-      assert_redirect(view, "/")
+      # The page leaves on the Hub's broadcast, after re-reading membership:
+      # wait for that navigation rather than the 100ms default.
+      assert_redirect(view, "/", 1_000)
     end
 
     test "a personal workspace has no invite box", ctx do
