@@ -37,6 +37,9 @@ export function key(el, name, options = {}) {
 
 afterEach(async () => {
   for (const hook of hooks.splice(0)) hook.destroyed?.()
+  // A zero-delay timer still pending at abort leaves happy-dom's timers dead
+  // for every later file in the run, so let those run first.
+  await new Promise(resolve => setTimeout(resolve))
   await window.happyDOM.abort()
   document.body.innerHTML = ""
   document.documentElement.removeAttribute("style")
