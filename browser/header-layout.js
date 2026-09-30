@@ -9,7 +9,8 @@ import { expect } from '@playwright/test';
 export async function expectHeaderUnobstructed(page) {
   const { overlaps, hit } = await page.locator('header.track-crumbs').evaluate(header => {
     const controls = [...header.querySelectorAll('a, button, .chip, [role=status], .track-private')]
-      .filter(el => !el.closest('.track-plan-popover') && el.getClientRects().length > 0);
+      // A visually hidden element (the machine chip while Idle, RAV-82) covers nothing.
+      .filter(el => !el.closest('.track-plan-popover, .sr-only') && el.getClientRects().length > 0);
     const name = el => el.getAttribute('aria-label') || el.textContent.trim().replace(/\s+/g, ' ').slice(0, 40);
     const overlaps = [];
     for (const [i, a] of controls.entries()) {
