@@ -30,6 +30,11 @@ defmodule Ravix.Application do
         # first opened against this instance. It keeps Fountain's conversation
         # stream open while anyone anywhere is looking at the transcript.
         {DynamicSupervisor, name: Ravix.Tracks.Follower.Supervisor, strategy: :one_for_one},
+        # One process per open terminal tab per page, on this instance only: the
+        # shell itself lives on the sprite and any instance may attach to it.
+        # See `Ravix.Terminal.Shell` for why this is not a `:global` name.
+        {Registry, keys: :unique, name: Ravix.Terminal.Registry},
+        {DynamicSupervisor, name: Ravix.Terminal.Supervisor, strategy: :one_for_one},
         {Ravix.Cluster.Singleton,
          key: "tooling.tasks",
          child:

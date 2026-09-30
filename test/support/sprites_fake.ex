@@ -122,11 +122,87 @@ defmodule Ravix.SpritesFake do
   @spec token() :: String.t()
   def token, do: @token
 
-  @doc "Start the fake Sprites proxy on a loopback port and return a config pointed at it."
+  @doc """
+  Start the fake Sprites proxy on a loopback port and return a config pointed at it.
+
+  The same server answers the exec WebSocket in TTY mode, as a small shell:
+  see `ExecSocket`. `opts[:owner]` (default: the caller) is told about every
+  terminal event as `{Ravix.SpritesFake, :exec, event}`.
+  """
   @spec start_proxy(keyword()) :: Ravix.Sprites.config()
   def start_proxy(opts \\ []) do
-    port = start_bandit({__MODULE__.Proxy, token: Keyword.get(opts, :token, @token)})
+    # Not linked to the test: it outlives the server's sockets, which the
+    # test supervisor stops after the test process has gone.
+    {:ok, sessions} = Agent.start(fn -> %{next: 1, sessions: %{}} end)
+    ExUnit.Callbacks.on_exit(fn -> if Process.alive?(sessions), do: Agent.stop(sessions) end)
+
+    port =
+      start_bandit(
+        {__MODULE__.Proxy,
+         token: Keyword.get(opts, :token, @token),
+         sessions: sessions,
+         owner: Keyword.get(opts, :owner, self())}
+      )
+
     %Ravix.Config.Sprites{token: @token, base_url: "http://127.0.0.1:#{port}"}
+  end
+
+  @doc "Every terminal session the fake has seen, by id: its buffered output and whether it is alive."
+  @spec exec_sessions(Ravix.Sprites.config()) :: %{String.t() => map()}
+  def exec_sessions(%{base_url: "http://127.0.0.1:" <> port}) do
+    port |> String.to_integer() |> sessions_of() |> Agent.get(& &1.sessions)
+  end
+
+  @doc false
+  def sessions_of(port), do: :persistent_term.get({__MODULE__, :sessions, port})
+
+  @doc "Close the socket attached to session `id` without ending the session, as a network would."
+  @spec drop_exec(Ravix.Sprites.config(), String.t()) :: :ok
+  def drop_exec(cfg, id) do
+    case exec_sessions(cfg) do
+      %{^id => %{socket: socket}} when is_pid(socket) -> send(socket, :drop)
+      _ -> :ok
+    end
+
+    :ok
+  end
+
+  @doc """
+  Answer `POST /v1/sprites/:name/exec/:id/kill` for the terminals of `cfg`'s
+  fake: the REST half of Sprites goes through `Req.Test` like every other
+  call here, and ends the session its WebSocket half is running. Use inside
+  an `install/1` handler; answers nil for any other request.
+  """
+  @spec kill_exec(Plug.Conn.t(), Ravix.Sprites.config()) :: Plug.Conn.t() | nil
+  def kill_exec(conn, %{base_url: "http://127.0.0.1:" <> port}) do
+    case {conn.method, conn.path_info} do
+      {"POST", ["v1", "sprites", _sprite, "exec", id, "kill"]} ->
+        port |> String.to_integer() |> sessions_of() |> end_exec(id, conn)
+
+      _other ->
+        nil
+    end
+  end
+
+  defp end_session(state, id) do
+    case state.sessions[id] do
+      %{alive: true} = session -> {{:ok, session.socket}, put_in(state.sessions[id].alive, false)}
+      _ -> {:missing, state}
+    end
+  end
+
+  @doc false
+  def end_exec(sessions, id, conn) do
+    conn = fetch_query_params(conn)
+
+    case Agent.get_and_update(sessions, &end_session(&1, id)) do
+      :missing ->
+        send_resp(conn, 404, "no such session")
+
+      {:ok, socket} ->
+        if socket, do: send(socket, :killed)
+        send_resp(conn, 200, ~s({"type":"complete"}\n))
+    end
   end
 
   @doc "Start the app inside the sprite on a loopback port and return that port."
@@ -144,6 +220,10 @@ defmodule Ravix.SpritesFake do
 
     pid = ExUnit.Callbacks.start_supervised!(spec)
     {:ok, {_address, port}} = ThousandIsland.listener_info(pid)
+
+    if sessions = plug_opts[:sessions],
+      do: :persistent_term.put({__MODULE__, :sessions, port}, sessions)
+
     port
   end
 
@@ -191,12 +271,32 @@ defmodule Ravix.SpritesFake do
     @impl true
     def call(conn, opts) do
       expected = "Bearer " <> Keyword.fetch!(opts, :token)
+      sessions = opts[:sessions]
+      owner = opts[:owner]
 
-      case {get_req_header(conn, "authorization"), conn.path_info} do
-        {[^expected], ["v1", "sprites", _sprite, "proxy"]} ->
+      case {get_req_header(conn, "authorization"), conn.method, conn.path_info} do
+        {[^expected], _method, ["v1", "sprites", _sprite, "proxy"]} ->
           WebSockAdapter.upgrade(conn, Ravix.SpritesFake.ProxySocket, %{}, timeout: 60_000)
 
-        {[^expected], _path} ->
+        {[^expected], "GET", ["v1", "sprites", _sprite, "exec"]} ->
+          conn = fetch_query_params(conn)
+          send(owner, {Ravix.SpritesFake, :exec, {:spawn, conn.query_params}})
+          state = %{sessions: sessions, owner: owner, id: nil, query: conn.query_params}
+          WebSockAdapter.upgrade(conn, Ravix.SpritesFake.ExecSocket, state, timeout: 60_000)
+
+        {[^expected], "GET", ["v1", "sprites", _sprite, "exec", id]} ->
+          if Agent.get(sessions, &match?(%{alive: true}, &1.sessions[id])) do
+            send(owner, {Ravix.SpritesFake, :exec, {:attach, id}})
+            state = %{sessions: sessions, owner: owner, id: id, query: %{}}
+            WebSockAdapter.upgrade(conn, Ravix.SpritesFake.ExecSocket, state, timeout: 60_000)
+          else
+            send_resp(conn, 404, "no such session")
+          end
+
+        {[^expected], "POST", ["v1", "sprites", _sprite, "exec", id, "kill"]} ->
+          Ravix.SpritesFake.end_exec(sessions, id, conn)
+
+        {[^expected], _method, _path} ->
           send_resp(conn, 404, "missing")
 
         _other ->
@@ -253,6 +353,140 @@ defmodule Ravix.SpritesFake do
       if tcp, do: :gen_tcp.close(tcp)
       :ok
     end
+  end
+
+  defmodule ExecSocket do
+    @moduledoc """
+    The fake exec WebSocket in TTY mode: a shell that echoes what it is sent.
+
+    A new session pings, announces itself with `session_info` and prints `$ `.
+    Every byte in is echoed; a line ending in `\\r` answers `ran: <line>`
+    and a fresh prompt, except `exit`, which sends `{"type":"exit"}` and
+    closes. `resize` is reported to the owner. Output is kept per session,
+    and an attach replays it from the start before tailing, as Sprites does.
+    Closing the socket leaves the session alive (it is detachable);
+    `POST .../kill` ends it and the socket attached to it.
+    """
+    @behaviour WebSock
+
+    @impl true
+    def init(%{id: nil} = state) do
+      socket = self()
+
+      id =
+        Agent.get_and_update(state.sessions, fn s ->
+          id = "s#{s.next}"
+
+          {id,
+           %{
+             s
+             | next: s.next + 1,
+               sessions: Map.put(s.sessions, id, %{output: "", alive: true, socket: socket})
+           }}
+        end)
+
+      state = %{state | id: id}
+      out = output(state, "$ ")
+
+      # A ping first, as a long-lived Sprites socket gets: the client answers it.
+      {:push,
+       [
+         {:ping, "are you there"},
+         {:text, Jason.encode!(%{type: "session_info", session_id: id, tty: true})},
+         out
+       ], Map.put(state, :line, "")}
+    end
+
+    def init(%{id: id} = state) do
+      socket = self()
+
+      replay =
+        Agent.get_and_update(state.sessions, fn s ->
+          {s.sessions[id].output, put_in(s.sessions[id].socket, socket)}
+        end)
+
+      {:push,
+       [
+         {:text, Jason.encode!(%{type: "session_info", session_id: id, tty: true})},
+         {:binary, replay}
+       ], Map.put(state, :line, "")}
+    end
+
+    # Control frames arrive here rather than at `handle_in/2`.
+    @impl true
+    def handle_control({_data, [opcode: :pong]}, state) do
+      send(state.owner, {Ravix.SpritesFake, :exec, {:pong, state.id}})
+      {:ok, state}
+    end
+
+    def handle_control(_frame, state), do: {:ok, state}
+
+    @impl true
+    def handle_in({text, [opcode: :text]}, state) do
+      case Jason.decode(text) do
+        {:ok, %{"type" => "resize", "cols" => cols, "rows" => rows}} ->
+          send(state.owner, {Ravix.SpritesFake, :exec, {:resize, state.id, cols, rows}})
+
+        _other ->
+          :ok
+      end
+
+      {:ok, state}
+    end
+
+    def handle_in({data, [opcode: :binary]}, state) do
+      send(state.owner, {Ravix.SpritesFake, :exec, {:input, state.id, data}})
+      line = state.line <> data
+
+      if String.ends_with?(line, "\r") do
+        case String.trim(line) do
+          "exit" ->
+            end_session(state)
+
+            {:stop, :normal, 1000,
+             [output(state, data), {:text, ~s({"type":"exit","exit_code":0})}], state}
+
+          command ->
+            {:push, output(state, data <> "\r\nran: #{command}\r\n$ "), %{state | line: ""}}
+        end
+      else
+        {:push, output(state, data), %{state | line: line}}
+      end
+    end
+
+    @impl true
+    def handle_info(:drop, state), do: {:stop, :normal, state}
+
+    def handle_info(:killed, state) do
+      {:stop, :normal, 1000, [{:text, ~s({"type":"exit","exit_code":129})}], state}
+    end
+
+    def handle_info(_message, state), do: {:ok, state}
+
+    @impl true
+    def terminate(_reason, state) do
+      socket = self()
+
+      Agent.update(state.sessions, fn s ->
+        if s.sessions[state.id].socket == socket,
+          do: put_in(s.sessions[state.id].socket, nil),
+          else: s
+      end)
+    catch
+      # The test, and the sessions with it, ended first.
+      :exit, _reason -> :ok
+    end
+
+    defp output(state, bytes) do
+      Agent.update(state.sessions, fn s ->
+        update_in(s.sessions[state.id].output, &(&1 <> bytes))
+      end)
+
+      {:binary, bytes}
+    end
+
+    defp end_session(state),
+      do: Agent.update(state.sessions, &put_in(&1.sessions[state.id].alive, false))
   end
 
   defmodule App do

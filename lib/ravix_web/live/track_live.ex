@@ -56,7 +56,7 @@ defmodule RavixWeb.TrackLive do
   alias Ravix.Accounts.Access
   alias Ravix.Comments
   alias Ravix.GitHub.ChecksReport
-  alias Ravix.{Hub, Previews, PromptQueue, Tracks}
+  alias Ravix.{Hub, Previews, PromptQueue, Terminal, Tracks}
   alias Ravix.Hub.Event
   alias Ravix.PromptQueue.Recovery
   alias Ravix.Tracks.{AgentFailure, Diff, Files, Follower, MachineState}
@@ -66,6 +66,7 @@ defmodule RavixWeb.TrackLive do
   alias RavixWeb.Error
   alias RavixWeb.Live.Form
   alias RavixWeb.Live.Guard
+  alias RavixWeb.Live.MachineDock
   alias RavixWeb.Live.Panel
   alias RavixWeb.Live.Params
   alias RavixWeb.Live.ThreadConnect
@@ -192,7 +193,25 @@ defmodule RavixWeb.TrackLive do
     end
   end
 
+  # A terminal's keystrokes and size, from the `Shell` hook. They come to the
+  # page rather than to `RavixWeb.Live.MachineDock` so that the page's guard,
+  # which reads nothing while its answer stands, is what stands in front of
+  # them: a component event re-reads the session row, and a keystroke should
+  # not cost a query. `Ravix.Terminal` reaches only a shell this very process
+  # attached, and the shell watches the session and the track itself.
   @impl true
+  def handle_event("shell-input", %{"id" => id, "data" => data}, socket)
+      when is_binary(id) and is_binary(data) do
+    Terminal.input(id, data)
+    {:noreply, socket}
+  end
+
+  def handle_event("shell-resize", %{"id" => id, "cols" => cols, "rows" => rows}, socket)
+      when is_binary(id) do
+    Terminal.resize(id, cols, rows)
+    {:noreply, socket}
+  end
+
   def handle_event("select-thread", %{"thread_id" => "draft"}, socket),
     do: {:noreply, show_draft(socket)}
 
@@ -276,7 +295,7 @@ defmodule RavixWeb.TrackLive do
   def handle_event("narrow-view", %{"name" => name}, socket)
       when name in ["conversation", "files", "terminal"] do
     if name == "terminal" do
-      send_update(RavixWeb.Live.MachineDock, id: "machine-dock-panel", dock_open: true)
+      send_update(MachineDock, id: "machine-dock-panel", dock_open: true)
     end
 
     {:noreply, assign(socket, narrow_view: name)}
@@ -754,6 +773,11 @@ defmodule RavixWeb.TrackLive do
         else: {:noreply, redirect(socket, to: "/")}
     end
   end
+
+  # What a terminal this page attached says; see `Ravix.Terminal.Shell`. The
+  # guard hooks have already let it through.
+  def handle_info({:terminal, tab_id, event}, socket),
+    do: {:noreply, MachineDock.relay(socket, tab_id, event)}
 
   # A `live_component` cannot put a flash in the page's own socket, so it
   # sends the sentence here --- and this page has no toasts of its own

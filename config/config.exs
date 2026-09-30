@@ -43,6 +43,14 @@ config :esbuild,
       ~w(js/app.js --bundle --target=es2022 --outdir=../priv/static/assets/js --external:/fonts/* --external:/images/* --alias:@=.),
     cd: Path.expand("../assets", __DIR__),
     env: %{"NODE_PATH" => [Path.expand("../deps", __DIR__), Mix.Project.build_path()]}
+  ],
+  # The interactive terminal's renderer, loaded on demand by the `Shell` hook
+  # rather than carried in app.js; see assets/js/xterm.js. The library is
+  # vendored under assets/vendor/xterm, so no node_modules is needed.
+  xterm: [
+    args:
+      ~w(js/xterm.js --bundle --target=es2022 --format=iife --outdir=../priv/static/assets/js),
+    cd: Path.expand("../assets", __DIR__)
   ]
 
 # Tracing (ADR 0004). **Inert unless a deployment configures an exporter**, and

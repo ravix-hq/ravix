@@ -1150,10 +1150,49 @@ html[data-yard="closed"] .yard .workspace-gear { display: none; }
    inside the same strip, so its selector carries the strip to outrank
    `.workspace-tabs button` without an `!important`. */
 .dock-tabs { border-top: 1px solid var(--line); border-bottom: 0; }
+/* With terminal tabs the strip can outgrow the inspector: it scrolls
+   sideways, as a terminal's tab bar does, rather than wrapping a tab onto a
+   second line under the panels. */
+.dock-tabs { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: thin; }
+.dock-tabs > * { flex-shrink: 0; }
 .workspace-tabs .dock-toggle { width: 24px; padding: 5px; }
 .machine-dock { height: 240px; flex: none; display: flex; flex-direction: column; min-height: 0; border-top: 1px solid var(--line); }
 .machine-dock .workspace-terminal { height: 100%; }
 .machine-dock .hint { padding: 0 10px; font-size: 11px; color: var(--dim); }
+
+/* Terminal tabs. A tab and its close button read as one tab; the close and
+   the "+" after the last tab are the strip's small square buttons. */
+.dock-shell-tab { display: inline-flex; align-items: center; }
+.workspace-tabs .dock-shell-tab > button:first-child { display: inline-flex; align-items: center; gap: 6px; padding-right: 4px; }
+.workspace-tabs .dock-shell-close,
+.workspace-tabs .dock-shell-new {
+  display: inline-grid; place-items: center; width: 22px; height: 22px; padding: 0;
+  border: 0; border-radius: var(--radius); color: var(--dimmer);
+}
+.workspace-tabs .dock-shell-close:hover:not(:disabled),
+.workspace-tabs .dock-shell-new:hover:not(:disabled) { background: var(--surface-hover); color: var(--ink); }
+/* The pane is the terminal's ground; xterm draws inside `.shell-screen` and
+   takes its colours from the theme (see assets/js/hooks/shell.js). */
+/* The padding is on `.xterm`, not the pane: xterm's fit addon measures the
+   pane's border-box width and subtracts only the terminal's own padding, so
+   padding here would be counted as columns and the last one clipped. */
+.shell-screen { flex: 1; min-height: 0; overflow: hidden; }
+.shell-screen .xterm { height: 100%; padding: 6px 6px 2px 10px; }
+/* xterm lays a row out in whole-pixel cells, and the browser draws the glyphs
+   a fraction of a pixel wider, so a full row runs a few pixels past its box.
+   xterm clips each row to its box, inline, which cut the last character in
+   half; the overrun is let into the terminal's right padding instead. */
+.shell-screen .xterm .xterm-rows > div { overflow: visible !important; }
+/* The pane paints the terminal's ground. xterm also paints its viewport, and
+   inline, over the right padding the overrun below is let into; the
+   `!important` is what outranks an inline style. */
+.shell-screen .xterm-viewport,
+.shell-screen .xterm-scrollable-element { background-color: transparent !important; }
+.shell-status {
+  display: flex; align-items: center; gap: 10px; padding: 6px 10px;
+  border-bottom: 1px solid var(--line); font-family: var(--sans); font-size: 12px; color: var(--dim);
+}
+.shell-status button { font-size: 12px; padding: 2px 8px; }
 
 .machine-stats { display: grid; gap: 10px; max-width: 480px; margin: 0; }
 .machine-stats > div { display: grid; grid-template-columns: 100px minmax(0, 1fr); gap: 16px; }

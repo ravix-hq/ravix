@@ -42,6 +42,7 @@ defmodule Ravix.Sprites.Tunnel do
   use GenServer
 
   alias Ravix.Sprites.Error
+  alias Ravix.Sprites.WebSocket
 
   @typedoc "An open tunnel."
   @type t :: pid()
@@ -110,20 +111,14 @@ defmodule Ravix.Sprites.Tunnel do
   def init({cfg, sprite, port, owner, timeout}) do
     owner_ref = Process.monitor(owner)
     deadline = System.monotonic_time(:millisecond) + timeout
+    path = "/v1/sprites/#{URI.encode(sprite, &URI.char_unreserved?/1)}/proxy"
 
-    with {:ok, conn, scheme} <- connect(cfg, deadline),
-         {:ok, conn, ref} <- upgrade(conn, scheme, cfg, sprite),
-         {:ok, conn, websocket, early} <- accept(conn, ref, deadline),
-         {:ok, conn, websocket} <- request_port(conn, ref, websocket, port),
+    with {:ok, ws, early} <- WebSocket.connect(cfg, path, deadline, "tunnel"),
+         {:ok, ws} <- request_port(ws, port),
          ack_deadline = System.monotonic_time(:millisecond) + timeout,
-         {:ok, conn, websocket, frames} <-
-           await_connected(conn, ref, websocket, early, ack_deadline) do
+         {:ok, ws, frames} <- await_connected(ws, early, ack_deadline) do
       state = %{
-        conn: conn,
-        ref: ref,
-        websocket: websocket,
-        socket: Mint.HTTP.get_socket(conn),
-        scheme: scheme,
+        ws: ws,
         owner: owner,
         owner_ref: owner_ref,
         paused: false,
@@ -139,117 +134,15 @@ defmodule Ravix.Sprites.Tunnel do
     end
   end
 
-  defp connect(cfg, deadline) do
-    uri = URI.parse(cfg.base_url)
-    scheme = if uri.scheme == "https", do: :https, else: :http
-    port = uri.port || if(scheme == :https, do: 443, else: 80)
-
-    transport_opts = [
-      timeout: remaining(deadline),
-      send_timeout: 30_000,
-      send_timeout_close: true
-    ]
-
-    case Mint.HTTP.connect(scheme, uri.host, port,
-           protocols: [:http1],
-           transport_opts: transport_opts
-         ) do
-      {:ok, conn} ->
-        {:ok, conn, scheme}
-
-      {:error, reason} ->
-        {:error, Error.new(502, "Could not reach Sprites: #{Exception.message(reason)}")}
-    end
-  end
-
-  defp upgrade(conn, scheme, cfg, sprite) do
-    uri = URI.parse(cfg.base_url)
-    ws_scheme = if scheme == :https, do: :wss, else: :ws
-    base = String.trim_trailing(uri.path || "", "/")
-    path = "#{base}/v1/sprites/#{URI.encode(sprite, &URI.char_unreserved?/1)}/proxy"
-    headers = [{"authorization", "Bearer " <> cfg.token}]
-
-    case Mint.WebSocket.upgrade(ws_scheme, conn, path, headers) do
-      {:ok, conn, ref} ->
-        {:ok, conn, ref}
-
-      {:error, conn, reason} ->
-        Mint.HTTP.close(conn)
-        {:error, Error.new(502, "Could not reach Sprites: #{Exception.message(reason)}")}
-    end
-  end
-
-  # The HTTP half of the upgrade: status, headers, and whatever bytes Sprites
-  # sent in the same packet as the 101 (Mint hands those over as data).
-  defp accept(conn, ref, deadline, acc \\ %{status: nil, headers: [], data: []}) do
-    case await_socket(conn, deadline) do
-      {:ok, message} ->
-        accept_message(conn, ref, deadline, acc, Mint.WebSocket.stream(conn, message))
-
-      :timeout ->
-        Mint.HTTP.close(conn)
-        {:error, Error.new(502, "Sprites did not answer the tunnel request in time.")}
-    end
-  end
-
-  defp accept_message(_conn, ref, deadline, acc, {:ok, conn, responses}) do
-    case collect_upgrade(responses, ref, acc) do
-      {:done, acc} -> establish(conn, ref, acc)
-      {:more, acc} -> accept(conn, ref, deadline, acc)
-    end
-  end
-
-  defp accept_message(_conn, _ref, _deadline, _acc, {:error, conn, reason, _responses}) do
-    Mint.HTTP.close(conn)
-    {:error, Error.new(502, "Sprites closed the tunnel: #{Exception.message(reason)}")}
-  end
-
-  @typep upgrade_acc :: %{
-           status: non_neg_integer() | nil,
-           headers: Mint.Types.headers(),
-           data: iodata()
-         }
-  @spec collect_upgrade(list(), reference(), upgrade_acc()) :: {:more | :done, upgrade_acc()}
-  defp collect_upgrade([], _ref, acc), do: {:more, acc}
-
-  defp collect_upgrade([{:status, ref, status} | rest], ref, acc),
-    do: collect_upgrade(rest, ref, %{acc | status: status})
-
-  defp collect_upgrade([{:headers, ref, headers} | rest], ref, acc),
-    do: collect_upgrade(rest, ref, %{acc | headers: acc.headers ++ headers})
-
-  defp collect_upgrade([{:data, ref, data} | rest], ref, acc),
-    do: collect_upgrade(rest, ref, %{acc | data: [acc.data, data]})
-
-  defp collect_upgrade([{:done, ref} | _rest], ref, acc), do: {:done, acc}
-  defp collect_upgrade([_other | rest], ref, acc), do: collect_upgrade(rest, ref, acc)
-
-  defp establish(conn, ref, %{status: status, headers: headers, data: data}) do
-    case Mint.WebSocket.new(conn, ref, status, headers) do
-      {:ok, conn, websocket} ->
-        {:ok, conn, websocket, IO.iodata_to_binary(data)}
-
-      {:error, conn, %Mint.WebSocket.UpgradeFailureError{status_code: code}} ->
-        Mint.HTTP.close(conn)
-
-        {:error,
-         Error.new(502, "Sprites refused the tunnel (#{code}). Check the deployment token.")}
-
-      {:error, conn, _reason} ->
-        Mint.HTTP.close(conn)
-        {:error, Error.new(502, "Invalid Sprites WebSocket handshake.")}
-    end
-  end
-
-  defp request_port(conn, ref, websocket, port) do
+  defp request_port(ws, port) do
     init = Jason.encode!(%{host: "127.0.0.1", port: port})
 
-    case send_frame(conn, ref, websocket, {:text, init}) do
-      {:ok, websocket} ->
-        {:ok, conn, websocket}
+    case WebSocket.send_frame(ws, {:text, init}) do
+      {:ok, ws} ->
+        {:ok, ws}
 
       {:error, reason} ->
-        Mint.HTTP.close(conn)
+        Mint.HTTP.close(ws.conn)
         {:error, Error.new(502, "Sprites closed the tunnel: #{format(reason)}")}
     end
   end
@@ -265,36 +158,32 @@ defmodule Ravix.Sprites.Tunnel do
   # tunnel then resumed decoding mid-frame and the preview "answered with
   # something other than HTTP" (#15). Here the `else` only handles `{:error, _}`,
   # which needs no websocket, and every path that does have one names it.
-  defp await_connected(conn, ref, websocket, buffered, deadline) do
-    with {:ok, websocket, frames} <- decode(websocket, buffered),
-         {:ok, websocket, frames} <- answer_pings(conn, ref, websocket, frames) do
+  defp await_connected(ws, buffered, deadline) do
+    with {:ok, ws, frames} <- WebSocket.decode(ws, buffered),
+         {:ok, ws, frames} <- WebSocket.answer_pings(ws, frames) do
       case acknowledgement(frames) do
-        # This websocket: the one that decoded these frames.
-        {:ok, :connected, rest} -> {:ok, conn, websocket, rest}
-        {:ok, :more} -> await_more(conn, ref, websocket, deadline)
-        {:refused, message} -> refuse(conn, message)
+        # This connection: the one that decoded these frames.
+        {:ok, :connected, rest} -> {:ok, ws, rest}
+        {:ok, :more} -> await_more(ws, deadline)
+        {:refused, message} -> refuse(ws, message)
       end
     else
-      {:error, reason} -> refuse(conn, "Preview tunnel failed: #{format(reason)}")
+      {:error, reason} -> refuse(ws, "Preview tunnel failed: #{format(reason)}")
     end
   end
 
-  # Split out only because inlining it puts `await_connected/5` past Credo's
-  # nesting and complexity limits. It costs one `.dialyzer_ignore.exs` entry,
-  # for the reason already documented there rather than a new one: this module's
-  # whole call graph is unreachable to Dialyzer because mint_web_socket 1.0.5
-  # declares its opaque fragment as `tuple()` while `new/4` returns `nil`, and
-  # `await_connected/5` is itself already on that list.
-  defp await_more(conn, ref, websocket, deadline) do
-    case await_socket(conn, deadline) do
+  # Split out only because inlining it puts `await_connected/3` past Credo's
+  # nesting and complexity limits.
+  defp await_more(ws, deadline) do
+    case WebSocket.await_socket(ws, deadline) do
       {:ok, {tag, _socket, data}} when tag in [:tcp, :ssl] ->
-        await_connected(conn, ref, websocket, data, deadline)
+        await_connected(ws, data, deadline)
 
       {:ok, _closed_or_error} ->
-        refuse(conn, "Sprites closed the tunnel before connecting.")
+        refuse(ws, "Sprites closed the tunnel before connecting.")
 
       :timeout ->
-        refuse(conn, "Sprites tunnel acknowledgement timed out.")
+        refuse(ws, "Sprites tunnel acknowledgement timed out.")
     end
   end
 
@@ -312,58 +201,10 @@ defmodule Ravix.Sprites.Tunnel do
 
   defp acknowledgement([_other | _rest]), do: {:refused, "Sprites refused the preview port."}
 
-  defp refuse(conn, message) do
-    Mint.HTTP.close(conn)
+  defp refuse(ws, message) do
+    Mint.HTTP.close(ws.conn)
     {:error, Error.new(502, message)}
   end
-
-  defp decode(websocket, <<>>), do: {:ok, websocket, []}
-
-  defp decode(websocket, data) do
-    case Mint.WebSocket.decode(websocket, data) do
-      {:ok, websocket, frames} -> {:ok, websocket, frames}
-      {:error, _websocket, reason} -> {:error, reason}
-    end
-  end
-
-  defp answer_pings(conn, ref, websocket, frames) do
-    frames
-    |> Enum.reduce_while({:ok, websocket, []}, fn
-      {:ping, data}, {:ok, websocket, kept} ->
-        case send_frame(conn, ref, websocket, {:pong, data}) do
-          {:ok, websocket} -> {:cont, {:ok, websocket, kept}}
-          {:error, reason} -> {:halt, {:error, reason}}
-        end
-
-      {:pong, _data}, acc ->
-        {:cont, acc}
-
-      frame, {:ok, websocket, kept} ->
-        {:cont, {:ok, websocket, [frame | kept]}}
-    end)
-    |> case do
-      {:ok, websocket, kept} -> {:ok, websocket, Enum.reverse(kept)}
-      {:error, _reason} = error -> error
-    end
-  end
-
-  # One socket message, or :timeout at the deadline. Selective, so the
-  # owner's monitor and anything else in the mailbox wait their turn.
-  defp await_socket(conn, deadline) do
-    socket = Mint.HTTP.get_socket(conn)
-
-    receive do
-      {tag, ^socket, _payload} = message when tag in [:tcp, :ssl, :tcp_error, :ssl_error] ->
-        {:ok, message}
-
-      {tag, ^socket} = message when tag in [:tcp_closed, :ssl_closed] ->
-        {:ok, message}
-    after
-      remaining(deadline) -> :timeout
-    end
-  end
-
-  defp remaining(deadline), do: max(deadline - System.monotonic_time(:millisecond), 0)
 
   defp format(%{__exception__: true} = exception), do: Exception.message(exception)
   defp format(reason), do: inspect(reason)
@@ -379,8 +220,8 @@ defmodule Ravix.Sprites.Tunnel do
     |> IO.iodata_to_binary()
     |> frames()
     |> Enum.reduce_while({:ok, state}, fn chunk, {:ok, state} ->
-      case send_frame(state.conn, state.ref, state.websocket, {:binary, chunk}) do
-        {:ok, websocket} -> {:cont, {:ok, %{state | websocket: websocket}}}
+      case WebSocket.send_frame(state.ws, {:binary, chunk}) do
+        {:ok, ws} -> {:cont, {:ok, %{state | ws: ws}}}
         {:error, reason} -> {:halt, {:error, reason, state}}
       end
     end)
@@ -395,27 +236,6 @@ defmodule Ravix.Sprites.Tunnel do
   defp frames(<<chunk::binary-size(@max_frame), rest::binary>>), do: [chunk | frames(rest)]
 
   @impl true
-  def handle_info({tag, socket, data}, %{socket: socket} = state) when tag in [:tcp, :ssl] do
-    with {:ok, websocket, frames} <- decode(state.websocket, data),
-         {:ok, websocket, frames} <- answer_pings(state.conn, state.ref, websocket, frames),
-         {:ok, state} <- dispatch(frames, %{state | websocket: websocket}) do
-      {:noreply, resume(state)}
-    else
-      {:stop, state} -> {:stop, :normal, state}
-      {:error, reason} -> {:stop, :normal, fail(state, reason)}
-    end
-  end
-
-  def handle_info({tag, socket}, %{socket: socket} = state)
-      when tag in [:tcp_closed, :ssl_closed] do
-    {:stop, :normal, closed(state)}
-  end
-
-  def handle_info({tag, socket, reason}, %{socket: socket} = state)
-      when tag in [:tcp_error, :ssl_error] do
-    {:stop, :normal, fail(state, reason)}
-  end
-
   def handle_info(:resume, state), do: {:noreply, resume(%{state | paused: false})}
 
   def handle_info({:DOWN, ref, :process, _pid, _reason}, %{owner_ref: ref} = state) do
@@ -423,18 +243,31 @@ defmodule Ravix.Sprites.Tunnel do
     {:stop, :normal, %{state | closed: true}}
   end
 
-  def handle_info(_other, state), do: {:noreply, state}
+  def handle_info(message, state) do
+    case WebSocket.classify(state.ws, message) do
+      {:data, data} -> received(data, state)
+      :closed -> {:stop, :normal, closed(state)}
+      {:error, reason} -> {:stop, :normal, fail(state, reason)}
+      :unknown -> {:noreply, state}
+    end
+  end
+
+  defp received(data, state) do
+    with {:ok, ws, frames} <- WebSocket.decode(state.ws, data),
+         {:ok, ws, frames} <- WebSocket.answer_pings(ws, frames),
+         {:ok, state} <- dispatch(frames, %{state | ws: ws}) do
+      {:noreply, resume(state)}
+    else
+      {:stop, state} -> {:stop, :normal, state}
+      {:error, reason} -> {:stop, :normal, fail(state, reason)}
+    end
+  end
 
   @impl true
   def terminate(reason, state) do
     state = if reason == :normal, do: closed(state), else: fail(state, reason)
 
-    if Mint.HTTP.open?(state.conn) do
-      _ = send_frame(state.conn, state.ref, state.websocket, :close)
-      Mint.HTTP.close(state.conn)
-    end
-
-    :ok
+    WebSocket.close(state.ws)
   end
 
   # Binary frames are the byte stream; text after the acknowledgement is
@@ -456,22 +289,12 @@ defmodule Ravix.Sprites.Tunnel do
   defp resume(state) do
     case Process.info(state.owner, :message_queue_len) do
       {:message_queue_len, queued} when queued < @max_owner_queue ->
-        setopts = if state.scheme == :https, do: &:ssl.setopts/2, else: &:inet.setopts/2
-        _ = setopts.(state.socket, active: :once)
+        WebSocket.arm(state.ws)
         %{state | paused: false}
 
       _behind_or_gone ->
         unless state.paused, do: Process.send_after(self(), :resume, @resume_interval)
         %{state | paused: true}
-    end
-  end
-
-  defp send_frame(conn, ref, websocket, frame) do
-    with {:ok, websocket, data} <- Mint.WebSocket.encode(websocket, frame),
-         {:ok, _conn} <- Mint.WebSocket.stream_request_body(conn, ref, data) do
-      {:ok, websocket}
-    else
-      {:error, _websocket_or_conn, reason} -> {:error, reason}
     end
   end
 
