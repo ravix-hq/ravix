@@ -3982,15 +3982,16 @@ defmodule RavixWeb.TrackLiveTest do
     assert render(ctx.view) =~ "File content is truncated"
   end
 
-  for {layout, scope, label} <- [
-        {:shared, "Shared machine",
-         "Shared project machine (used by all of this project's tracks)"},
-        {:dedicated, "Own machine", "This track's machine"}
+  for {layout, scope, title} <- [
+        {:shared, "Shared machine", "Used by all of this project's tracks"},
+        {:dedicated, "Own machine", "This track's own machine"}
       ] do
     @layout layout
     @machine_scope scope
-    @machine_label label
-    test "#{layout} machine ownership is visible in the header, terminal and Vitals", ctx do
+    @machine_title title
+    # RAV-90: the header's badge says whose machine it is, once; the dock's
+    # panes do not repeat it as a heading over their contents.
+    test "#{layout} machine ownership is said once, in the header, not in the dock", ctx do
       Repo.update!(
         Ecto.Changeset.change(ctx.track, sandbox_layout: @layout, opened_at: DateTime.utc_now())
       )
@@ -4006,18 +4007,27 @@ defmodule RavixWeb.TrackLiveTest do
       {:ok, parent, _} = live(ctx.conn, "/p/#{ctx.project.id}/t/#{ctx.track.id}")
       view = find_live_child(parent, "track-host")
       render_async(view)
-      assert has_element?(view, "#track-machine-scope", @machine_scope)
+
+      assert has_element?(
+               view,
+               ~s(#track-machine-scope[title="#{@machine_title}"]),
+               @machine_scope
+             )
+
       chip(view, "Idle", nil)
       # The dock is its tab strip: no standing line above it.
       refute has_element?(view, "#track-machine-label")
       refute has_element?(view, "#track-machine-status")
       refute has_element?(view, ".machine-dock-host > [role=status]")
       view |> element("button[phx-click=dock][phx-value-name=terminal]") |> render_click()
-      assert has_element?(view, "#terminal-machine-label", @machine_label)
+      assert has_element?(view, "#track-terminal .dock-empty h3", "No commands yet")
+      refute has_element?(view, "#terminal-machine-label")
       view |> element("button[phx-click=dock][phx-value-name=vitals]") |> render_click()
       render_async(view)
-      assert has_element?(view, "#vitals-machine-label", @machine_label)
       assert has_element?(view, ".dock-empty", "No machine is available yet.")
+      refute has_element?(view, "#vitals-machine-label")
+      refute has_element?(view, "#machine-dock", "This track's machine")
+      refute has_element?(view, "#machine-dock", "Shared project machine")
     end
   end
 
@@ -4107,12 +4117,17 @@ defmodule RavixWeb.TrackLiveTest do
 
     assert has_element?(ctx.view, "#machine-dock:not([hidden])")
     assert has_element?(ctx.view, "#track-terminal .dock-empty h3", "No commands yet")
-    assert has_element?(ctx.view, "#track-terminal .dock-empty", "tests, builds and scripts")
 
     assert has_element?(
              ctx.view,
              "#track-terminal .dock-empty",
-             "For an interactive shell, such as a console or a REPL, open a terminal with +."
+             "builds and scripts run one at a time"
+           )
+
+    assert has_element?(
+             ctx.view,
+             "#track-terminal .dock-empty",
+             "For an interactive shell, open a terminal with +."
            )
 
     assert has_element?(

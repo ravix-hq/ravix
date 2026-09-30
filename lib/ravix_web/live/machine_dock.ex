@@ -510,15 +510,6 @@ defmodule RavixWeb.Live.MachineDock do
   defp retry_vitals?(%Vitals.Report{why: :no_token}), do: false
   defp retry_vitals?(_), do: true
 
-  # Whose machine this is matters as much as its state: a shared track's
-  # terminal and files are the whole project's machine, a dedicated one's are not.
-  defp machine_label({:ok, {_, :dedicated, _, _}}), do: "This track's machine"
-
-  defp machine_label({:ok, {_, :shared, _, _}}),
-    do: "Shared project machine (used by all of this project's tracks)"
-
-  defp machine_label(_), do: "Machine"
-
   defp shell_status(:connecting), do: "Connecting to the machine…"
   defp shell_status(:no_answer), do: "The machine didn't answer."
 
@@ -599,7 +590,6 @@ defmodule RavixWeb.Live.MachineDock do
           phx-target={@myself}
           class="term workspace-terminal"
         >
-          <p id="terminal-machine-label" class="dock-context">{machine_label(@machine_identity)}</p>
           <div class="term-scroll" data-terminal-output>
             <div :for={block <- @output}>
               <strong>$ {block.command}</strong><pre>{block.stdout}</pre><pre class="error">{block.stderr}</pre>
@@ -609,10 +599,9 @@ defmodule RavixWeb.Live.MachineDock do
             </div>
             <div :if={@output == [] && @dock == :terminal} class="dock-empty">
               <.empty icon="terminal" title="No commands yet">
-                Run commands, tests, builds and scripts in this track’s worktree.
-                Each command runs on its own. For an interactive shell, such as
-                a console or a REPL, open a terminal with +.
-                For a process that keeps running, use the track’s run script.
+                Tests, builds and scripts run one at a time in this track’s worktree.
+                For an interactive shell, open a terminal with +. For a process
+                that keeps running, use the run script.
                 <:action label="Open Preview" click={JS.push("panel", value: %{name: "preview"})} />
               </.empty>
             </div>
@@ -692,7 +681,6 @@ defmodule RavixWeb.Live.MachineDock do
           </div>
         </div>
         <div :if={@dock == :vitals} class="workspace-panel">
-          <p id="vitals-machine-label" class="dock-context">{machine_label(@machine_identity)}</p>
           <.loading_status :if={@vitals_busy?}>Reading machine metrics…</.loading_status>
           <div :if={!@vitals_busy? && !(@vitals && @vitals.readings)} class="dock-empty">
             <.empty icon="machine" title="No machine stats" because={vitals_reason(@vitals)}>
