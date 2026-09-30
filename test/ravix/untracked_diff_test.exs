@@ -93,11 +93,13 @@ defmodule Ravix.UntrackedDiffTest do
     assert diff.truncated
   end
 
-  test "a clean worktree, a non-repository and a failed exec leave the diff as it was", %{
+  test "a clean worktree is listed as clean; a non-repository or failed exec is unread", %{
     root: root
   } do
     clean = tracked("")
-    assert Diff.with_untracked(clean, run(root)) == clean
+    assert clean.untracked == :unread
+    assert Diff.with_untracked(clean, run(root)) == %{clean | untracked: :listed}
+    assert Diff.with_untracked(clean, :asleep) == %{clean | untracked: :asleep}
 
     outside = Path.join(Path.dirname(root), "plain")
     File.mkdir_p!(outside)

@@ -1389,7 +1389,7 @@ html[data-yard="closed"] .workspace-trigger-skeleton { flex: none; width: 28px; 
 @media (prefers-reduced-motion: reduce) { .workspace-tabs .panel-refresh.busy svg { animation: none; } }
 .tab-count {
   display: inline-block; min-width: 18px; margin-left: 6px; padding: 0 5px; border-radius: 9px;
-  font-size: 11px; line-height: 16px; text-align: center; font-variant-numeric: tabular-nums;
+  font: 11px/16px var(--mono); text-align: center; font-variant-numeric: tabular-nums;
   color: var(--dim); background: var(--surface); border: 1px solid var(--line);
 }
 .workspace-tabs .selected .tab-count { color: inherit; }

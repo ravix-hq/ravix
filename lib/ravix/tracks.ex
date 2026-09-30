@@ -2714,12 +2714,19 @@ defmodule Ravix.Tracks do
       Task.Supervisor.async_nolink(
         Ravix.TaskSupervisor,
         Ravix.Trace.link(fn ->
-          with {:ok, %{available: true}} <- Ravix.Terminal.status(user, track.id, passive: true) do
-            Ravix.Terminal.exec(user, track.id, %Ravix.Terminal.Request{
-              command: Diff.untracked_command(track.workdir),
-              cwd: track.workdir,
-              timeout_sec: Diff.untracked_timeout_sec()
-            })
+          case Ravix.Terminal.status(user, track.id, passive: true) do
+            {:ok, %{available: true}} ->
+              Ravix.Terminal.exec(user, track.id, %Ravix.Terminal.Request{
+                command: Diff.untracked_command(track.workdir),
+                cwd: track.workdir,
+                timeout_sec: Diff.untracked_timeout_sec()
+              })
+
+            {:ok, %{why: :unreachable}} ->
+              :asleep
+
+            other ->
+              other
           end
         end)
       )

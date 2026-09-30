@@ -2547,6 +2547,20 @@ defmodule RavixWeb.TrackLive do
     """
   end
 
+  # Fountain's diff answered but the sprite was asleep, so files Git is not
+  # tracking yet could not be listed: "No changes" would be a guess.
+  defp panel_body(%{data: %Diff{diff: "", untracked: :asleep}} = assigns) do
+    ~H"""
+    <.empty
+      pane
+      id="changes-empty"
+      icon="moon"
+      title="No tracked changes"
+      because="The machine is asleep, so new files Git is not tracking yet cannot be listed."
+    />
+    """
+  end
+
   defp panel_body(%{data: %Diff{diff: ""}} = assigns) do
     ~H"""
     <.empty
@@ -2585,6 +2599,9 @@ defmodule RavixWeb.TrackLive do
         </span>
       </p>
       <p :if={@data.truncated} class="changes-note">Diff is truncated.</p>
+      <p :if={@data.untracked == :asleep} id="changes-untracked-asleep" class="changes-note">
+        The machine is asleep, so new files Git is not tracking yet are not listed.
+      </p>
       <div :if={!@selected}>
         <form id="diff-filter-form" phx-change="filter-diff" phx-submit="filter-diff">
           <label for="diff-filter" class="sr-only">Filter paths</label>

@@ -1942,7 +1942,8 @@ defmodule Ravix.TracksTest do
         {:ok, %{code: 0, stdout: output}}
       end)
 
-      assert {:ok, %Diff{changes: changes}} = Tracks.diff(ctx.owner, ctx.track.id)
+      assert {:ok, %Diff{changes: changes, untracked: :listed}} =
+               Tracks.diff(ctx.owner, ctx.track.id)
 
       assert Enum.map(changes, &{&1.path, &1.status}) == [
                {"a.txt", :modified},
@@ -1956,14 +1957,27 @@ defmodule Ravix.TracksTest do
       assert {:error, :not_found} = Tracks.diff(insert_user(), ctx.track.id)
     end
 
-    test "a parked machine is not woken for its untracked files", ctx do
+    test "a parked machine is not woken for its untracked files, and the diff says so", ctx do
       reject(Ravix.Terminal, :exec, 3)
       machine_fountain(ctx.project, [diff_route(@edit)])
 
-      expect(Ravix.Terminal, :status, fn _, _, [passive: true] -> {:ok, %{available: false}} end)
+      expect(Ravix.Terminal, :status, fn _, _, [passive: true] ->
+        {:ok, %{available: false, why: :unreachable}}
+      end)
 
-      assert {:ok, %Diff{changes: [%{path: "a.txt", status: :modified}]}} =
+      assert {:ok, %Diff{changes: [%{path: "a.txt", status: :modified}], untracked: :asleep}} =
                Tracks.diff(ctx.owner, ctx.track.id)
+    end
+
+    test "a deployment without exec lists no untracked files and claims no sleep", ctx do
+      reject(Ravix.Terminal, :exec, 3)
+      machine_fountain(ctx.project, [diff_route(@edit)])
+
+      expect(Ravix.Terminal, :status, fn _, _, _ ->
+        {:ok, %{available: false, why: :no_token}}
+      end)
+
+      assert {:ok, %Diff{untracked: :unread}} = Tracks.diff(ctx.owner, ctx.track.id)
     end
 
     test "a machine that hangs costs the untracked files, not the diff, and no task", ctx do

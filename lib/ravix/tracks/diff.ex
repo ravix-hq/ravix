@@ -34,7 +34,7 @@ defmodule Ravix.Tracks.Diff do
   # "0 changed files" beside a non-empty `diff`, indistinguishable from a
   # real empty one.
   @enforce_keys [:path, :repo_root, :diff, :truncated, :changes, :files]
-  defstruct @enforce_keys
+  defstruct @enforce_keys ++ [untracked: :unread]
 
   @typedoc """
   A track's working diff. `diff` is the unified text as `git` produced it and
@@ -47,8 +47,15 @@ defmodule Ravix.Tracks.Diff do
           diff: String.t(),
           truncated: boolean(),
           changes: [Change.t()],
-          files: [map()]
+          files: [map()],
+          untracked: untracked()
         }
+
+  @typedoc """
+  Whether the untracked files are in: `:listed` when the machine answered,
+  `:asleep` when it was not running to ask, `:unread` for anything else.
+  """
+  @type untracked :: :listed | :asleep | :unread
 
   @hunk ~r/^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@(.*)$/
 
@@ -113,6 +120,8 @@ defmodule Ravix.Tracks.Diff do
   the tracked diff is still true without them.
   """
   @spec with_untracked(t(), term()) :: t()
+  def with_untracked(%__MODULE__{} = diff, :asleep), do: %{diff | untracked: :asleep}
+
   def with_untracked(%__MODULE__{} = diff, {:ok, %{code: 0, stdout: output}}) do
     case Jason.decode(output) do
       {:ok, %{"available" => true, "diff" => text, "large" => large, "truncated" => cut}}
@@ -133,14 +142,15 @@ defmodule Ravix.Tracks.Diff do
 
         %{
           diff
-          | diff: if(diff.diff == "", do: text, else: diff.diff <> "\n" <> text),
+          | untracked: :listed,
+            diff: if(diff.diff == "", do: text, else: diff.diff <> "\n" <> text),
             truncated: diff.truncated or cut == true,
             changes: diff.changes ++ Enum.map(files, & &1.change),
             files: diff.files ++ files
         }
 
-      {:ok, %{"available" => true, "truncated" => true}} ->
-        %{diff | truncated: true}
+      {:ok, %{"available" => true, "truncated" => cut}} ->
+        %{diff | untracked: :listed, truncated: diff.truncated or cut == true}
 
       _ ->
         diff

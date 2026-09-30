@@ -3504,6 +3504,11 @@ defmodule RavixWeb.TrackLiveTest do
            )
 
     assert has_element?(ctx.view, ".change-file .sr-only", "New, untracked:")
+    tab = "nav[aria-label='Inspector panels'] button[phx-value-name=changes]"
+    count = length(diff.files)
+    assert count == length(changes_fixture().files) + 2
+    assert has_element?(ctx.view, "#{tab} .tab-count", "#{count}")
+    assert has_element?(ctx.view, "#{tab} .sr-only", "#{count} changed files")
     assert has_element?(ctx.view, ".change-file", "added.txt")
     render_click(ctx.view, "select-diff", %{path: "notes.md"})
     assert has_element?(ctx.view, ".diff-line.diff-add code", "draft")
@@ -3511,6 +3516,22 @@ defmodule RavixWeb.TrackLiveTest do
     render_click(ctx.view, "select-diff", %{path: "dump.sql"})
     assert has_element?(ctx.view, ".changes-panel p", "New file too large to show here.")
     refute has_element?(ctx.view, ".file-diff")
+  end
+
+  test "an empty diff from a sleeping machine does not claim there are no changes", ctx do
+    diff = %{changes_fixture() | diff: "", changes: [], files: [], untracked: :asleep}
+    expect(Tracks, :diff, fn _, _ -> {:ok, diff} end)
+    stub(Tracks, :checks, fn _, _ -> {:ok, checks_fixture(:open)} end)
+    render_click(ctx.view, "panel", %{name: "changes"})
+    render_async(ctx.view, 1_000)
+    assert has_element?(ctx.view, "#changes-empty h3", "No tracked changes")
+    assert has_element?(ctx.view, "#changes-empty", "The machine is asleep")
+    refute has_element?(ctx.view, "#changes-empty", "No changes yet")
+
+    expect(Tracks, :diff, fn _, _ -> {:ok, %{changes_fixture() | untracked: :asleep}} end)
+    render_click(ctx.view, "refresh-panel")
+    render_async(ctx.view, 1_000)
+    assert has_element?(ctx.view, "#changes-untracked-asleep")
   end
 
   test "nonempty Changes does not fetch PR state", ctx do
