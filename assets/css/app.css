@@ -684,7 +684,7 @@ html[data-yard="closed"] .workspace-trigger-skeleton { flex: none; width: 28px; 
    row's end: always on the open project, on hover or focus on the others
    (and always where there is no hover to reveal them). */
 .workspace-project { padding: 1px 0; }
-.workspace-project-row { display: flex; align-items: center; gap: 2px; height: var(--rail-row); border-radius: var(--radius); }
+.workspace-project-row { display: flex; align-items: center; gap: 2px; height: var(--rail-row); padding-left: var(--tree-indent, 0px); border-radius: var(--radius); }
 .workspace-project-row:hover { background: var(--surface-hover); }
 .workspace-project.current .workspace-project-row { background: var(--surface-active); }
 .workspace-project-name {
@@ -2671,11 +2671,13 @@ body:has(.phx-error) #request-progress { display: none; }
 .section-toggle:hover:not(:disabled) { color: var(--dim); background: transparent; border-color: transparent; }
 .section-toggle .truncate { flex: 1; }
 .section-toggle .dim { font-weight: 400; font-variant-numeric: tabular-nums; }
-/* A section's chevron and its projects' chevrons are one column (RAV-96);
-   the label's small capitals say which is the heading. Tracks step in from
-   their project (`.project-tree-tracks`). The empty line's words start
-   where a project's name would. */
-.section-empty { margin: 0; padding: 2px 6px 4px 32px; font-size: 12px; }
+/* Under a heading, a project steps in by about a chevron's width (RAV-125),
+   so heading, project and track read as three levels. The row pads its
+   contents, so its hover and selected fill still span the rail; its tracks
+   move with it (`.project-tree-tracks`). The empty line's words start where
+   a project's name would. Without a heading there is nothing to step in from. */
+.project-section.labelled { --tree-indent: 12px; }
+.section-empty { margin: 0; padding: 2px 6px 4px calc(32px + var(--tree-indent, 0px)); font-size: 12px; }
 .project-section-picker { display: flex; align-items: center; gap: 8px; padding: 4px 0; }
 .project-section-picker label { flex: 1; min-width: 0; }
 .project-section-picker select { flex: 1; min-width: 0; padding: 4px; }
@@ -2858,7 +2860,7 @@ body:has(.phx-error) #request-progress { display: none; }
 /* A single project picker serves the desktop rail and narrow navigation. */
 
 /* The rail shares one tree on desktop and in the mobile menu. */
-.project-tree-tracks { display: flex; flex-direction: column; gap: 1px; padding: 1px 0 4px 24px; min-width: 0; }
+.project-tree-tracks { display: flex; flex-direction: column; gap: 1px; padding: 1px 0 4px calc(24px + var(--tree-indent, 0px)); min-width: 0; }
 .project-tree-tracks[hidden] { display: none; }
 /* One height and one inset for every row (RAV-96), so a list of tracks, a
    hint and the closed list below keep the project rows' beat. */
