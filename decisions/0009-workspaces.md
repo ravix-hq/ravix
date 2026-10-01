@@ -1,7 +1,7 @@
 ---
 type: ADR
 title: "Workspaces own repositories; a track's creator pays"
-description: "Amended: workspaces own repository projects, sharing is workspace-only, and the track creator pays for every thread and runtime on a dedicated track. Workspace audit and departed-member private-track handling are deferred; implementation remains staged with legacy project-owner billing preserved."
+description: "Amended: workspaces own repository projects, sharing is workspace-only, and the track creator pays for every thread and runtime on a dedicated track. Sidebar sections are per person, per workspace (RAV-127). Workspace audit and departed-member private-track handling are deferred; implementation remains staged with legacy project-owner billing preserved."
 tags: [architecture, workspaces, access, billing, fountain]
 status: stable
 adr: "0009"
@@ -33,6 +33,39 @@ deferred handling departed members' private tracks. The previously accepted
 owner-only orphan count and blind close remain unchanged. The decisions and
 phases are amended inline below; repository identity, workspace scratch and
 visibility defaults remain as accepted.
+
+## Amended 2026-10-01 — sidebar sections are per person, per workspace (RAV-127)
+
+A sidebar section (ADR 0008's personal sections) was keyed by person only,
+so a section whose projects live in one workspace appeared, empty, in every
+other workspace the person switched to. Hiding empty sections would not do:
+a section just created is empty too, and must be there to drag projects
+into. Sections now belong to one person **in one workspace**. They stay
+personal — not shared with other members, and never conferring access —
+and a workspace's sidebar lists only its own sections, empty or not.
+
+- A legacy project with no workspace counts as its owner's personal
+  workspace for section purposes. A project in a workspace the person is
+  not a member of — a legacy share — sits in their personal workspace, as
+  `Ravix.Workspaces.partition/4` places it, so their sections there may hold it.
+- A project that changes workspace loses its placement and lands in "Other
+  projects" of its new workspace; the section does not move with it. The
+  legacy adoption paths drop the placements too.
+- Existing sections take the workspace of their placed projects. One
+  spanning several workspaces is split into one same-named copy per
+  workspace, keeping its collapsed state; one with no placements goes to the
+  person's personal workspace. A section the previous release writes without
+  a workspace during the deploy is read as the personal workspace, so nothing
+  disappears, and the backfill fills it in after every migration.
+- With no current workspace (`RAVIX_WORKSPACE_ACCESS` off) behaviour is
+  unchanged: every section is listed and any of them takes any project.
+
+Expand/contract across two releases, per ADR 0003: the first adds a nullable
+`workspace_id`, a `(user_id, workspace_id, name)` uniqueness and the
+backfill, narrowing the old `(user_id, name)` index to workspace-less rows
+so the serving release still refuses its duplicates; the second makes the
+column required and drops that narrowed index once no running instance
+writes sections without a workspace.
 
 ## Context
 

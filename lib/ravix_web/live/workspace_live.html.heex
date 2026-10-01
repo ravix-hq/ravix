@@ -1094,7 +1094,11 @@
       title="Project sections"
       on_close={dismiss(@project, @track_id, @settings)}
     >
-      <p class="hint">Organize your sidebar. Sections are visible only to you.</p>
+      <p class="hint">
+        {if @current_workspace,
+          do: "Organize this workspace's sidebar.",
+          else: "Organize your sidebar."} Sections are visible only to you.
+      </p>
       <form id="new-section-form" phx-submit="create-section">
         <.input
           name="section[name]"

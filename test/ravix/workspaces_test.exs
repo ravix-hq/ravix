@@ -93,7 +93,14 @@ defmodule Ravix.WorkspacesTest do
         assert {:ok, ^workspace} = Workspaces.personal_workspace(user)
       end
 
-      assert Backfill.run() == %{workspaces: 0, memberships: 0, projects: 0, installations: 0}
+      assert Backfill.run() == %{
+               workspaces: 0,
+               memberships: 0,
+               projects: 0,
+               installations: 0,
+               sections: 0
+             }
+
       assert Repo.aggregate(where(Workspace, personal_user_id: ^a.id), :count) == 1
       assert Repo.aggregate(where(Membership, user_id: ^a.id), :count) == 1
     end
@@ -114,7 +121,8 @@ defmodule Ravix.WorkspacesTest do
                workspaces: 0,
                memberships: 0,
                projects: 0,
-               installations: 0
+               installations: 0,
+               sections: 0
              }
     end
 
