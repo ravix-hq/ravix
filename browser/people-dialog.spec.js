@@ -37,10 +37,19 @@ test('a typed login survives the track re-rendering after the box loses focus', 
   const other = await page.context().newPage();
   await other.goto(trackPath);
   await expect(other.locator('[data-phx-main]')).toHaveClass(/phx-connected/);
+  // Connected is not loaded: the track page's first reads are still landing
+  // for a moment after the socket joins, and a rename typed into that moment
+  // went nowhere in CI (both tabs kept the old title). Wait for the page to
+  // have read its machine, as the first tab did above.
+  await expect(other.locator('#track-machine-state')).toHaveText('Idle', { timeout: 30_000 });
   await other.getByRole('button', { name: /^Rename track/ }).click();
   const title = other.getByRole('dialog').getByRole('textbox').first();
+  await expect(title).toBeVisible();
   await title.fill('people-renamed');
+  await expect(title).toHaveValue('people-renamed');
   await title.press('Enter');
+  // The tab that renamed first, so a miss says which side lost it.
+  await expect(other.locator('.track-crumbs')).toContainText('people-renamed');
   await expect(page.locator('.track-crumbs')).toContainText('people-renamed');
 
   await expect(login).toHaveValue('somebody');

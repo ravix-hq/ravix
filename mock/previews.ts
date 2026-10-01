@@ -4,10 +4,15 @@
 import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { connect, type Socket } from "node:net";
+import { connect, createServer, type Socket } from "node:net";
 import type { ServerWebSocket, Subprocess } from "bun";
 
-interface Service { name: string; dir: string; root: string; port: number; status: string; logs: string; process?: Subprocess; version: number; }
+// `port` is the service's $PORT on its own sprite; `hostPort` is where the
+// process really listens. Every sprite has its own ports, as a real one does,
+// but every mock sprite is this one host: two tracks on different sprites
+// both given 20000 used to be two Vites fighting over one host port, and the
+// loser's preview answered with the winner's app (or not at all).
+interface Service { name: string; sprite: string; dir: string; root: string; port: number; hostPort: number; definition: Record<string, unknown>; status: string; logs: string; process?: Subprocess; version: number; }
 const services = new Map<string, Service>();
 // A worktree's Git state for the Checks tab, per sprite: some edits and a
 // commit not yet on GitHub, so `python3 scripts/dev-mock.py` shows every row.
@@ -64,10 +69,22 @@ async function stop(service: Service) {
   const process = service.process; service.process = undefined;
   process?.kill(); if (process) await process.exited;
 }
+// A host port nothing holds right now, for one service's process.
+function freePort(): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const probe = createServer();
+    probe.once("error", reject);
+    probe.listen(0, "127.0.0.1", () => {
+      const { port } = probe.address() as { port: number };
+      probe.close(() => resolve(port));
+    });
+  });
+}
 async function start(service: Service) {
   if (service.process && service.process.exitCode === null) return;
   service.status = "running";
-  const process = Bun.spawn(["node", vite, service.root, "--host", "127.0.0.1", "--port", String(service.port), "--strictPort"], { stdout: "pipe", stderr: "pipe" });
+  service.hostPort = await freePort();
+  const process = Bun.spawn(["node", vite, service.root, "--host", "127.0.0.1", "--port", String(service.hostPort), "--strictPort"], { stdout: "pipe", stderr: "pipe" });
   service.process = process;
   for (const output of [process.stdout, process.stderr]) void (async () => {
     for await (const chunk of output as ReadableStream<Uint8Array>) service.logs = (service.logs + new TextDecoder().decode(chunk)).slice(-32_000);
@@ -81,7 +98,7 @@ async function start(service: Service) {
 // the way Sprites does. Sessions are detachable: closing the socket leaves one
 // running until `POST .../exec/:id/kill` or `exit`.
 interface PtySession { id: string; dir: string; output: string; alive: boolean; ws?: ServerWebSocket<SocketData>; line: string; repl: number | null; cols: number; rows: number; ps1: boolean; }
-type SocketData = { tcp?: Socket; pty?: string; attach?: boolean };
+type SocketData = { tcp?: Socket; pty?: string; attach?: boolean; sprite?: string };
 const ptys = new Map<string, PtySession>();
 let nextPty = 1;
 const ESC = "\x1b[";
@@ -164,7 +181,7 @@ const server = Bun.serve<SocketData>({ port: Number(process.env.MOCK_SPRITES_POR
       return Response.json({ status: asleep.has(url.pathname.split("/").at(-1)!) ? "warm" : "running" });
     const match = /^\/v1\/sprites\/([^/]+)\/(proxy|exec|services)(?:\/([^/]+))?(?:\/(start|stop))?$/.exec(url.pathname);
     if (!match) return new Response("missing", { status: 404 });
-    if (match[2] === "proxy") return server.upgrade(req, { data: {} }) ? undefined : new Response("upgrade", { status: 400 });
+    if (match[2] === "proxy") return server.upgrade(req, { data: { sprite: match[1] } }) ? undefined : new Response("upgrade", { status: 400 });
     if (match[2] === "exec") {
       const wake = asleep.get(match[1]!);
       if (wake) {
@@ -201,11 +218,14 @@ const server = Bun.serve<SocketData>({ port: Number(process.env.MOCK_SPRITES_POR
     const key = `${match[1]}/${match[3]}`;
     let service = services.get(key);
     if (req.method === "PUT") {
-      const body = await req.json() as { dir: string; env: { PORT: string } };
-      if (service) await stop(service);
-      else {
+      const body = await req.json() as { dir: string; env: { PORT: string } } & Record<string, unknown>;
+      if (service) {
+        await stop(service);
+        // A redefinition is the new definition, as on Sprites.
+        Object.assign(service, { dir: body.dir, port: Number(body.env.PORT), definition: body });
+      } else {
         const appRoot = mkdtempSync(join(root, "app-"));
-        service = { name: match[3]!, dir: body.dir, root: appRoot, port: Number(body.env.PORT), status: "stopped", logs: "", version: 1 };
+        service = { name: match[3]!, sprite: match[1]!, dir: body.dir, root: appRoot, port: Number(body.env.PORT), hostPort: 0, definition: body, status: "stopped", logs: "", version: 1 };
         writeFileSync(join(appRoot, "main.js"), "if(import.meta.hot)import.meta.hot.accept();");
         writeFileSync(join(appRoot, "vite.config.mjs"), 'export default {server:{allowedHosts:[".preview.localhost"]}}');
         render(service); services.set(key, service);
@@ -216,7 +236,11 @@ const server = Bun.serve<SocketData>({ port: Number(process.env.MOCK_SPRITES_POR
     if (req.method === "DELETE") { await stop(service); services.delete(key); rmSync(service.root, { recursive: true, force: true }); return new Response(null, { status: 204 }); }
     if (match[4] === "stop") await stop(service);
     if (match[4] === "start") await start(service);
-    return Response.json({ name: service.name, state: { status: service.status, restart_count: 0 } });
+    // The definition back with the state, as Sprites answers: without it Ravix
+    // could never see a running service as already defined, so every ensure
+    // (the reconciler's, every fifteen seconds, while somebody looked)
+    // deleted and redefined it -- a Vite restart for nothing.
+    return Response.json({ ...service.definition, name: service.name, state: { status: service.status, restart_count: 0 } });
   },
   websocket: {
     open(ws) {
@@ -243,8 +267,10 @@ const server = Bun.serve<SocketData>({ port: Number(process.env.MOCK_SPRITES_POR
       if (!ws.data.tcp) {
         try {
           const init = JSON.parse(String(message));
-          if (init.host !== "127.0.0.1" || ![...services.values()].some(s => s.port === init.port && s.status === "running")) { ws.close(); return; }
-          const tcp = connect(init.port, "127.0.0.1", () => ws.send(JSON.stringify({ status: "connected" })));
+          // This sprite's service on that port, and nobody else's.
+          const target = [...services.values()].find(s => s.sprite === ws.data.sprite && s.port === init.port && s.status === "running");
+          if (init.host !== "127.0.0.1" || !target) { ws.close(); return; }
+          const tcp = connect(target.hostPort, "127.0.0.1", () => ws.send(JSON.stringify({ status: "connected" })));
           ws.data.tcp = tcp;
           tcp.on("data", chunk => { if (ws.send(chunk) === -1) tcp.pause(); });
           tcp.on("error", () => ws.close()); tcp.on("close", () => ws.close());
