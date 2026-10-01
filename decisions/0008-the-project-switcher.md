@@ -29,7 +29,9 @@ RAV-11 and the navigation portion of RAV-9.
   personal sections and order, with unsectioned projects last. Sections and
   projects collapse independently. Named sections use the viewer's saved section
   preferences across devices; project rows and the synthetic unsectioned group
-  use local browser preferences. Neither is shared project state.
+  use local browser preferences. Neither is shared project state. Since
+  RAV-127 a named section belongs to one of the viewer's workspaces, and the
+  rail shows the current workspace's sections (ADR 0009, amended 2026-10-01).
 - Each project appears once, with its unread badge and a new-track action only
   for viewers who may create tracks. Its expanded children are the open tracks
   that viewer can access. Highlight the current project and track. This tree

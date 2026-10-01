@@ -17,7 +17,7 @@ defmodule RavixWeb.ProjectSectionsLiveTest do
     refute has_element?(view, "#section-other .section-label")
     view |> element("#manage-sections") |> render_click()
     view |> form("#new-section-form", section: %{name: "Work"}) |> render_submit()
-    {[section], %{}} = Sections.list(user)
+    {:ok, {[section], %{}}} = Sections.list(user, nil)
     view |> form("#new-section-form", section: %{name: "Work"}) |> render_submit()
     assert render(view) =~ "has already been taken"
     view |> form("#rename-section-#{section.id}", section: %{name: "Active"}) |> render_submit()
@@ -39,7 +39,7 @@ defmodule RavixWeb.ProjectSectionsLiveTest do
            )
 
     view |> element("#section-#{section.id} .section-toggle") |> render_click()
-    assert {[%{collapsed: true}], _} = Sections.list(user)
+    assert {:ok, {[%{collapsed: true}], _}} = Sections.list(user, nil)
     refute has_element?(view, "#section-#{section.id} .section-toggle[data-collapse]")
     render_click(view, "dialog", %{name: "search"})
     view |> form("#search-form", q: "SECTION") |> render_change()
@@ -52,9 +52,9 @@ defmodule RavixWeb.ProjectSectionsLiveTest do
     assert has_element?(reloaded, "#section-#{section.id} a[href='/p/#{project.id}']")
     reloaded |> element("#manage-sections") |> render_click()
     reloaded |> form("#move-project-#{project.id}", section: "") |> render_change()
-    assert {[_], %{}} = Sections.list(user)
+    assert {:ok, {[_], %{}}} = Sections.list(user, nil)
     reloaded |> form("#move-project-#{project.id}", section: section.id) |> render_change()
-    {[_], placements} = Sections.list(user)
+    {:ok, {[_], placements}} = Sections.list(user, nil)
     assert placements == %{project.id => section.id}
     render_click(reloaded, "delete-section", %{id: section.id})
     render_click(reloaded, "dismiss-switcher")
@@ -66,9 +66,9 @@ defmodule RavixWeb.ProjectSectionsLiveTest do
        %{conn: conn} do
     user = insert_user()
     project = insert_project(user: user, name: "Filed project")
-    {:ok, work} = Sections.create(user, %{name: "Work"})
-    {:ok, empty} = Sections.create(user, %{name: "Later"})
-    {:ok, _} = Sections.move(user, project.id, work.id)
+    {:ok, work} = Sections.create(user, nil, %{name: "Work"})
+    {:ok, empty} = Sections.create(user, nil, %{name: "Later"})
+    {:ok, _} = Sections.move(user, nil, project.id, work.id)
     {:ok, view, _} = live(log_in_user(conn, user), "/p/#{project.id}")
     render_async(view)
 
@@ -137,8 +137,8 @@ defmodule RavixWeb.ProjectSectionsLiveTest do
     project = insert_project(user: user)
     other = insert_user()
     foreign = insert_project(user: other)
-    {:ok, section} = Sections.create(other, %{name: "Private section"})
-    {:ok, own} = Sections.create(user, %{name: "Mine"})
+    {:ok, section} = Sections.create(other, nil, %{name: "Private section"})
+    {:ok, own} = Sections.create(user, nil, %{name: "Mine"})
     {:ok, view, _} = live(log_in_user(conn, user), "/p/#{project.id}")
     refute render(view) =~ "Private section"
 
@@ -152,8 +152,8 @@ defmodule RavixWeb.ProjectSectionsLiveTest do
       assert render_click(view, event, params) =~ "No such thing here."
     end
 
-    assert {[^section], %{}} = Sections.list(other)
-    assert {[^own], %{}} = Sections.list(user)
+    assert {:ok, {[^section], %{}}} = Sections.list(other, nil)
+    assert {:ok, {[^own], %{}}} = Sections.list(user, nil)
   end
 
   test "expired sessions cannot create a section", %{conn: conn} do
@@ -174,6 +174,6 @@ defmodule RavixWeb.ProjectSectionsLiveTest do
     assert {:error, {:redirect, %{to: "/login"}}} =
              render_click(view, "create-section", %{section: %{name: "Denied"}})
 
-    assert {[], %{}} = Sections.list(user)
+    assert {:ok, {[], %{}}} = Sections.list(user, nil)
   end
 end

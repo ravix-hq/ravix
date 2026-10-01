@@ -560,8 +560,14 @@ defmodule RavixWeb.WorkspaceLive do
   def handle_event("yard-close", %{"dialog" => true}, socket), do: {:noreply, socket}
   def handle_event("yard-close", _, socket), do: {:noreply, assign(socket, yard_open: false)}
 
+  # Sections are the current workspace's (RAV-127): created in it, and a
+  # project placed only into one of its own. The id is the page's resolved
+  # one, never the browser's, and the context checks membership again.
   def handle_event("create-section", %{"section" => attrs}, socket) do
-    section_result(socket, Sections.create(socket.assigns.current_user, attrs))
+    section_result(
+      socket,
+      Sections.create(socket.assigns.current_user, current_workspace_id(socket), attrs)
+    )
   end
 
   def handle_event("rename-section", %{"section_id" => id, "section" => attrs}, socket) do
@@ -664,7 +670,10 @@ defmodule RavixWeb.WorkspaceLive do
   end
 
   def handle_event("move-project", %{"project" => id, "section" => section_id}, socket) do
-    section_result(socket, Sections.move(socket.assigns.current_user, id, section_id))
+    section_result(
+      socket,
+      Sections.move(socket.assigns.current_user, current_workspace_id(socket), id, section_id)
+    )
   end
 
   def handle_event("top-new-track", _, socket) do
@@ -1545,10 +1554,7 @@ defmodule RavixWeb.WorkspaceLive do
 
   defp clear_thread_unread(row, _track_id, _thread_id), do: row
 
-  defp section_result(socket, {:ok, _}) do
-    {sections, placements} = Sections.list(socket.assigns.current_user)
-    {:noreply, assign(socket, sections: sections, section_placements: placements)}
-  end
+  defp section_result(socket, {:ok, _}), do: {:noreply, load_sections(socket)}
 
   defp section_result(socket, {:error, reason}) do
     {:noreply, put_flash(socket, :error, RavixWeb.Error.from(reason).message)}
@@ -1792,8 +1798,6 @@ defmodule RavixWeb.WorkspaceLive do
         {closed, Map.put(open, id, live)}
       end)
 
-    {sections, placements} = Sections.list(socket.assigns.current_user)
-
     if connected?(socket) do
       old = MapSet.new(socket.assigns.all_projects, & &1.id)
       new = MapSet.new(projects, & &1.id)
@@ -1805,8 +1809,6 @@ defmodule RavixWeb.WorkspaceLive do
     |> assign(
       rail_loaded: true,
       rail_error: false,
-      sections: sections,
-      section_placements: placements,
       all_projects: projects,
       all_tracks: tracks,
       all_notices: People.notices(socket.assigns.current_user),
@@ -1875,8 +1877,27 @@ defmodule RavixWeb.WorkspaceLive do
         socket.assigns.track_project &&
           Enum.find(projects, &(&1.id == track_project_id(socket) && &1.access != :tracks))
     )
+    |> load_sections()
     |> derive_scope()
   end
+
+  # The current workspace's sections (RAV-127), read whenever the scope is:
+  # on every rail read, so switching workspace swaps them, and after each
+  # section change. The workspace is checked again inside; one this viewer
+  # was removed from meanwhile shows no sections rather than another's.
+  defp load_sections(socket) do
+    case Sections.list(socket.assigns.current_user, current_workspace_id(socket)) do
+      {:ok, {sections, placements}} ->
+        assign(socket, sections: sections, section_placements: placements)
+
+      {:error, :not_found} ->
+        assign(socket, sections: [], section_placements: %{})
+    end
+  end
+
+  # Nil unscoped (`RAVIX_WORKSPACE_ACCESS` off, or nobody's workspace yet).
+  defp current_workspace_id(%{assigns: %{current_workspace: %{workspace: %{id: id}}}}), do: id
+  defp current_workspace_id(_socket), do: nil
 
   # The one resolution of the current workspace, for the mount and for every
   # rail read: the session's own user, through `Access.workspace_access/2`.

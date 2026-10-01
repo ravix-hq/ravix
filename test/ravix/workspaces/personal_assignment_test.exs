@@ -16,7 +16,7 @@ defmodule Ravix.Workspaces.PersonalAssignmentTest do
 
   alias Mix.Tasks.Ravix.AssignPersonalWorkspaces
   alias Ravix.Accounts.Access
-  alias Ravix.Projects.Project
+  alias Ravix.Projects.{Project, Sections}
   alias Ravix.Workspaces.{PersonalAssignment, RepositoryReservation, Store}
 
   setup do
@@ -103,7 +103,19 @@ defmodule Ravix.Workspaces.PersonalAssignmentTest do
     insert_project_member(ctx.plain, member)
     track = insert_track(project: ctx.plain)
 
+    # Sidebar placements of a project that moves are dropped (RAV-127): the
+    # owner's, and a member's; one of a project left alone stays.
+    {:ok, filed} = Sections.create(ctx.ada, nil, %{name: "Filed"})
+    {:ok, _} = Sections.move(ctx.ada, nil, ctx.plain.id, filed.id)
+    {:ok, _} = Sections.move(ctx.ada, nil, ctx.colliding.id, filed.id)
+    {:ok, theirs} = Sections.create(member, nil, %{name: "Theirs"})
+    {:ok, _} = Sections.move(member, nil, ctx.plain.id, theirs.id)
+
     assert {:ok, %{applied: true} = applied} = PersonalAssignment.run(apply: true)
+
+    assert {:ok, {[^filed], placements}} = Sections.list(ctx.ada, nil)
+    assert placements == %{ctx.colliding.id => filed.id}
+    assert {:ok, {[^theirs], %{}}} = Sections.list(member, nil)
     results = Map.new(applied.projects, &{&1.id, &1.result})
     assert results[ctx.plain.id] == :moved
     assert results[ctx.colliding.id] == :marked

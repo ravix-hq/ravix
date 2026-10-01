@@ -1,5 +1,13 @@
 defmodule Ravix.Projects.Section do
-  @moduledoc "A person's named, collapsible group of projects in the sidebar."
+  @moduledoc """
+  A person's named, collapsible group of projects in the sidebar, in one of
+  their workspaces (RAV-127). Personal: nobody else sees it, and it grants
+  nothing.
+
+  `workspace_id` is nil only on a row the release before this one wrote;
+  `Ravix.Projects.Sections` reads such a row as the person's personal
+  workspace until `Ravix.Workspaces.Backfill` has filled it in.
+  """
   use Ecto.Schema
   import Ecto.Changeset
 
@@ -8,11 +16,12 @@ defmodule Ravix.Projects.Section do
 
   schema "project_sections" do
     field :user_id, :string
+    field :workspace_id, :string
     field :name, :string
     field :collapsed, :boolean, default: false
   end
 
-  @doc "Validate a section's editable fields. Ownership is supplied by the context."
+  @doc "Validate a section's editable fields. Ownership and workspace are supplied by the context."
   @spec changeset(t(), map()) :: Ecto.Changeset.t()
   def changeset(section, attrs) do
     section
@@ -21,6 +30,8 @@ defmodule Ravix.Projects.Section do
     |> Ravix.Schema.put_new_id()
     |> validate_required([:user_id, :name])
     |> validate_length(:name, max: 80)
+    |> unique_constraint(:name, name: :project_sections_user_id_workspace_id_name_index)
+    # The previous release's index, narrowed to rows with no workspace.
     |> unique_constraint(:name, name: :project_sections_user_id_name_index)
   end
 end

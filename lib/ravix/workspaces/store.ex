@@ -1256,8 +1256,24 @@ defmodule Ravix.Workspaces.Store do
         []
       )
 
-    if count == 1, do: attach_backing_installations(@attach_on_move, workspace_id)
+    if count == 1 do
+      drop_section_placements(project_id)
+      attach_backing_installations(@attach_on_move, workspace_id)
+    end
+
     count
+  end
+
+  # A project that changes workspace leaves its sidebar sections behind
+  # (RAV-127): a section belongs to one workspace, so a placement in the
+  # section of the workspace just left would never be shown again, and the
+  # project lands in "Other projects" of its new one. Everybody's placement
+  # of it goes, not only the owner's.
+  defp drop_section_placements(project_id) do
+    # ownership: no door -- the project's own move, which each caller above
+    # has already authorized or runs as the operator data step.
+    Repo.delete_all(from p in Ravix.Projects.SectionPlacement, where: p.project_id == ^project_id)
+    :ok
   end
 
   @doc "Rename a project. The operator data step only."
@@ -1358,6 +1374,7 @@ defmodule Ravix.Workspaces.Store do
       )
 
     if count == 1 do
+      drop_section_placements(project_id)
       _ = attach_backing_installations(@attach_on_move, workspace_id)
       :moved
     else
@@ -1410,6 +1427,7 @@ defmodule Ravix.Workspaces.Store do
            normalized = repo_key(project),
            {:free, nil} <- {:free, normalized && index_holder(to, normalized)},
            {:ok, moved} <- put_workspace(project, to, normalized) do
+        drop_section_placements(project_id)
         _ = attach_backing_installations(@attach_on_move, to)
         moved
       else
