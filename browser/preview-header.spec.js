@@ -49,7 +49,10 @@ test('RAV-42: the header Preview control opens the Preview tab at desktop and ph
   await page.locator('#preview-command').fill('npm run dev -- --port "$PORT" --strictPort');
   await page.locator('#preview-path').fill('/');
   await page.locator('#preview-config-form').getByRole('button', { name: 'Save', exact: true }).click();
-  await expect(empty.locator('h3')).toHaveText('No preview running');
+  // What was typed is what was saved: the tab's own read of the preview,
+  // landing after the header's, used to blank these fields mid-fill.
+  await expect(page.locator('#preview-command')).toHaveValue('npm run dev -- --port "$PORT" --strictPort');
+  await expect(page.locator('#preview-path')).toHaveValue('/');
   await empty.getByRole('button', { name: 'Run', exact: true }).click();
   await expect(page.locator('#run-status')).toHaveText('Status: ready', { timeout: 60_000 });
   await expect(control).toHaveClass(/preview-ready/);
@@ -73,7 +76,8 @@ test('RAV-42: the header Preview control opens the Preview tab at desktop and ph
   await expect(page.locator('#run-status')).toHaveText('Status: ready');
 
   // Stopped again, the phone's control offers to start one and opens the
-  // empty state.
+  // empty state. The stop also leaves nothing running for the specs after
+  // this one: a preview with a live lease is kept up by the reconciler.
   await page.locator('button[phx-value-action="stop"]').click();
   await expect(empty.locator('h3')).toHaveText('No preview running', { timeout: 30_000 });
   await expect(control).toHaveClass(/preview-stopped/);

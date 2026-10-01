@@ -761,7 +761,10 @@ defmodule RavixWeb.TrackLive do
      result(
        assign(socket, preview_form: Form.new(:preview_config, fields)),
        Previews.save_config(socket.assigns.current_user, socket.assigns.track_id, config),
-       &show_preview(&1, &2),
+       # A re-read already out started before this save, and would put the
+       # old run script back in the form when it lands. Starting another
+       # under the same name supersedes it.
+       &(&1 |> show_preview(&2) |> refresh_preview()),
        :preview_form
      )}
   end
@@ -4022,20 +4025,33 @@ defmodule RavixWeb.TrackLive do
   # track's override if it has one, the project's default otherwise --- so
   # it is rebuilt whenever the preview is, rather than being a box somebody
   # typed in once. Rebuilding also clears a refusal from the last attempt.
+  #
+  # Only when the configuration itself changed, though. A re-read that finds
+  # the same one --- the tab's own read landing after the header's (RAV-42),
+  # a state change on the topic --- keeps the form it has: a rebuilt form is
+  # re-sent, and the browser then puts the server's values back into every
+  # field somebody is part-way through typing in.
   defp show_preview(socket, %Previews.View{} = preview) do
-    config = preview.config || %{}
+    same_config? =
+      match?(%Previews.View{}, socket.assigns.preview) and
+        socket.assigns.preview.config == preview.config
 
-    assign(socket,
-      preview: preview,
-      preview_url: if(preview.url, do: socket.assigns.preview_url),
-      preview_form:
-        Form.new(:preview_config, %{
-          "directory" => Map.get(config, :directory, "."),
-          "command" => Map.get(config, :command, ""),
-          "readiness_path" => Map.get(config, :readiness_path, ""),
-          "stop_command" => Map.get(config, :stop_command, "")
-        })
+    socket
+    |> assign(preview: preview, preview_url: if(preview.url, do: socket.assigns.preview_url))
+    |> then(
+      &if(same_config?, do: &1, else: assign(&1, preview_form: preview_form(preview.config)))
     )
+  end
+
+  defp preview_form(config) do
+    config = config || %{}
+
+    Form.new(:preview_config, %{
+      "directory" => Map.get(config, :directory, "."),
+      "command" => Map.get(config, :command, ""),
+      "readiness_path" => Map.get(config, :readiness_path, ""),
+      "stop_command" => Map.get(config, :stop_command, "")
+    })
   end
 
   # The three refreshes below all run off a message --- a hub event, a stage

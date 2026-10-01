@@ -2633,6 +2633,74 @@ defmodule RavixWeb.TrackLiveTest do
       assert has_element?(ctx.view, "#preview-empty #preview-run-script", "Run script…")
     end
 
+    # The header's read lands first, so the run script form is on screen
+    # before the tab's own read does. A re-read that rebuilt the form was
+    # re-sent, and the browser put "" back into a field somebody had just
+    # filled: Save then saved nothing, and Run failed with "No run script
+    # configured" (browser/preview-header.spec.js, 1 in 10).
+    test "a re-read with the same run script leaves its form alone", ctx do
+      ctx.view |> element("#track-preview") |> render_click()
+      render_async(ctx.view)
+
+      # A form unlike the one a rebuild would make, so keeping it is visible.
+      kept = RavixWeb.Live.Form.new(:preview_config, %{"command" => "kept"})
+
+      :sys.replace_state(ctx.view.pid, fn state ->
+        put_in(state.socket.assigns.preview_form, kept)
+      end)
+
+      for state <- [:stopped, :starting, :ready] do
+        header_says(ctx, state: state)
+        assert :sys.get_state(ctx.view.pid).socket.assigns.preview_form == kept
+      end
+
+      # A run script saved elsewhere is shown.
+      header_says(ctx, config: %{directory: "web", command: "bun dev", readiness_path: "/"})
+      assert has_element?(ctx.view, "#preview-command[value='bun dev']")
+      assert has_element?(ctx.view, "#preview-directory[value='web']")
+    end
+
+    # browser/run-script.spec.js: a re-read out before Save landed after it
+    # and put the old readiness path back in the form.
+    test "a re-read that started before a save does not put the old run script back", ctx do
+      old = %{directory: ".", command: "npm run dev", readiness_path: "/"}
+      header_says(ctx, config: old)
+      ctx.view |> element("#track-preview") |> render_click()
+      render_async(ctx.view)
+      assert has_element?(ctx.view, "#preview-path[value='/']")
+
+      test = self()
+
+      stub(Previews, :status, fn _, _ ->
+        send(test, {:reading, self()})
+        receive do: (:answer -> {:ok, struct!(preview(), config: old)})
+      end)
+
+      PreviewLifecycle.publish(ctx.track.id)
+      render(ctx.view)
+      assert_receive {:reading, stale}
+
+      # The save itself, and the read after it, see the new run script.
+      expect(Previews, :save_config, fn _, _, config ->
+        assert config["readiness_path"] == ""
+        {:ok, struct!(preview(), config: %{old | readiness_path: nil})}
+      end)
+
+      stub(Previews, :status, fn _, _ ->
+        {:ok, struct!(preview(), config: %{old | readiness_path: nil})}
+      end)
+
+      ctx.view
+      |> form("#preview-config-form", preview_config: %{readiness_path: ""})
+      |> render_submit()
+
+      send(stale, :answer)
+      render_async(ctx.view)
+      # An empty field is drawn with no value at all.
+      assert has_element?(ctx.view, "#preview-path:not([value])")
+      assert has_element?(ctx.view, "#preview-command[value='npm run dev']")
+    end
+
     test "a failed preview's control opens the tab on why", ctx do
       header_says(ctx, state: :failed, error: "No run script configured")
       ctx.view |> element("#track-preview") |> render_click()
