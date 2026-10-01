@@ -258,7 +258,11 @@
                   )
               }
               id={"section-#{section_key(section)}"}
-              class={["project-section", section_labelled?(section, @sections) && "labelled"]}
+              class={[
+                "project-section",
+                section_labelled?(section, @sections) && "labelled",
+                section.id && section.id == @created_section && "created"
+              ]}
               data-section-drop={if !scratch_section?(section), do: section.id || ""}
             >
               <button
@@ -1108,25 +1112,33 @@
           do: "Organize this workspace's sidebar.",
           else: "Organize your sidebar."} Sections are visible only to you.
       </p>
-      <form id="new-section-form" phx-submit="create-section">
+      <%!-- A created section empties the field and keeps the focus there,
+        ready for the next name (RAV-130, `SectionForm`); a refused one
+        keeps the name beside what was wrong with it. Browsers offer their
+        own history over a field like this, so that is turned off. --%>
+      <form id="new-section-form" phx-submit="create-section" phx-hook="SectionForm">
         <.input
-          name="section[name]"
+          field={@section_form[:name]}
           id="section-name"
-          value=""
           label="New section"
+          autocomplete="off"
           required
           maxlength="80"
         />
         <button class="primary" phx-disable-with="Creating…">Create section</button>
       </form>
-      <div :for={section <- @sections} class="section-editor">
+      <div
+        :for={section <- @sections}
+        id={"section-editor-#{section.id}"}
+        class={["section-editor", section.id == @created_section && "created"]}
+      >
         <form id={"rename-section-#{section.id}"} phx-submit="rename-section">
           <input type="hidden" name="section_id" value={section.id} />
           <.input
-            name="section[name]"
+            field={rename_form(section, @rename_forms)[:name]}
             id={"section-name-#{section.id}"}
-            value={section.name}
             label="Section name"
+            autocomplete="off"
             required
             maxlength="80"
           />

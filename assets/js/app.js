@@ -33,6 +33,7 @@
 //   QuickJumpQuery  search's query: focused as it mounts, with the keys typed on the way
 //   ProjectSections drag a sidebar project onto one of your sections
 //   ProjectFormFocus synchronous dialog focus that never steals later typing
+//   SectionForm     the New section field, emptied and refocused once the section exists
 //   CopyCode        copy a Help example exactly, with success or failure feedback
 //   TurnTimer       a running turn's elapsed time, ticking without a round-trip
 //   RelativeTime    a sidebar row's "22h" age, kept current without server ticks
@@ -71,6 +72,7 @@ import {UnsavedChanges} from "./hooks/unsaved_changes"
 import {SettingsFrame} from "./hooks/settings_frame"
 import {ProjectSections} from "./hooks/project_sections"
 import {ProjectFormFocus} from "./hooks/project_form_focus"
+import {SectionForm} from "./hooks/section_form"
 import {CopyCode} from "./hooks/copy_code"
 import {SharePopover} from "./hooks/share_popover"
 import {ShareMention} from "./hooks/share_mention"
@@ -83,7 +85,7 @@ import {ChipMenu} from "./hooks/chip_menu"
 
 
 
-const hooks = {ThreadTabs, AgentConfirmation, Theme, PanelResize, PanelToggle, TranscriptTail, Composer, Terminal, Notify, NotifyToggle, UnsavedChanges, SettingsFrame, ProjectTree, QuickJump, QuickJumpQuery, ProjectSections, CopyCode, ProjectFormFocus, ShareMention, TurnTimer, RelativeTime, SubmitOnEnter, Shell, HeaderFit, LocalTime, ChipMenu, SharePopover}
+const hooks = {ThreadTabs, AgentConfirmation, Theme, PanelResize, PanelToggle, TranscriptTail, Composer, Terminal, Notify, NotifyToggle, UnsavedChanges, SettingsFrame, ProjectTree, QuickJump, QuickJumpQuery, ProjectSections, CopyCode, ProjectFormFocus, SectionForm, ShareMention, TurnTimer, RelativeTime, SubmitOnEnter, Shell, HeaderFit, LocalTime, ChipMenu, SharePopover}
 
 const csrfToken = document.querySelector("meta[name='csrf-token']").getAttribute("content")
 clearTransportFallback(window)

@@ -99,6 +99,12 @@ defmodule RavixWeb.WorkspaceLive do
         url_notice: nil,
         sections: [],
         section_placements: %{},
+        # The Project sections dialog's forms (RAV-130): the New section
+        # form, each rename form that was refused (by section id), and the
+        # section just created, which the list points out for a moment.
+        section_form: Form.new(:section),
+        rename_forms: %{},
+        created_section: nil,
         tracks: %{},
         # Closed tracks of the projects this person asked to see them for:
         # listed, never counted, never a URL to open.
@@ -563,18 +569,41 @@ defmodule RavixWeb.WorkspaceLive do
   # Sections are the current workspace's (RAV-127): created in it, and a
   # project placed only into one of its own. The id is the page's resolved
   # one, never the browser's, and the context checks membership again.
+  #
+  # A refusal about the name lands under the field (RAV-130): the New section
+  # form keeps what was typed beside its error, and a rename's error sits in
+  # that section's own form. Success empties the New section form; the
+  # browser is told so (`section-created`), because a re-render whose value
+  # was "" before and is "" after patches nothing, and the typed name would
+  # stay in the field looking as if the click had done nothing.
   def handle_event("create-section", %{"section" => attrs}, socket) do
-    section_result(
-      socket,
-      Sections.create(socket.assigns.current_user, current_workspace_id(socket), attrs)
-    )
+    case Sections.create(socket.assigns.current_user, current_workspace_id(socket), attrs) do
+      {:ok, section} ->
+        {:noreply,
+         socket
+         |> load_sections()
+         |> assign(
+           section_form: Form.new(:section),
+           rename_forms: %{},
+           created_section: section.id
+         )
+         |> push_event("section-created", %{id: section.id})}
+
+      {:error, reason} ->
+        {:noreply, refuse_section(socket, Form.new(:section, attrs), reason, :section_form)}
+    end
   end
 
   def handle_event("rename-section", %{"section_id" => id, "section" => attrs}, socket) do
-    section_result(
-      socket,
-      Sections.update(socket.assigns.current_user, id, Map.take(attrs, ["name"]))
-    )
+    attrs = Map.take(attrs, ["name"])
+
+    case Sections.update(socket.assigns.current_user, id, attrs) do
+      {:ok, _} ->
+        section_result(socket, {:ok, nil})
+
+      {:error, reason} ->
+        {:noreply, refuse_section(socket, Form.new(:section, attrs), reason, {:rename, id})}
+    end
   end
 
   def handle_event("retry-tracks", %{"id" => id}, socket) do
@@ -1556,11 +1585,38 @@ defmodule RavixWeb.WorkspaceLive do
 
   defp clear_thread_unread(row, _track_id, _thread_id), do: row
 
-  defp section_result(socket, {:ok, _}), do: {:noreply, load_sections(socket)}
+  # Any section change that went through leaves no refused rename behind, and
+  # the just-created mark belongs to the create that made it, not to whatever
+  # came after.
+  defp section_result(socket, {:ok, _}),
+    do: {:noreply, socket |> load_sections() |> assign(rename_forms: %{}, created_section: nil)}
 
   defp section_result(socket, {:error, reason}) do
     {:noreply, put_flash(socket, :error, RavixWeb.Error.from(reason).message)}
   end
+
+  # A refusal about the name goes on `form`, under the field; one about
+  # anything else (the section gone, the workspace left) is the toast it
+  # always was. `where` is the New section form's assign, or the rename form
+  # of one section.
+  defp refuse_section(socket, form, reason, where) do
+    case Form.refuse(form, reason) do
+      {:ok, refused} ->
+        socket = assign(socket, created_section: nil)
+
+        case where do
+          {:rename, id} -> update(socket, :rename_forms, &Map.put(&1, id, refused))
+          assign_name -> assign(socket, assign_name, refused)
+        end
+
+      :error ->
+        error(socket, reason)
+    end
+  end
+
+  # A section's rename form: the one its last refusal left, or its name.
+  defp rename_form(section, rename_forms),
+    do: rename_forms[section.id] || Form.new(:section, %{"name" => section.name})
 
   # The named sections first, then whatever is in none of them. Last, so the
   # Projects heading is never followed straight away by a second heading
@@ -2180,7 +2236,15 @@ defmodule RavixWeb.WorkspaceLive do
 
   defp open_dialog(socket, :new_track), do: new_track_dialog(socket, socket.assigns.project)
 
-  defp open_dialog(socket, :sections), do: assign(socket, dialog: :sections)
+  # Opened afresh: nothing half-typed or refused last time, nothing marked new.
+  defp open_dialog(socket, :sections),
+    do:
+      assign(socket,
+        dialog: :sections,
+        section_form: Form.new(:section),
+        rename_forms: %{},
+        created_section: nil
+      )
 
   defp open_dialog(socket, :search),
     do:
