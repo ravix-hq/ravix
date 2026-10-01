@@ -19,4 +19,15 @@ defmodule Ravix.ChangelogTest do
 
     assert Ravix.Changelog.since(~U[2027-01-01 00:00:00Z]) == []
   end
+
+  test "newest is by calendar date, not by day of the month" do
+    first = %{id: "a", date: ~D[2026-10-01]}
+    thirtieth = %{id: "b", date: ~D[2026-09-30]}
+    assert Ravix.Changelog.newest([thirtieth, first]) == first
+    assert Ravix.Changelog.newest([first, thirtieth]) == first
+    assert Ravix.Changelog.newest([]) == nil
+    # Opening the panel marks the newest entry seen, and then nothing is new.
+    marker = Ravix.Changelog.at(Ravix.Changelog.newest(Ravix.Changelog.all()))
+    assert Ravix.Changelog.since(marker) == []
+  end
 end

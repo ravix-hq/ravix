@@ -107,7 +107,12 @@ defmodule Ravix.Changelog do
     do: Enum.filter(@entries, &(DateTime.compare(at(&1), seen) == :gt))
 
   def newest([]), do: nil
-  def newest(entries), do: Enum.max_by(entries, & &1.date)
+  # By calendar date. Without `Date` as the comparer, dates are ordered as
+  # terms, where the day field is read before the month and the year: an
+  # entry on the 1st of a month sat below one on the 30th of the month
+  # before, so the marker written when the panel was opened never reached
+  # it and it stayed "new" (found with RAV-130's entry).
+  def newest(entries), do: Enum.max_by(entries, & &1.date, Date)
 
   @doc """
   The moment an entry counts as shipped, in the precision the column holds.
