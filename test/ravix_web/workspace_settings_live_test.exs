@@ -14,6 +14,7 @@ defmodule RavixWeb.WorkspaceSettingsLiveTest do
   import Phoenix.LiveViewTest
 
   alias Ravix.GitHubFake, as: Fake
+  alias Ravix.Hub.Event
   alias Ravix.Workspaces
   alias Ravix.Workspaces.Store
 
@@ -200,6 +201,21 @@ defmodule RavixWeb.WorkspaceSettingsLiveTest do
       :ok = Workspaces.remove_member(ctx.owner, ctx.team.id, member.id)
       # The page leaves on the Hub's broadcast, after re-reading membership:
       # wait for that navigation rather than the 100ms default.
+      assert_redirect(view, "/", 1_000)
+    end
+
+    test "a member removed just before a rail read, unheard, is still sent home", ctx do
+      member = insert_user(login: "mem")
+      :ok = Store.add_member(ctx.team.id, member.id, :member, ctx.owner.id)
+      {view, _html} = open(member, ctx.team.id)
+      render_async(view)
+
+      # The removal commits, and the page's next rail read lands before its
+      # `:members` notice: that read unsubscribes from the workspace, so the
+      # notice is never heard. Revoke without publishing, then read.
+      {:ok, _} = Store.revoke_membership(ctx.team.id, member.id, ctx.owner.id)
+      send(view.pid, {:hub, %Event{name: :tracks, project_id: Ecto.UUID.generate()}})
+
       assert_redirect(view, "/", 1_000)
     end
 
@@ -630,6 +646,9 @@ defmodule RavixWeb.WorkspaceSettingsLiveTest do
       admin = insert_user(login: "adm")
       :ok = Store.add_member(ctx.team.id, admin.id, :admin, ctx.owner.id)
       {view, _html} = open(admin, ctx.team.id, "general")
+      # A rail read after the removal would send the page home by itself
+      # (`leave_lost_settings/1`); this is the event's own check.
+      render_async(view)
 
       # Removed without the notice reaching the page: the event itself asks.
       assert {:ok, _} = Store.revoke_membership(ctx.team.id, admin.id, ctx.owner.id)

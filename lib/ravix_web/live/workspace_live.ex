@@ -1497,8 +1497,10 @@ defmodule RavixWeb.WorkspaceLive do
         send_update(RavixWeb.Live.WorkspaceSettings, id: "workspace-settings-page", reload: true)
         {:noreply, recheck_or_leave(socket)}
 
+      # Leaving, so not left a second time by the rail read
+      # (`leave_lost_settings/1`).
       {:error, :not_found} ->
-        {:noreply, socket |> recheck_rail() |> redirect(to: "/")}
+        {:noreply, socket |> assign(settings: nil) |> recheck_rail() |> redirect(to: "/")}
     end
   end
 
@@ -1882,7 +1884,26 @@ defmodule RavixWeb.WorkspaceLive do
     )
     |> load_sections()
     |> derive_scope()
+    |> leave_lost_settings()
   end
+
+  # A workspace's settings page leaves once its viewer is no longer a member,
+  # whichever learns it first: the Hub's `:members` notice, or a rail read.
+  # A read landing between a removal's commit and its notice falls back to
+  # another workspace and unsubscribes from this one (`watch_workspace/2`),
+  # so the notice would reach nobody. The settings' workspace is current
+  # while it is open (`current_for_settings/2`), so only a fallback reads;
+  # a page already leaving is left to go.
+  defp leave_lost_settings(
+         %{redirected: nil, assigns: %{settings: %{kind: :workspace, id: id}}} = socket
+       ) do
+    if current_workspace_id(socket) != id and
+         match?({:error, :not_found}, Workspaces.get(socket.assigns.current_user, id)),
+       do: redirect(socket, to: "/"),
+       else: socket
+  end
+
+  defp leave_lost_settings(socket), do: socket
 
   # The current workspace's sections (RAV-127), read whenever the scope is:
   # on every rail read, so switching workspace swaps them, and after each
