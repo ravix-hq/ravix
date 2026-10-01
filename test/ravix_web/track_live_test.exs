@@ -22,7 +22,7 @@ defmodule RavixWeb.TrackLiveTest do
     Transcript
   }
 
-  alias RavixWeb.Live.Guard
+  alias RavixWeb.Live.{Form, Guard}
 
   alias Ravix.Plans.Progress
 
@@ -2551,6 +2551,205 @@ defmodule RavixWeb.TrackLiveTest do
       assert_received {:read_by, owner} when owner == ctx.user.id
       member_id = member.id
       refute_received {:read_by, ^member_id}
+    end
+  end
+
+  describe "the header's Preview control (RAV-42)" do
+    # A deployment that serves previews, and the page opened fresh on it:
+    # the control is drawn from the same read the panel uses, answered here
+    # by whatever the agent holds.
+    setup ctx do
+      stub(Previews, :unavailable, fn -> nil end)
+      {:ok, answer} = Agent.start_link(fn -> preview() end)
+      stub(Previews, :status, fn _, _ -> {:ok, Agent.get(answer, & &1)} end)
+      %{answer: answer, view: open_page(ctx.conn, ctx)}
+    end
+
+    defp open_page(conn, ctx) do
+      {:ok, parent, _} = live(conn, "/p/#{ctx.project.id}/t/#{ctx.track.id}")
+      view = find_live_child(parent, "track-host")
+      settle(view)
+      view
+    end
+
+    defp header_says(ctx, fields) do
+      Agent.update(ctx.answer, &struct!(&1, fields))
+      PreviewLifecycle.publish(ctx.track.id)
+      render(ctx.view)
+      render_async(ctx.view)
+    end
+
+    for {fields, kind, label, dot} <- [
+          {[state: :stopped], "stopped", "Start preview", nil},
+          {[state: :waking], "pending", "Preview starting…", "starting"},
+          {[state: :starting], "pending", "Preview starting…", "starting"},
+          {[state: :ready, url: "https://preview.test"], "ready", "Preview", "ready"},
+          {[state: :running], "ready", "Preview", "ready"},
+          {[state: :failed, error: "No run script configured"], "failed", "Preview failed",
+           "failed"},
+          {[state: :stopped, error: "Machine couldn't wake"], "failed", "Preview failed",
+           "failed"}
+        ] do
+      test "says #{inspect(fields)} as #{label}", ctx do
+        header_says(ctx, unquote(fields))
+        assert has_element?(ctx.view, "#track-header #track-preview.preview-#{unquote(kind)}")
+        assert has_element?(ctx.view, "#track-preview [data-fit-label]", unquote(label))
+
+        if unquote(dot),
+          do: assert(has_element?(ctx.view, "#track-preview .dot.#{unquote(dot)}")),
+          else: refute(has_element?(ctx.view, "#track-preview .dot"))
+
+        # Shrunk to its dot or globe in a narrow header, it still says what it is.
+        assert ctx.view |> element("#track-preview") |> render() =~ ~r/data-tip="[^"]+"/
+      end
+    end
+
+    test "follows the preview live, without a click", ctx do
+      assert has_element?(ctx.view, "#track-preview", "Start preview")
+      header_says(ctx, state: :starting)
+      assert has_element?(ctx.view, "#track-preview.preview-pending", "Preview starting…")
+      header_says(ctx, state: :ready, url: "https://preview.test")
+      assert has_element?(ctx.view, "#track-preview.preview-ready", "Preview")
+      header_says(ctx, state: :failed, error: "It stopped")
+      assert has_element?(ctx.view, "#track-preview.preview-failed", "Preview failed")
+    end
+
+    test "opens the inspector on the Preview tab, and starts nothing", ctx do
+      reject(&Previews.run/2)
+      reject(&Previews.run/3)
+      reject(&Previews.open/3)
+      assert has_element?(ctx.view, "#inspector .workspace-tabs button.selected", "Files")
+      refute has_element?(ctx.view, "#preview-empty")
+
+      ctx.view |> element("#track-preview") |> render_click()
+      render_async(ctx.view)
+
+      assert has_element?(ctx.view, "#inspector .workspace-tabs button.selected", "Preview")
+      # On a phone, the page switches to the inspector, as its Files button does.
+      assert has_element?(ctx.view, ".track-workspace-body[data-narrow-view=files]")
+      assert has_element?(ctx.view, "#preview-empty h3", "No preview running")
+      assert has_element?(ctx.view, "#preview-empty #preview-run", "Run")
+      assert has_element?(ctx.view, "#preview-empty .empty-hint", "or ask the agent to start one")
+      assert has_element?(ctx.view, "#preview-empty #preview-run-script", "Run script…")
+    end
+
+    # The header's read lands first, so the run script form is on screen
+    # before the tab's own read does. A re-read that rebuilt the form was
+    # re-sent, and the browser put "" back into a field somebody had just
+    # filled: Save then saved nothing, and Run failed with "No run script
+    # configured" (browser/preview-header.spec.js, 1 in 10).
+    test "a re-read with the same run script leaves its form alone", ctx do
+      ctx.view |> element("#track-preview") |> render_click()
+      render_async(ctx.view)
+
+      # A form unlike the one a rebuild would make, so keeping it is visible.
+      kept = Form.new(:preview_config, %{"command" => "kept"})
+
+      :sys.replace_state(ctx.view.pid, fn state ->
+        put_in(state.socket.assigns.preview_form, kept)
+      end)
+
+      for state <- [:stopped, :starting, :ready] do
+        header_says(ctx, state: state)
+        assert :sys.get_state(ctx.view.pid).socket.assigns.preview_form == kept
+      end
+
+      # A run script saved elsewhere is shown.
+      header_says(ctx, config: %{directory: "web", command: "bun dev", readiness_path: "/"})
+      assert has_element?(ctx.view, "#preview-command[value='bun dev']")
+      assert has_element?(ctx.view, "#preview-directory[value='web']")
+    end
+
+    # browser/run-script.spec.js: a re-read out before Save landed after it
+    # and put the old readiness path back in the form.
+    test "a re-read that started before a save does not put the old run script back", ctx do
+      old = %{directory: ".", command: "npm run dev", readiness_path: "/"}
+      header_says(ctx, config: old)
+      ctx.view |> element("#track-preview") |> render_click()
+      render_async(ctx.view)
+      assert has_element?(ctx.view, "#preview-path[value='/']")
+
+      test = self()
+
+      stub(Previews, :status, fn _, _ ->
+        send(test, {:reading, self()})
+        receive do: (:answer -> {:ok, struct!(preview(), config: old)})
+      end)
+
+      PreviewLifecycle.publish(ctx.track.id)
+      render(ctx.view)
+      assert_receive {:reading, stale}
+
+      # The save itself, and the read after it, see the new run script.
+      expect(Previews, :save_config, fn _, _, config ->
+        assert config["readiness_path"] == ""
+        {:ok, struct!(preview(), config: %{old | readiness_path: nil})}
+      end)
+
+      stub(Previews, :status, fn _, _ ->
+        {:ok, struct!(preview(), config: %{old | readiness_path: nil})}
+      end)
+
+      ctx.view
+      |> form("#preview-config-form", preview_config: %{readiness_path: ""})
+      |> render_submit()
+
+      send(stale, :answer)
+      render_async(ctx.view)
+      # An empty field is drawn with no value at all.
+      assert has_element?(ctx.view, "#preview-path:not([value])")
+      assert has_element?(ctx.view, "#preview-command[value='npm run dev']")
+    end
+
+    test "a failed preview's control opens the tab on why", ctx do
+      header_says(ctx, state: :failed, error: "No run script configured")
+      ctx.view |> element("#track-preview") |> render_click()
+      render_async(ctx.view)
+      assert has_element?(ctx.view, "#preview-failed #preview-error", "No run script configured")
+    end
+
+    test "a reader can open the tab, and is offered no Run", ctx do
+      reader = insert_user()
+      insert_track_member(ctx.track, reader, role: :read)
+
+      stub(Tracks, :get, fn _, id, _opts ->
+        {:ok,
+         %{
+           track: Tracks.present(Repo.get!(Track, id), role: :member, level: :read),
+           header: blank_header(),
+           threads: thread_options(id),
+           starters: [],
+           models: []
+         }}
+      end)
+
+      reject(&Previews.run/2)
+      view = open_page(log_in_user(build_conn(), reader), ctx)
+      assert has_element?(view, "#track-preview.preview-stopped", "Preview")
+      refute has_element?(view, "#track-preview", "Start preview")
+
+      view |> element("#track-preview") |> render_click()
+      render_async(view)
+      assert has_element?(view, "#preview-empty h3", "No preview running")
+      refute has_element?(view, "#preview-run")
+      refute has_element?(view, "#preview-empty button.primary")
+
+      assert has_element?(
+               view,
+               "#preview-empty .empty-hint",
+               "Somebody with Write can start one."
+             )
+    end
+
+    test "is not drawn, nor read for, where previews are unavailable", ctx do
+      stub(Previews, :unavailable, fn ->
+        "Previews unavailable: SPRITES_TOKEN is not configured."
+      end)
+
+      reject(&Previews.status/2)
+      view = open_page(ctx.conn, ctx)
+      refute has_element?(view, "#track-preview")
+      assert has_element?(view, "#track-header")
     end
   end
 

@@ -858,6 +858,17 @@ html[data-yard="closed"] .workspace-trigger-skeleton { flex: none; width: 28px; 
    hook can still read how wide each label would be. */
 .track-crumbs[data-compact] [data-fit-label] { max-width: 0; margin-left: calc(-1 * var(--label-gap)); }
 .track-crumbs[data-compact] .track-plan-sep { display: none; }
+/* RAV-42: the preview's state, and the way to its tab. A chip like the
+   plan's: it gives way to its dot or globe before the title does. Ready is
+   the dot alone in colour; pending and stopped are dim; failed is bad. */
+.track-crumbs .track-preview {
+  display: inline-grid; grid-auto-flow: column; grid-template-columns: auto minmax(0, max-content);
+  align-items: center; --label-gap: 6px; gap: var(--label-gap); flex: 0 1000000 auto; min-width: min-content;
+  font-size: 12px; min-height: 24px;
+}
+.track-crumbs .track-preview .chip-label { overflow: hidden; white-space: nowrap; }
+.track-crumbs .track-preview:is(.preview-pending, .preview-stopped) { color: var(--dim); }
+.track-crumbs .track-preview.preview-failed { color: var(--bad); }
 /* Who is here, on Share: faces overlapping to the left, as a stack. */
 .track-share { gap: 6px; }
 .track-viewers { display: inline-flex; align-items: center; padding-left: 4px; }
@@ -915,6 +926,7 @@ html[data-yard="closed"] .workspace-trigger-skeleton { flex: none; width: 28px; 
 .workspace-turn pre, .workspace-panel pre, .term-scroll pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; }
 .workspace-panel #preview-logs { margin-block: 16px; }
 .empty .empty-link { font-size: 12px; margin-top: 2px; text-align: center; }
+.empty .empty-hint { font-size: 12px; text-align: center; }
 /* Idle, the run script is reached through the empty state's link alone. */
 .preview-controls.idle #preview-config:not([open]) { display: none; }
 .preview-controls .preview-actions { align-items: center; margin-block: 8px 0; }

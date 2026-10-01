@@ -88,6 +88,11 @@
         />
         <.machine_chip machine={@turn.machine} />
       </div>
+      <.preview_chip
+        :if={@previews? && @preview}
+        preview={@preview}
+        can_start={@track.level != :read}
+      />
       <button
         :if={
           Ravix.People.workspace_sharing?(@project) && owner_or_creator?(@current_user, @track)
@@ -1053,8 +1058,14 @@
                   title="No preview running"
                   because={@preview.unavailable_reason}
                   busy={@preview_pending == "run"}
+                  hint={
+                    if @track.level == :read,
+                      do: "Somebody with Write can start one.",
+                      else: "or ask the agent to start one"
+                  }
                 >
                   <:action
+                    :if={@track.level != :read}
                     id="preview-run"
                     label={if @preview_pending == "run", do: "Starting…", else: "Run"}
                     click={JS.push("preview", value: %{action: "run"})}

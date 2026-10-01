@@ -149,6 +149,10 @@ defmodule RavixWeb.TrackLive do
         diff_path: nil,
         diff_filter: "",
         diff_show_large: false,
+        # Whether this deployment can serve previews at all (RAV-42). The
+        # header's Preview control is not drawn on one that cannot, and the
+        # page does not read the track's preview for it.
+        previews?: Previews.unavailable() == nil,
         preview: nil,
         preview_form: Form.new(:preview_config),
         preview_url: nil,
@@ -757,7 +761,10 @@ defmodule RavixWeb.TrackLive do
      result(
        assign(socket, preview_form: Form.new(:preview_config, fields)),
        Previews.save_config(socket.assigns.current_user, socket.assigns.track_id, config),
-       &show_preview(&1, &2),
+       # A re-read already out started before this save, and would put the
+       # old run script back in the form when it lands. Starting another
+       # under the same name supersedes it.
+       &(&1 |> show_preview(&2) |> refresh_preview()),
        :preview_form
      )}
   end
@@ -2057,7 +2064,17 @@ defmodule RavixWeb.TrackLive do
     |> refresh_queue()
     |> refresh_plan_items()
     |> load_panel()
+    |> header_preview()
   end
+
+  # The header's Preview control (RAV-42) draws from the same `preview`
+  # assign as the panel, read once when the track arrives and then kept by
+  # RAV-40's `{:preview, track_id}`. A thread switch keeps the one it has,
+  # and the Preview tab's own read already covers it.
+  defp header_preview(%{assigns: %{previews?: true, preview: nil}} = socket),
+    do: if(socket.assigns.panel.tab == :preview, do: socket, else: refresh_preview(socket))
+
+  defp header_preview(socket), do: socket
 
   # Read the event now, draw it in a moment. See `@flush_ms`.
   #
@@ -3532,6 +3549,73 @@ defmodule RavixWeb.TrackLive do
     """
   end
 
+  attr :preview, Previews.View, required: true
+  attr :can_start, :boolean, required: true
+
+  # The header's way to the preview (RAV-42): what state it is in, and one
+  # click to the Preview tab. It never starts anything itself --- a click
+  # on "Start preview" opens the tab, where Run is --- so a stray click does
+  # not wake a machine. A closed inspector is opened first (`PanelToggle`);
+  # on a phone, `"panel"` switches the page to the inspector, as its Files
+  # button does.
+  defp preview_chip(assigns) do
+    assigns = assign(assigns, look: preview_look(assigns.preview, assigns.can_start))
+
+    ~H"""
+    <button
+      id="track-preview"
+      type="button"
+      class={["ghost track-preview", "preview-#{@look.kind}"]}
+      phx-click={
+        JS.dispatch("ravix:open-panel", to: "#inspector-toggle")
+        |> JS.push("panel", value: %{name: "preview"})
+      }
+      aria-controls="inspector"
+      data-tip={@look.tip}
+    >
+      <.status_dot :if={@look.dot} status={@look.dot} /><.icon
+        :if={!@look.dot}
+        name="globe"
+        size={13}
+      /><span class="chip-label" data-fit-label>{@look.label}</span>
+    </button>
+    """
+  end
+
+  defp preview_look(%Previews.View{state: state}, _can_start) when state in [:ready, :running],
+    do: %{kind: "ready", dot: "ready", label: "Preview", tip: "Preview running: show it"}
+
+  defp preview_look(%Previews.View{state: :waking}, _can_start),
+    do: %{
+      kind: "pending",
+      dot: "starting",
+      label: "Preview starting…",
+      tip: "Waking this track's machine for the preview"
+    }
+
+  defp preview_look(%Previews.View{state: :starting}, _can_start),
+    do: %{kind: "pending", dot: "starting", label: "Preview starting…", tip: "Preview starting"}
+
+  defp preview_look(%Previews.View{state: state, error: error}, _can_start)
+       when state == :failed or is_binary(error),
+       do: %{
+         kind: "failed",
+         dot: "failed",
+         label: "Preview failed",
+         tip: "The preview didn't start: show why"
+       }
+
+  defp preview_look(_preview, true),
+    do: %{
+      kind: "stopped",
+      dot: nil,
+      label: "Start preview",
+      tip: "Open the Preview tab to run one"
+    }
+
+  defp preview_look(_preview, false),
+    do: %{kind: "stopped", dot: nil, label: "Preview", tip: "No preview running"}
+
   attr :present, :list, required: true
 
   # Who is looking at the track now, as Share's stacked avatars (RAV-82)
@@ -3941,20 +4025,33 @@ defmodule RavixWeb.TrackLive do
   # track's override if it has one, the project's default otherwise --- so
   # it is rebuilt whenever the preview is, rather than being a box somebody
   # typed in once. Rebuilding also clears a refusal from the last attempt.
+  #
+  # Only when the configuration itself changed, though. A re-read that finds
+  # the same one --- the tab's own read landing after the header's (RAV-42),
+  # a state change on the topic --- keeps the form it has: a rebuilt form is
+  # re-sent, and the browser then puts the server's values back into every
+  # field somebody is part-way through typing in.
   defp show_preview(socket, %Previews.View{} = preview) do
-    config = preview.config || %{}
+    same_config? =
+      match?(%Previews.View{}, socket.assigns.preview) and
+        socket.assigns.preview.config == preview.config
 
-    assign(socket,
-      preview: preview,
-      preview_url: if(preview.url, do: socket.assigns.preview_url),
-      preview_form:
-        Form.new(:preview_config, %{
-          "directory" => Map.get(config, :directory, "."),
-          "command" => Map.get(config, :command, ""),
-          "readiness_path" => Map.get(config, :readiness_path, ""),
-          "stop_command" => Map.get(config, :stop_command, "")
-        })
+    socket
+    |> assign(preview: preview, preview_url: if(preview.url, do: socket.assigns.preview_url))
+    |> then(
+      &if(same_config?, do: &1, else: assign(&1, preview_form: preview_form(preview.config)))
     )
+  end
+
+  defp preview_form(config) do
+    config = config || %{}
+
+    Form.new(:preview_config, %{
+      "directory" => Map.get(config, :directory, "."),
+      "command" => Map.get(config, :command, ""),
+      "readiness_path" => Map.get(config, :readiness_path, ""),
+      "stop_command" => Map.get(config, :stop_command, "")
+    })
   end
 
   # The three refreshes below all run off a message --- a hub event, a stage

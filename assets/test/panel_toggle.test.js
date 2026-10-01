@@ -135,3 +135,22 @@ test("the sidebar's shortcut clicks its toggle, and nothing else does", () => {
   press({metaKey: true})
   expect(document.documentElement.dataset.yard).toBeUndefined()
 })
+
+// RAV-42: the header's Preview control opens a closed inspector, and an
+// open one stays open rather than toggling shut.
+test("an open-panel event opens a closed sidebar and never closes one", () => {
+  localStorage.setItem(INSPECTOR_KEY, "closed")
+  markup({panel: "inspector", key: INSPECTOR_KEY, hide: "Hide inspector", show: "Show inspector"})
+  const {hook} = mountHook(PanelToggle, "#toggle")
+  expect(document.documentElement.dataset.inspector).toBe("closed")
+
+  hook.el.dispatchEvent(new CustomEvent("ravix:open-panel"))
+  expect(document.documentElement.dataset.inspector).toBeUndefined()
+  expect(hook.el.getAttribute("aria-expanded")).toBe("true")
+  expect(hook.el.dataset.tip).toBe("Hide inspector")
+  expect(localStorage.getItem(INSPECTOR_KEY)).toBe("open")
+
+  hook.el.dispatchEvent(new CustomEvent("ravix:open-panel"))
+  expect(document.documentElement.dataset.inspector).toBeUndefined()
+  expect(localStorage.getItem(INSPECTOR_KEY)).toBe("open")
+})
