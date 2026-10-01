@@ -41,7 +41,7 @@ test('tracks are named by their titles, not their branch slugs', async ({ page }
   const slug = 'ravix/draft-adr-0009-proposed-workspaces';
   sql(`
     UPDATE ravix.tracks SET title = 'Name Tracks by Title', title_source = 'auto', branch = '${branch}' WHERE id = '${titled}';
-    UPDATE ravix.tracks SET title = 'Fix Login Redirect', title_source = 'auto', branch = 'ravix/crewe',
+    UPDATE ravix.tracks SET title = 'Fix Login Redirect', title_source = 'auto', branch = 'ravix/crewe-zq7',
       setup_state = 'failed', setup_error = 'The opening turn failed.' WHERE id = '${failed}';
     UPDATE ravix.tracks SET title = '${slug}', branch = '${slug}' WHERE id = '${untitled}';
   `);

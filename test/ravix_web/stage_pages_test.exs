@@ -40,7 +40,7 @@ defmodule RavixWeb.StagePagesTest do
   # by patching there from a page that is found.
   defp not_found(conn, path) do
     {:ok, view, _} = live(conn, "/home")
-    render_async(view)
+    render_async(view, 1_000)
     render_patch(view, path)
     view
   end
