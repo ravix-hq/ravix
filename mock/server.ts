@@ -1622,6 +1622,7 @@ const PEOPLE = [
     { id: 9101, login: "homerecent", name: "Home Recent", avatar_url: `${BASE}/ghweb/avatar.svg` },
     { id: 9237, login: "addrepository", name: "Add Repository", avatar_url: `${BASE}/ghweb/avatar.svg` },
     { id: 9298, login: "tooltipfocus", name: "Tooltip Focus", avatar_url: `${BASE}/ghweb/avatar.svg` },
+    { id: 9137, login: "railselect", name: "Rail Select", avatar_url: `${BASE}/ghweb/avatar.svg` },
   ] : []),
   { id: 9001, login: "dana", name: "Dana Okonkwo", avatar_url: `${BASE}/ghweb/avatar.svg?dana` },
   { id: 9002, login: "eli", name: "Eli Fischer", avatar_url: `${BASE}/ghweb/avatar.svg?eli` },
