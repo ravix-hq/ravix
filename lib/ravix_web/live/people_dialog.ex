@@ -404,7 +404,9 @@ defmodule RavixWeb.Live.PeopleDialog do
     ~H"""
     <div id={@id} class={@layout == :page && "access-page"}>
       <.dialog :if={@layout == :dialog} id={"#{@id}-dialog"} title={title(@scope)} on_close="dismiss">
-        <p><.project_name project={@project} /></p>
+        <%!-- Opened from a project the page already shows, inside its
+          workspace (RAV-128). --%>
+        <p><.project_name project={@project} within={@project.workspace_id} /></p>
         {people(assigns)}
       </.dialog>
       <div :if={@layout == :page} class="settings-content">

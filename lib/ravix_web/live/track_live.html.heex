@@ -40,12 +40,12 @@
       <div class="track-header-path">
         <.link
           navigate={"/p/#{@project.id}"}
-          class={["project-crumb", !fits?(@project.display_name, 12) && "long"]}
+          class={["project-crumb", !fits?(project_label(@project), 12) && "long"]}
         >
           <span class="project-mark" aria-hidden="true">
             {String.first(@project.name) |> String.upcase()}
           </span>
-          <strong><.project_name project={@project} /></strong>
+          <strong><.project_name project={@project} within={@project.workspace_id} /></strong>
         </.link>
         <span class="dimmer" aria-hidden="true">›</span>
         <button
