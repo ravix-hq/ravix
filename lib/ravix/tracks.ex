@@ -23,12 +23,13 @@ defmodule Ravix.Tracks do
   There are no exceptions to that; the rows themselves are
   `Ravix.Tracks.Store`, which takes ids and asks nobody.
 
-  Six functions here take no user, and each takes a subject another
+  Seven functions here take no user, and each takes a subject another
   context has already been let in to. `machine_of/2`, `machine_of_track/3`, `sprite_for/1` and
   `close_all_for_rebuild/2` are asked by `Ravix.Previews`, `Ravix.Terminal`,
   `Ravix.Vitals` and `Ravix.Projects` about a `%Project{}` or a sandbox id
   they hold; `present/2` and `origin_info/1` turn a row the caller already
-  has into the shape a page reads. None is reachable from `lib/ravix_web/`
+  has into the shape a page reads; `asleep?/1` reads one for
+  `Ravix.Previews`, which wakes the machine before a preview starts. None is reachable from `lib/ravix_web/`
   --- every web caller arrives through the scoped functions above --- and
   that is the property worth checking when one is added, rather than the
   arity.
@@ -1480,6 +1481,18 @@ defmodule Ravix.Tracks do
         else: probe_awake(user, track_id)
     end
   end
+
+  @doc """
+  Whether a track row says its machine is asleep: a dedicated sandbox
+  `Ravix.Tracks.Sleep` recorded as suspended, or setup parked on a sleeping
+  shared machine. The machine's own word, as `Ravix.Tracks.MachineState`
+  reads it; what `wake/2` clears.
+  """
+  @spec asleep?(Track.t()) :: boolean()
+  def asleep?(%Track{sandbox_layout: :dedicated, sandbox_suspended_at: %DateTime{}}), do: true
+
+  def asleep?(%Track{setup_state: "running", setup_error_code: "sandbox_suspended"}), do: true
+  def asleep?(%Track{}), do: false
 
   defp probe_awake(user, track_id) do
     case Ravix.Terminal.status(user, track_id) do

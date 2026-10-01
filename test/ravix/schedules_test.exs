@@ -117,13 +117,19 @@ defmodule Ravix.SchedulesTest do
       assert Schedules.timezone(" Asia/Kolkata ") == "Asia/Kolkata"
 
       unknown = "Nowhere/Zone#{System.unique_integer([:positive])}"
-      atoms = :erlang.system_info(:atom_count)
+      long = String.duplicate("A/", 100)
 
-      for value <- [unknown, "", "  ", nil, 42, %{}, "UTC; DROP", String.duplicate("A/", 100)] do
+      for value <- [unknown, "", "  ", nil, 42, %{}, "UTC; DROP", long] do
         assert Schedules.timezone(value) == "Etc/UTC"
       end
 
-      assert :erlang.system_info(:atom_count) == atoms
+      # Asked of the words themselves rather than of
+      # `:erlang.system_info(:atom_count)`, which is the whole VM's: every other
+      # async test runs beside this one, and a module loading or a Mimic copy
+      # between the before and the after failed a lookup that made no atom.
+      for word <- [unknown, "UTC; DROP", long] do
+        assert_raise ArgumentError, fn -> String.to_existing_atom(word) end
+      end
 
       for zone <- [unknown, "", nil] do
         {:ok, row} = Schedules.create(user, project.id, Map.put(attrs(), "timezone", zone))

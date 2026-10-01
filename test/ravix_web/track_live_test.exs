@@ -7,6 +7,7 @@ defmodule RavixWeb.TrackLiveTest do
   alias Ravix.Fountain.{FakeTransport, Shapes}
   alias Ravix.Hub.Event
   alias Ravix.{People, Previews, PromptQueue, QueryCount, Repo, Terminal, Tracks, Vitals}
+  alias Ravix.Previews.Lifecycle, as: PreviewLifecycle
   alias Ravix.PromptQueue.View, as: QueuedPrompt
 
   alias Ravix.Tracks.{
@@ -2328,6 +2329,203 @@ defmodule RavixWeb.TrackLiveTest do
       refute has_element?(view, "#track-machine-status")
       refute render(view) =~ "asleep or unreachable"
       refute render(view) =~ "did not answer just now"
+    end
+  end
+
+  describe "the preview follows its row (RAV-40)" do
+    # What `Previews.status/2` answers next, and the broadcast that makes the
+    # page ask. The page is told only that something changed; it reads the
+    # rest back itself.
+    setup ctx do
+      {:ok, answer} = Agent.start_link(fn -> preview() end)
+      stub(Previews, :status, fn _, _ -> {:ok, Agent.get(answer, & &1)} end)
+      render_click(ctx.view, "panel", %{name: "preview"})
+      render_async(ctx.view)
+      %{answer: answer}
+    end
+
+    defp preview_says(ctx, fields) do
+      Agent.update(ctx.answer, &struct!(&1, fields))
+      PreviewLifecycle.publish(ctx.track.id)
+      # A call, so the broadcast ahead of it has been handled; then its read.
+      render(ctx.view)
+      render_async(ctx.view)
+    end
+
+    test "waking, starting and ready arrive without a click, and the header agrees", ctx do
+      machine_row(ctx,
+        opened_at: DateTime.utc_now(),
+        setup_state: "ready",
+        sandbox_layout: :dedicated,
+        sandbox_state: :ready,
+        sandbox_stage: "ready",
+        sandbox_suspended_at: DateTime.utc_now()
+      )
+
+      assert has_element?(ctx.view, "#track-machine-state", "Asleep")
+      config = %{directory: ".", command: "npm run dev", readiness_path: "/"}
+
+      preview_says(ctx, state: :waking, config: config)
+      assert has_element?(ctx.view, "#run-status", "Status: waking")
+      assert has_element?(ctx.view, "#preview-loading", "Waking this track's machine…")
+      # One state, three places: the header, the dock and the panel.
+      assert has_element?(ctx.view, "#track-machine-state", "Starting")
+
+      assert has_element?(
+               ctx.view,
+               "#track-machine-detail",
+               "Waking this track's machine for the preview…"
+             )
+
+      refute has_element?(ctx.view, "#track-machine-state", "Asleep")
+
+      # The topic can say the machine is up before the header's own read of
+      # the row lands: a start is only ever said once the row reads awake.
+      preview_says(ctx, state: :starting)
+      refute has_element?(ctx.view, "#track-machine-state", "Asleep")
+
+      # The wake cleared the row's mark; the hub says so, the topic says the rest.
+      machine_row(ctx, sandbox_suspended_at: nil)
+      assert has_element?(ctx.view, "#run-status", "Status: starting")
+      assert has_element?(ctx.view, "#preview-loading", "Waiting for it to answer on /.")
+      refute has_element?(ctx.view, "#track-machine-state", "Asleep")
+
+      preview_says(ctx, state: :ready, url: "https://preview.test")
+      assert has_element?(ctx.view, "#run-status", "Status: ready")
+      refute has_element?(ctx.view, "#preview-loading")
+    end
+
+    test "a start that timed out says why, with Retry and Logs", ctx do
+      reason =
+        "Nothing answered on / within 60s ($PORT=20000). " <>
+          "The command must honor $PORT and fail on a collision."
+
+      preview_says(ctx, state: :starting, url: "https://preview.test")
+      assert has_element?(ctx.view, "#preview-loading")
+
+      preview_says(ctx, state: :failed, error: reason, logs: "[stderr] EADDRINUSE")
+      refute has_element?(ctx.view, "#preview-loading")
+      assert has_element?(ctx.view, "#preview-failed h3", "The preview didn't start")
+      assert has_element?(ctx.view, "#preview-failed #preview-error[role=alert]", reason)
+      assert has_element?(ctx.view, "#preview-failed #preview-show-logs", "Logs")
+      assert has_element?(ctx.view, "#preview-logs[open] pre", "EADDRINUSE")
+
+      # Retry opens it again, since it has an address to open.
+      expect(Previews, :open, fn _, _, _ ->
+        {:ok, struct!(preview(), state: :starting, url: "https://preview.test")}
+      end)
+
+      ctx.view |> element("#preview-retry", "Retry") |> render_click()
+      render_async(ctx.view)
+      assert has_element?(ctx.view, "#run-status", "Status: starting")
+    end
+
+    test "an open that is still starting opens the preview with a fresh ticket once ready", ctx do
+      expect(Previews, :open, fn _, _, _ ->
+        {:ok,
+         struct!(preview(),
+           state: :waking,
+           url: "https://preview.test",
+           open_url: "https://preview.test/__ravix/open#click"
+         )}
+      end)
+
+      preview_says(ctx, state: :starting, url: "https://preview.test")
+      ctx.view |> element("button[phx-value-action='open']") |> render_click()
+      render_async(ctx.view)
+      # Nothing is drawn with the click's ticket while nothing is ready.
+      refute has_element?(ctx.view, "iframe.workspace-preview")
+
+      # The click's ticket is good for a minute; a wake and a start can take
+      # longer, so the page asks for a new one when it is ready.
+      expect(Previews, :open_ticket, fn user, id, hash ->
+        assert {user.id, id} == {ctx.user.id, ctx.track.id}
+        assert is_binary(hash)
+        {:ok, "https://preview.test/__ravix/open#fresh"}
+      end)
+
+      preview_says(ctx, state: :ready)
+      assert has_element?(ctx.view, "iframe[src='https://preview.test/__ravix/open#fresh']")
+
+      # Only once: a later change does not mint another.
+      preview_says(ctx, logs: "more output")
+      assert has_element?(ctx.view, "iframe[src='https://preview.test/__ravix/open#fresh']")
+    end
+
+    test "the button says what it is doing at once, and not \"Loading inspector\"", ctx do
+      owner = self()
+
+      expect(Previews, :run, fn _, _ ->
+        send(owner, {:launching, self()})
+        receive do: (:finish -> {:ok, %{preview() | state: :starting}})
+      end)
+
+      ctx.view |> element("#preview-run", "Run") |> render_click()
+      assert_receive {:launching, task}
+      assert has_element?(ctx.view, "#preview-run[disabled]", "Starting…")
+      assert has_element?(ctx.view, "#preview-empty.busy")
+      refute render(ctx.view) =~ "Loading inspector"
+      send(task, :finish)
+      render_async(ctx.view)
+      assert has_element?(ctx.view, "#run-status", "Status: starting")
+    end
+
+    test "a change for another track is not read", ctx do
+      reject(&Previews.status/2)
+      send(ctx.view.pid, {:preview, Ecto.UUID.generate()})
+      render(ctx.view)
+      assert has_element?(ctx.view, "#preview-empty")
+    end
+
+    test "a revoked session hears nothing more from the preview", ctx do
+      token = Plug.Conn.get_session(ctx.conn, :session_token)
+      Repo.delete!(Repo.get_by!(Session, token_hash: Ravix.Crypto.sha256(token)))
+
+      :sys.replace_state(ctx.view.pid, fn state ->
+        update_in(state.socket.assigns.session_guard, &%{&1 | stale?: true})
+      end)
+
+      test = self()
+
+      stub(Previews, :status, fn user, _ ->
+        send(test, {:read_by, user.id})
+        {:ok, %{preview() | state: :ready}}
+      end)
+
+      PreviewLifecycle.publish(ctx.track.id)
+      assert_redirect(ctx.parent, "/login", 1_000)
+      refute_received {:read_by, _}
+    end
+
+    test "a removed member hears nothing more from the preview", ctx do
+      member = insert_user()
+      membership = insert_project_member(ctx.project, member)
+
+      {:ok, parent, _} =
+        live(log_in_user(build_conn(), member), "/p/#{ctx.project.id}/t/#{ctx.track.id}")
+
+      view = find_live_child(parent, "track-host")
+      settle(view)
+      Repo.delete!(membership)
+
+      :sys.replace_state(view.pid, fn state ->
+        update_in(state.socket.assigns.track_guard, &%{&1 | stale?: true})
+      end)
+
+      # The owner's page on the same track is still following, and reads.
+      test = self()
+
+      stub(Previews, :status, fn user, _ ->
+        send(test, {:read_by, user.id})
+        {:ok, preview()}
+      end)
+
+      PreviewLifecycle.publish(ctx.track.id)
+      assert_redirect(parent, "/", 1_000)
+      render_async(ctx.view)
+      assert_received {:read_by, owner} when owner == ctx.user.id
+      member_id = member.id
+      refute_received {:read_by, ^member_id}
     end
   end
 
@@ -5945,9 +6143,11 @@ defmodule RavixWeb.TrackLiveTest do
 
   for {state, run?, restart?, stop?} <- [
         {:stopped, true, false, false},
+        {:waking, false, true, true},
         {:starting, false, true, true},
         {:ready, false, true, true},
-        {:failed, true, false, true}
+        # Failed is its centred empty state: Retry and Logs, and nothing to stop.
+        {:failed, false, false, false}
       ] do
     test "preview controls reflect #{state}", ctx do
       stub(Previews, :status, fn _, _ -> {:ok, %{preview() | state: unquote(state)}} end)
@@ -5977,8 +6177,19 @@ defmodule RavixWeb.TrackLiveTest do
       assert has_element?(ctx.view, "#preview-logs summary[phx-value-action='logs']") ==
                (unquote(state) != :stopped)
 
-      assert has_element?(ctx.view, ".preview-actions") == (unquote(state) != :stopped)
+      assert has_element?(ctx.view, ".preview-actions") ==
+               unquote(state) not in [:stopped, :failed]
+
       assert has_element?(ctx.view, "#preview-controls.idle") == (unquote(state) == :stopped)
+
+      assert has_element?(ctx.view, "#preview-failed #preview-retry:not([disabled])", "Retry") ==
+               (unquote(state) == :failed)
+
+      assert has_element?(ctx.view, "#preview-failed #preview-show-logs", "Logs") ==
+               (unquote(state) == :failed)
+
+      assert has_element?(ctx.view, "#preview-loading") ==
+               unquote(state) in [:waking, :starting]
 
       if unquote(state) == :stopped do
         assert has_element?(ctx.view, "#preview-empty button.primary", "Run")

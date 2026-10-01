@@ -1052,12 +1052,13 @@
                   icon="globe"
                   title="No preview running"
                   because={@preview.unavailable_reason}
+                  busy={@preview_pending == "run"}
                 >
                   <:action
                     id="preview-run"
-                    label="Run"
+                    label={if @preview_pending == "run", do: "Starting…", else: "Run"}
                     click={JS.push("preview", value: %{action: "run"})}
-                    disabled={@panel.busy? || !@preview.available}
+                    disabled={@panel.busy? || @preview_pending != nil || !@preview.available}
                   />
                   <:link
                     id="preview-run-script"
@@ -1083,11 +1084,51 @@
                   <p :if={@preview.state != :stopped || @preview.error} id="run-status">
                     Status: {@preview.state}
                   </p>
-                  <.loading_status :if={@preview.state == :starting} id="preview-loading">
-                    {RavixWeb.PreviewPresentation.loading_label(@preview.config)}
+                  <.loading_status
+                    :if={@preview.state in [:waking, :starting]}
+                    id="preview-loading"
+                  >
+                    {RavixWeb.PreviewPresentation.loading_label(@preview.state, @preview.config)}
                   </.loading_status>
+                  <%!-- RAV-40: a failed start says why, and offers the two
+                    things to do about it, in the pane's centre rather than as
+                    one more line among the controls. --%>
+                  <.empty
+                    :if={@preview.state == :failed}
+                    pane
+                    id="preview-failed"
+                    icon="x"
+                    title="The preview didn't start"
+                  >
+                    <:because_block>
+                      <span
+                        id="preview-error"
+                        role="alert"
+                        phx-mounted={JS.set_attribute({"open", ""}, to: "#preview-logs")}
+                      >{@preview.error || "It stopped before it was ready."}</span>
+                    </:because_block>
+                    <:action
+                      id="preview-retry"
+                      label={if @preview_pending, do: "Retrying…", else: "Retry"}
+                      click={
+                        JS.push("preview",
+                          value: %{action: if(@preview.url, do: "open", else: "run")}
+                        )
+                      }
+                      disabled={@panel.busy? || @preview_pending != nil || !@preview.available}
+                    />
+                    <:link
+                      id="preview-show-logs"
+                      label="Logs"
+                      click={
+                        JS.set_attribute({"open", ""}, to: "#preview-logs")
+                        |> JS.push("preview", value: %{action: "logs"})
+                        |> JS.focus(to: "#preview-logs summary")
+                      }
+                    />
+                  </.empty>
                   <p
-                    :if={@preview.error}
+                    :if={@preview.error && @preview.state != :failed}
                     id="preview-error"
                     role="alert"
                     phx-mounted={JS.set_attribute({"open", ""}, to: "#preview-logs")}
@@ -1106,40 +1147,45 @@
                   >
                     Keeps this track's machine awake while running
                   </p>
-                  <div :if={!preview_idle?(@preview)} class="workspace-actions preview-actions">
+                  <div
+                    :if={!preview_idle?(@preview) && @preview.state != :failed}
+                    class="workspace-actions preview-actions"
+                  >
                     <button
                       :if={@preview.state != :stopped || @preview.error}
                       class="primary"
                       phx-click="preview"
                       phx-value-action="run"
                       disabled={
-                        @panel.busy? || !@preview.available ||
-                          @preview.state in [:starting, :ready, :running]
+                        @panel.busy? || @preview_pending != nil || !@preview.available ||
+                          @preview.state in [:waking, :starting, :ready, :running]
                       }
                     >
-                      Run
+                      {if @preview_pending == "run", do: "Starting…", else: "Run"}
                     </button>
                     <button
                       :if={@preview.url}
                       phx-click="preview"
                       phx-value-action="open"
-                      disabled={@panel.busy? || !@preview.available}
-                    >Open preview</button>
+                      disabled={@panel.busy? || @preview_pending != nil || !@preview.available}
+                    >{if @preview_pending == "open", do: "Opening…", else: "Open preview"}</button>
                     <button
-                      :if={@preview.state in [:starting, :ready, :running]}
+                      :if={@preview.state in [:waking, :starting, :ready, :running]}
                       phx-click="preview"
                       phx-value-action="restart-run"
-                      disabled={@panel.busy? || !@preview.available}
+                      disabled={@panel.busy? || @preview_pending != nil || !@preview.available}
                     >
-                      Restart
+                      {if @preview_pending == "restart-run", do: "Restarting…", else: "Restart"}
                     </button>
                     <button
                       :if={@preview.state != :stopped}
                       phx-click="preview"
                       phx-value-action="stop"
-                      disabled={@panel.busy? || @preview.state == :stopped}
+                      disabled={
+                        @panel.busy? || @preview_pending != nil || @preview.state == :stopped
+                      }
                     >
-                      Stop
+                      {if @preview_pending == "stop", do: "Stopping…", else: "Stop"}
                     </button>
                   </div>
                   <a

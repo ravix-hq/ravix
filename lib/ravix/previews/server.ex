@@ -37,6 +37,12 @@ defmodule Ravix.Previews.Server do
   operation runs at a time, in arrival order, and the next starts only when
   the task carrying the last one reports.
 
+  A start that is asked for while the very same start --- same generation,
+  same mode --- is already running or waiting joins it: its caller is
+  answered with that one's result instead of queueing a second run behind
+  it. Two clicks on Open, or a click and the reconciler's tick, used to
+  start the service twice, the second after the first had finished.
+
   Servers are started on demand under `Ravix.Previews.Supervisor` and named
   through `:global` (`Ravix.Cluster.via/2`), so there is one per track in the
   *cluster* and not one per instance (ADR 0003): the chain above is a lock on a
@@ -188,11 +194,11 @@ defmodule Ravix.Previews.Server do
 
   # ── the process ──────────────────────────────────────────────────────
 
-  @typep running :: %{ref: reference(), from: GenServer.from()}
+  @typep running :: %{ref: reference(), froms: [GenServer.from()], operation: operation()}
 
   @typep state :: %{
            track_id: String.t(),
-           queue: :queue.queue({GenServer.from(), operation()}),
+           queue: :queue.queue({[GenServer.from()], operation(), function()}),
            running: running() | nil,
            idle_since: integer(),
            held_at: integer()
@@ -218,7 +224,7 @@ defmodule Ravix.Previews.Server do
   # sixty seconds of provider calls and `Clock.sleep/1`, and doing that inside
   # the callback is what left the process unable to answer anything at all.
   def handle_call({:run, operation, carrier}, from, state) do
-    state = advance(%{state | queue: :queue.in({from, operation, carrier}, state.queue)})
+    state = advance(join(state, from, operation) || enqueue(state, from, operation, carrier))
     {:noreply, state, timeout(state)}
   end
 
@@ -235,7 +241,7 @@ defmodule Ravix.Previews.Server do
   @impl true
   def handle_info({ref, result}, %{running: %{ref: ref}} = state) do
     Process.demonitor(ref, [:flush])
-    GenServer.reply(state.running.from, result)
+    Enum.each(state.running.froms, &GenServer.reply(&1, result))
     settle(state)
   end
 
@@ -245,7 +251,7 @@ defmodule Ravix.Previews.Server do
   # all: an operation that took the process down took every waiter with it.
   def handle_info({:DOWN, ref, :process, _pid, reason}, %{running: %{ref: ref}} = state) do
     Logger.error("ravix: preview operation #{state.track_id} died: #{inspect(reason)}")
-    GenServer.reply(state.running.from, {:error, :preview_operation_down})
+    Enum.each(state.running.froms, &GenServer.reply(&1, {:error, :preview_operation_down}))
     settle(state)
   end
 
@@ -261,13 +267,45 @@ defmodule Ravix.Previews.Server do
     {:noreply, state, timeout(state)}
   end
 
+  defp enqueue(state, from, operation, carrier),
+    do: %{state | queue: :queue.in({[from], operation, carrier}, state.queue)}
+
+  # The same start, running or waiting, takes this caller along; nil when
+  # there is none. Only a start: a retire carries a snapshot and changes of
+  # its own, and an observe is the reconciler's, which never asks twice.
+  defp join(state, from, {:ensure_running, _generation, _mode} = operation) do
+    case state.running do
+      %{operation: ^operation} = running ->
+        %{state | running: %{running | froms: [from | running.froms]}}
+
+      _ ->
+        join_waiting(state, from, operation)
+    end
+  end
+
+  defp join(_state, _from, _operation), do: nil
+
+  defp join_waiting(state, from, operation) do
+    waiting = :queue.to_list(state.queue)
+
+    if Enum.any?(waiting, &match?({_, ^operation, _}, &1)) do
+      queue = waiting |> Enum.map(&take_along(&1, from, operation)) |> :queue.from_list()
+      %{state | queue: queue}
+    end
+  end
+
+  defp take_along({froms, operation, carrier}, from, operation),
+    do: {[from | froms], operation, carrier}
+
+  defp take_along(entry, _from, _operation), do: entry
+
   # Start the next operation if one is waiting and none is running. The task is
   # `async_nolink` so a crash inside it reaches `handle_info/2` as a message
   # rather than taking this server -- and the queue behind it -- down.
   @spec advance(state()) :: state()
   defp advance(%{running: nil} = state) do
     case :queue.out(state.queue) do
-      {{:value, {from, operation, carrier}}, queue} ->
+      {{:value, {froms, operation, carrier}}, queue} ->
         owner = self()
         track_id = state.track_id
         held_at = state.held_at
@@ -277,7 +315,7 @@ defmodule Ravix.Previews.Server do
             traced(carrier, operation, track_id, held_at, owner)
           end)
 
-        %{state | running: %{ref: task.ref, from: from}, queue: queue}
+        %{state | running: %{ref: task.ref, froms: froms, operation: operation}, queue: queue}
 
       {:empty, _queue} ->
         state
@@ -397,19 +435,27 @@ defmodule Ravix.Previews.Server do
   end
 
   @doc false
-  # Change a row, but only if it is still the generation `row` names.
+  # Change a row, but only if it is still the generation `row` names, and
+  # tell whoever follows the track once it has committed. A change to what
+  # the row already says is no change: the reconciler re-publishes `:ready`
+  # onto a ready row every fifteen seconds while somebody is looking, and
+  # each of those used to be a write, a broadcast and a re-read on every
+  # page following the track.
   @spec update(Row.t(), keyword()) :: :ok
   def update(%Row{} = row, changes) do
-    Repo.transaction(fn ->
-      case Store.get(row.track_id) do
-        %Row{generation: generation} = fresh when generation == row.generation ->
-          Store.save!(struct!(fresh, changes))
+    {:ok, written?} =
+      Repo.transaction(fn ->
+        with %Row{generation: generation} = fresh when generation == row.generation <-
+               Store.get(row.track_id),
+             next when next != fresh <- struct!(fresh, changes) do
+          Store.save!(next)
+          true
+        else
+          _ -> false
+        end
+      end)
 
-        _ ->
-          :ok
-      end
-    end)
-
+    if written?, do: Lifecycle.publish(row.track_id)
     :ok
   end
 
@@ -523,8 +569,11 @@ defmodule Ravix.Previews.Server do
 
   defp config_for(row, project) do
     case row.config || Store.defaults(project.id) do
-      nil -> {:error, "Save a run script startup command and app directory first.", row}
-      config -> {:ok, config}
+      nil ->
+        {:error, "No run script configured. Save a startup command and app directory first.", row}
+
+      config ->
+        {:ok, config}
     end
   end
 
@@ -751,8 +800,8 @@ defmodule Ravix.Previews.Server do
 
   defp not_ready(row, config) do
     {:error,
-     "Readiness did not pass at #{config.readiness_path} on $PORT=#{row.port}. " <>
-       "The command must honor $PORT and fail on a collision.", row}
+     "Nothing answered on #{config.readiness_path} within #{div(@start_ms, 1000)}s " <>
+       "($PORT=#{row.port}). The command must honor $PORT and fail on a collision.", row}
   end
 
   # Record a failed startup: keep the logs, stop the service, and stop

@@ -39,6 +39,31 @@ defmodule Ravix.Previews.Lifecycle do
 
   @probe_ms 3_000
 
+  # ── who is watching ──────────────────────────────────────────────────
+
+  @doc """
+  The PubSub topic a track's preview changes go out on.
+
+  One per track, on `Ravix.PubSub`, so a page on any instance hears a change
+  that another instance's server made (ADR 0003). Subscribing is
+  `Ravix.Previews.subscribe/2`, which establishes access first.
+  """
+  @spec topic(String.t()) :: String.t()
+  def topic(track_id), do: "preview:" <> track_id
+
+  @doc """
+  Tell whoever follows a track's preview that its row changed, once the
+  change has committed.
+
+  The message is `{:preview, track_id}` and carries nothing else: what the
+  preview now says is read back through `Ravix.Previews.status/2`, which asks
+  the reader's access again. A page whose session ended or whose membership
+  went a second ago learns nothing from the message itself.
+  """
+  @spec publish(String.t()) :: :ok
+  def publish(track_id),
+    do: Phoenix.PubSub.broadcast(Ravix.PubSub, topic(track_id), {:preview, track_id})
+
   # ── what is there ────────────────────────────────────────────────────
 
   @doc "A track's `PreviewInfo`, creating its (stopped) row on first sight."
@@ -53,8 +78,10 @@ defmodule Ravix.Previews.Lifecycle do
     # the gateway by a grant `allowed?/2` re-checks on every request, the
     # server by the row it is carrying out. Read only to find the project
     # whose defaults apply.
+    track = Tracks.get_track(row.track_id)
+
     defaults =
-      case Tracks.get_track(row.track_id) do
+      case track do
         %Track{project_id: project_id} -> Store.defaults(project_id)
         nil -> nil
       end
@@ -68,7 +95,7 @@ defmodule Ravix.Previews.Lifecycle do
       unavailable_reason: why,
       config: config,
       override: row.config,
-      state: display_state(row),
+      state: display_state(row, track),
       keeps_awake: keeps_awake?(row, config),
       error: row.error,
       logs: row.logs,
@@ -76,10 +103,16 @@ defmodule Ravix.Previews.Lifecycle do
     }
   end
 
-  defp display_state(%Row{state: :ready} = row),
+  defp display_state(%Row{state: :ready} = row, _track),
     do: if(Row.plain?(row), do: :running, else: :ready)
 
-  defp display_state(row), do: row.state
+  # A start on a machine the track row still calls asleep is a wake first
+  # (`Ravix.Previews.open/3`), and the page says so rather than "starting":
+  # the header reads the same row, so the two cannot disagree about it.
+  defp display_state(%Row{state: :starting}, %Track{} = track),
+    do: if(Ravix.Tracks.asleep?(track), do: :waking, else: :starting)
+
+  defp display_state(row, _track), do: row.state
 
   defp keeps_awake?(%Row{desired: :running} = row, _config), do: Row.plain?(row)
   defp keeps_awake?(_row, config), do: match?(%{readiness_path: nil}, config)
@@ -203,18 +236,70 @@ defmodule Ravix.Previews.Lifecycle do
   """
   @spec start_service(String.t(), Previews.start_mode()) :: :ok | {:error, Previews.reason()}
   def start_service(track_id, mode \\ :start) when mode in [:start, :restart] do
+    with {:ok, {_outcome, generation}} <- begin(track_id, mode),
+         do: carry_out(track_id, generation, mode)
+  end
+
+  @doc """
+  Record the intent to run, and say whether this call started something.
+
+  The first half of `start_service/2`, for a caller that answers somebody
+  before the service is up: once this returns, `info/1` says `:starting`
+  (or `:waking`), and whoever follows the track has been told.
+
+  `:joined` means a start of this same generation is already under way ---
+  a second click on Open, say --- and the caller should wait on that one
+  rather than set another going. `:restart` never joins: it is asked for
+  precisely because what is running should not be kept.
+  """
+  @spec begin(String.t(), Previews.start_mode()) ::
+          {:ok, {:started | :joined, non_neg_integer()}} | {:error, Previews.reason()}
+  def begin(track_id, mode \\ :start) when mode in [:start, :restart] do
     with {:ok, _} <- assert_open(track_id),
          nil <- unavailable_error(track_id),
          :ok <- touch(track_id) do
-      {:ok, generation} = Repo.transaction(fn -> want_running(track_id, mode) end)
-      Server.run(track_id, {:ensure_running, generation, mode})
+      {:ok, outcome} = Repo.transaction(fn -> want_running(track_id, mode) end)
+      publish(track_id)
+      {:ok, outcome}
+    end
+  end
+
+  @doc """
+  The second half of `start_service/2`: run the start `begin/2` recorded, and
+  wait until it is ready, failed, or superseded. A start of the same
+  generation already in flight is joined rather than queued behind.
+  """
+  @spec carry_out(String.t(), non_neg_integer(), Previews.start_mode()) ::
+          :ok | {:error, Previews.reason()}
+  def carry_out(track_id, generation, mode) when mode in [:start, :restart],
+    do: Server.run(track_id, {:ensure_running, generation, mode})
+
+  @doc """
+  A start that could not get as far as the service --- the machine would not
+  wake --- recorded as failed with its reason, if `generation` is still the
+  one on record. Nothing retries it; the next open or run does.
+  """
+  @spec abandon(String.t(), non_neg_integer(), String.t()) :: :ok
+  def abandon(track_id, generation, message) when is_binary(message) do
+    # `Server.update/2` asks again inside its transaction; this only spares it
+    # a row that has already moved on.
+    case Store.get(track_id) do
+      %Row{generation: ^generation} = row ->
+        Server.update(row, state: :failed, desired: :stopped, error: message, lease_until: 0)
+
+      _moved_on ->
+        :ok
     end
   end
 
   # Inside a transaction: record the intent to run, under a new generation
-  # unless it is already the intent, and return the generation on record.
+  # unless it is already the intent, and return the generation on record
+  # with whether a start of it is already under way.
   defp want_running(track_id, mode) do
-    %Row{} = row = Store.ensure(track_id)
+    # Locked, so two clicks landing together cannot both see "not running
+    # yet" and both start.
+    Store.ensure(track_id)
+    %Row{} = row = Store.lock(track_id)
 
     if mode == :restart or row.desired != :running do
       Store.save!(%Row{
@@ -227,9 +312,11 @@ defmodule Ravix.Previews.Lifecycle do
           generation: row.generation + 1,
           started_at: Clock.now_ms()
       })
-    end
 
-    Store.get(track_id).generation
+      {:started, row.generation + 1}
+    else
+      {if(row.state == :starting, do: :joined, else: :started), row.generation}
+    end
   end
 
   defp unavailable_error(track_id) do
@@ -288,6 +375,8 @@ defmodule Ravix.Previews.Lifecycle do
         track_id |> stoppable(expected) |> mark_stopped(track_id, mode)
       end)
 
+    if current, do: publish(track_id)
+
     case current do
       nil ->
         :ok
@@ -312,11 +401,14 @@ defmodule Ravix.Previews.Lifecycle do
         Repo.transaction(fn ->
           %Row{} = row = Store.ensure(track_id)
 
+          # The last start's failure was about the configuration being
+          # replaced: "No run script configured" is not true once one is.
           next = %Row{
             row
             | config: config,
               desired: :stopped,
               state: :stopped,
+              error: nil,
               generation: row.generation + 1,
               lease_until: 0,
               stop_pending: true
@@ -326,6 +418,8 @@ defmodule Ravix.Previews.Lifecycle do
           Store.revoke(track_id)
           next
         end)
+
+      publish(track_id)
 
       Server.run(track_id, {:retire, next, :stop, [stop_pending: false]})
     end

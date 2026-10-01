@@ -352,7 +352,7 @@ defmodule Ravix.Previews.ReconcilerTest do
     before = now(p)
     assert :ok = Lifecycle.start_service(t1.id)
     assert %{state: :failed, error: error} = Lifecycle.info(t1.id)
-    assert error =~ "Readiness did not pass at /health on $PORT=20000"
+    assert error =~ "Nothing answered on /health within 60s ($PORT=20000)"
     assert now(p) - before >= 60_000
   end
 
@@ -489,6 +489,19 @@ defmodule Ravix.Previews.ReconcilerTest do
     assert Reconciler.decide(%{running | lease_until: now}, track, project, now) == :leave
 
     assert Reconciler.decide(%{running | last_activity: now - 300_001}, track, project, now) ==
+             :stop
+
+    # RAV-40: a start still waking its machine is its asker's, until the idle
+    # rule says the asker is gone.
+    waking = %{running | state: :starting}
+    asleep = %{track | sandbox_layout: :dedicated, sandbox_suspended_at: DateTime.utc_now()}
+    parked = %{track | setup_state: "running", setup_error_code: "sandbox_suspended"}
+    assert Reconciler.decide(waking, track, project, now) == :ensure
+    assert Reconciler.decide(waking, asleep, project, now) == :leave
+    assert Reconciler.decide(waking, parked, project, now) == :leave
+    assert Reconciler.decide(%{running | state: :ready}, asleep, project, now) == :ensure
+
+    assert Reconciler.decide(%{waking | last_activity: now - 300_001}, asleep, project, now) ==
              :stop
   end
 end

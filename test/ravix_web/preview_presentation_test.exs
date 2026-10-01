@@ -34,5 +34,11 @@ defmodule RavixWeb.PreviewPresentationTest do
   test "startup copy names the configured readiness path" do
     assert Presentation.loading_label(nil) == "Starting the process…"
     assert Presentation.loading_label(%{readiness_path: "/health"}) =~ "answer on /health."
+
+    # RAV-40: a start on an asleep machine is a wake first, and says so.
+    assert Presentation.loading_label(:waking, %{readiness_path: "/"}) ==
+             "Waking this track's machine…"
+
+    assert Presentation.loading_label(:starting, %{readiness_path: "/"}) =~ "answer on /."
   end
 end

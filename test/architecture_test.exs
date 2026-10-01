@@ -293,10 +293,11 @@ defmodule Ravix.ArchitectureTest do
     # whether a page could reach it.
     expected = %{
       "lib/ravix/tracks.ex" =>
-        ~w(machine_of machine_of_track sprite_for close_all_for_rebuild present origin_info),
+        ~w(machine_of machine_of_track sprite_for close_all_for_rebuild present origin_info asleep?),
       "lib/ravix/people.ex" => ~w(claim_link link_target workspace_sharing?),
-      # The gateway's three; everything else by id is in `Store` or `Lifecycle`.
-      "lib/ravix/previews.ex" => ~w(origin by_host allowed?)
+      # The gateway's three, and letting go of a subscription `subscribe/2`
+      # admitted; everything else by id is in `Store` or `Lifecycle`.
+      "lib/ravix/previews.ex" => ~w(origin by_host allowed? unsubscribe)
     }
 
     for {path, named} <- expected do
