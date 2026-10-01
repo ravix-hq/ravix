@@ -787,6 +787,11 @@ defmodule RavixWeb.CoreComponents do
   attr :status, :boolean, default: false, doc: "announce the title as a status"
   attr :busy, :boolean, default: false, doc: "turn the icon, for a state that is in progress"
   attr :class, :string, default: nil, doc: "extra classes, after the component's own"
+
+  attr :hint, :string,
+    default: nil,
+    doc: "a short line under the button: another way to the same thing"
+
   attr :rest, :global
   slot :inner_block, doc: "one or two sentences: what this panel is for"
   slot :because_block, doc: "a `because` with markup in it, instead of the attr"
@@ -836,6 +841,7 @@ defmodule RavixWeb.CoreComponents do
       >
         {action.label}
       </button>
+      <p :if={@hint} class="dimmer empty-hint">{@hint}</p>
       <button
         :for={link <- @link}
         id={link[:id]}

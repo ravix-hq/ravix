@@ -23,6 +23,9 @@
 //   data-shortcut    optional: a letter that, with Ctrl or ⌘, clicks the
 //                    button while it is on screen (the yard's is B, RAV-96)
 //
+// A `ravix:open-panel` event on the button opens its sidebar if it is
+// closed, and never closes it.
+//
 // The accessible name is the visually hidden label the stylesheet swaps.
 // This hook only has to keep the tooltip and `aria-expanded` honest after
 // a click, and again after a server patch resets them to the open state
@@ -44,6 +47,13 @@ export const PanelToggle = {
       const closed = !this.closed()
       this.sync(closed)
       this.remember(closed)
+    })
+    // Something that shows what is in this sidebar opens it first, and
+    // leaves it open: the header's Preview control (RAV-42).
+    this.el.addEventListener("ravix:open-panel", () => {
+      if (!this.closed()) return
+      this.sync(false)
+      this.remember(false)
     })
     const letter = this.el.dataset.shortcut
     if (!letter) return
