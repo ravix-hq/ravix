@@ -81,6 +81,7 @@ defmodule Ravix.PromptQueue.Server do
   alias Ravix.Tracks.Billing
   alias Ravix.Tracks.CredentialRecovery
   alias Ravix.Tracks.Follower
+  alias Ravix.Tracks.Sandbox
   alias Ravix.Tracks.Sandbox.Maintenance
   alias Ravix.Tracks.Setup
   alias Ravix.Tracks.Track
@@ -146,6 +147,10 @@ defmodule Ravix.PromptQueue.Server do
   """
   @spec wake() :: :ok
   def wake, do: Phoenix.PubSub.broadcast(Ravix.PubSub, @wake_topic, :prompt_queued)
+
+  @doc "The topic `wake/0` broadcasts `:prompt_queued` on, for a test that listens for one."
+  @spec wake_topic() :: String.t()
+  def wake_topic, do: @wake_topic
 
   @doc "Stop claiming, release preparers, and drain in-flight POSTs within the shutdown budget."
   @spec stop(GenServer.server()) :: :ok
@@ -391,11 +396,24 @@ defmodule Ravix.PromptQueue.Server do
     :ok
   end
 
-  defp run_job(client, {:setup, id}, _setups, _server), do: Setup.advance(client, id)
+  defp run_job(client, {:setup, id}, _setups, _server), do: advance_setup(client, id)
 
   defp run_job(client, {:head, row}, setups, server) do
-    if MapSet.member?(setups, row.track_id), do: Setup.advance(client, row.track_id)
+    if MapSet.member?(setups, row.track_id), do: advance_setup(client, row.track_id)
     deliver(client, row, server)
+  end
+
+  # A setup check this sweep found due, and -- when it is the check that
+  # found the opening turn finished on a track with its own machine -- the
+  # machine recorded ready in the same breath, so that `deliver/3` below
+  # sends the prompt now rather than after the sandbox reconciler's next pass
+  # and this worker's next backstop (RAV-131). Both are leased, idempotent,
+  # and do nothing when another instance or the reconciler holds the lease.
+  # ownership: no door, as for `pending_setups/0` above; the setup lease and
+  # the operation lease are the write authorities.
+  defp advance_setup(client, id) do
+    Setup.advance(client, id)
+    Sandbox.finish_open(client, id)
   end
 
   # Which threads this server listens to, and whether anything is waiting at

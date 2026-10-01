@@ -703,6 +703,83 @@ defmodule Ravix.Tracks.SetupTest do
     assert QueueStore.get(item.id).status == :sent
   end
 
+  # RAV-131: a prompt saved while a track's own machine was built went out on
+  # the queue's thirty-second backstop. Setup reported ready and woke the
+  # queue, but the machine was recorded ready by the sandbox operation
+  # afterwards, and that write woke nobody.
+  describe "the first prompt after setup (RAV-131)" do
+    setup ctx do
+      persist(ctx.track, sandbox_layout: :dedicated, sandbox_state: :provisioning)
+      {:ok, op} = Ravix.Tracks.Sandbox.Store.begin_operation(ctx.track.id, 0, :open)
+
+      # Paused between setup checks, as the reconciler leaves it.
+      {:ok, op} =
+        Ravix.Tracks.Sandbox.Store.update_operation(op, %{
+          phase: "setup",
+          retry_at: DateTime.add(DateTime.utc_now(), 5, :second)
+        })
+
+      turn_status(ctx.track, "completed")
+      Ravix.Hub.subscribe(ctx.project.id)
+      %{op: op, item: queue(ctx)}
+    end
+
+    test "the sandbox operation's ready write delivers it on the wake alone, with no tick",
+         ctx do
+      # A worker with no timer that hears wakes: whatever it sends, a wake sent.
+      server(wake: true)
+      due(ctx.track)
+      {:ok, _} = Ravix.Tracks.Sandbox.Store.update_operation(ctx.op, %{retry_at: nil})
+
+      # The sandbox reconciler's pass: setup verified, then the machine
+      # recorded ready. Nothing ticks the queue afterwards.
+      Ravix.Tracks.Sandbox.advance(ctx.client, ctx.op.id)
+      assert %{setup_state: "ready", sandbox_state: :ready} = row(ctx.track)
+
+      assert_receive {:prompt, "setup", "user work", _}, 5_000
+      assert :ok = await_sent(ctx.item.id)
+    end
+
+    test "the sweep that verifies setup records the machine ready and sends in the same pass",
+         ctx do
+      due(ctx.track)
+      Server.tick(ctx.server)
+
+      assert %{setup_state: "ready", sandbox_state: :ready} = row(ctx.track)
+      assert Ravix.Tracks.Sandbox.Store.get_operation(ctx.op.id).completed_at
+      assert_received {:prompt, "setup", "user work", _}
+      assert QueueStore.get(ctx.item.id).status == :sent
+    end
+
+    test "a sweep that finds the machine still provisioning leaves the open to its holder",
+         ctx do
+      # Another instance holds the operation's lease mid-pass.
+      {_, _} =
+        Repo.update_all(
+          from(o in Ravix.Tracks.Sandbox.Operation, where: o.id == ^ctx.op.id),
+          set: [lease: "elsewhere", lease_until: DateTime.add(DateTime.utc_now(), 60, :second)]
+        )
+
+      due(ctx.track)
+      Server.tick(ctx.server)
+
+      assert %{setup_state: "ready", sandbox_state: :provisioning} = row(ctx.track)
+      refute Ravix.Tracks.Sandbox.Store.get_operation(ctx.op.id).completed_at
+      refute_received {:prompt, "setup", "user work", _}
+      assert QueueStore.get(ctx.item.id).status == :queued
+    end
+  end
+
+  # Delivery is recorded after the POST returns; wait for the queue to say so.
+  defp await_sent(item_id) do
+    receive do
+      {:hub, %Ravix.Hub.Event{}} ->
+        if QueueStore.get(item_id).status == :sent, do: :ok, else: await_sent(item_id)
+    after
+      5_000 -> flunk("prompt not recorded as sent: #{inspect(QueueStore.get(item_id))}")
+    end
+  end
+
   test "suspension recovery retains the finite setup budget and preserves saved prompts", ctx do
     persist(ctx.track,
       sandbox_layout: :dedicated,

@@ -307,6 +307,17 @@ defmodule RavixWeb.FirstRunTest do
   end
 
   describe "setup steps" do
+    test "say how long setup took once it has (RAV-132)" do
+      at = fn seconds -> DateTime.add(~U[2026-10-01 12:00:00Z], seconds, :second) end
+      duration = &RavixWeb.TrackLive.setup_duration(%{created_at: at.(0), opened_at: at.(&1)})
+
+      assert duration.(42) == "42s"
+      assert duration.(60) == "1m"
+      assert duration.(72) == "1m 12s"
+      assert duration.(-1) == nil
+      assert RavixWeb.TrackLive.setup_duration(%{created_at: at.(0), opened_at: nil}) == nil
+    end
+
     test "name each step, mark the one under way and those done" do
       project = %{repo: "acme/app"}
 
@@ -324,6 +335,22 @@ defmodule RavixWeb.FirstRunTest do
       assert steps.(nil, "pending") == [:done, :now, :todo, :todo]
       assert steps.(nil, "failed") == [:done, :done, :failed, :todo]
       assert steps.(nil, "ready") == [:done, :done, :done, :now]
+
+      # RAV-132: once setup is ready the last step is the first prompt's
+      # hand-off, which the page says the state of itself.
+      handoff = fn state ->
+        RavixWeb.TrackLive.setup_steps(
+          %{sandbox_stage: nil, setup_state: "ready", sandbox_layout: :dedicated},
+          project,
+          state
+        )
+        |> Enum.map(& &1.state)
+      end
+
+      assert handoff.(:now) == [:done, :done, :done, :now]
+      assert handoff.(:done) == [:done, :done, :done, :done]
+      assert handoff.(:skipped) == [:done, :done, :done, :skipped]
+      assert handoff.(:failed) == [:done, :done, :done, :failed]
 
       assert [%{label: "Start this track's machine"}, %{label: "Check out acme/app" <> _} | _] =
                RavixWeb.TrackLive.setup_steps(

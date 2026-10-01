@@ -7,6 +7,7 @@ defmodule Ravix.Tracks.Sandbox do
   alias Ravix.MachineCache
   alias Ravix.Previews.Lifecycle
   alias Ravix.Projects.Machine
+  alias Ravix.PromptQueue.Server, as: PromptQueueServer
   alias Ravix.Spec
   alias Ravix.Tracks.Billing
   alias Ravix.Tracks.Sandbox.OpenTrace
@@ -27,6 +28,36 @@ defmodule Ravix.Tracks.Sandbox do
         after
           Store.release(op)
         end
+    end
+  end
+
+  @doc """
+  Record a track's machine ready now that its setup is, rather than on the
+  reconciler's next pass (RAV-131).
+
+  Setup's checks run on the prompt queue's sweep as well as here, so the
+  sweep is often what sees the opening turn finish and sets `setup_state`.
+  The machine is not ready until this operation says so, and a prompt
+  waiting on the track waits on both; left to the reconciler, that second
+  write came up to ten seconds later and woke nobody. Idempotent and safe
+  on every instance: `Store.claim_handoff/1` takes the operation's lease or
+  nothing, and does nothing at all unless setup is ready and the machine
+  still provisioning.
+  """
+  @spec finish_open(Ravix.Fountain.Client.t(), String.t()) :: :ok
+  def finish_open(client, track_id) do
+    case Store.claim_handoff(track_id) do
+      nil ->
+        :ok
+
+      op ->
+        try do
+          run(client, op)
+        after
+          Store.release(op)
+        end
+
+        :ok
     end
   end
 
@@ -158,6 +189,12 @@ defmodule Ravix.Tracks.Sandbox do
     result = Store.ready(op)
     # Readiness must reach subscribers even if best-effort tracing stalls or dies.
     publish(track)
+    # A prompt saved while this machine was built waits on exactly this
+    # write, not on setup's (`Ravix.Tracks.Setup` woke the queue for that one,
+    # and the sweep it woke found the machine still provisioning). Without a
+    # wake here the queue's next look was its thirty-second backstop
+    # (RAV-131). Every instance hears it; `Store.claim/1` decides who sends.
+    if match?({:ok, _}, result), do: PromptQueueServer.wake()
 
     with {:ok, completed} <- result do
       OpenTrace.record(completed, Fountain.events_page(client, track.conversation_id, limit: 100))

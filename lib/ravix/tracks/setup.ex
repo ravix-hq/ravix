@@ -241,6 +241,9 @@ defmodule Ravix.Tracks.Setup do
           # opening turn's settle event can reach the queue while another
           # caller (`Tracks.open/3`) holds this lease, and that sweep cannot
           # advance setup, so without a wake they would wait for its backstop.
+          # A track with its own machine waits on one more write, the
+          # machine's own ready (`Ravix.Tracks.Sandbox.record_ready/3`), which
+          # wakes the queue again (RAV-131).
           PromptQueueServer.wake()
         end
 
