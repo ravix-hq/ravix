@@ -192,11 +192,6 @@ defmodule RavixWeb.WorkspaceSettingsLiveTest do
       member = insert_user(login: "mem")
       :ok = Store.add_member(ctx.team.id, member.id, :member, ctx.owner.id)
       {view, _html} = open(member, ctx.team.id)
-      # The page listens for the workspace's member notices only once its
-      # rail has arrived (`watch_workspace/2` runs in `scope_rail/2`), so a
-      # removal published before that is heard by nobody. Wait for the rail,
-      # as a person removed mid-visit has long had one.
-      render_async(view, 5_000)
 
       :ok = Workspaces.remove_member(ctx.owner, ctx.team.id, member.id)
       # The page leaves on the Hub's broadcast, after re-reading membership:
