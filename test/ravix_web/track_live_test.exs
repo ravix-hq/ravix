@@ -709,11 +709,21 @@ defmodule RavixWeb.TrackLiveTest do
     assert_push_event(ctx.view, "composer:retry", %{text: "Fix the outage", images: false})
   end
 
-  for {raw, label} <- [
-        {"2026-10-01T09:00:00Z", RavixWeb.LocalTime.short(~U[2026-10-01 09:00:00Z], nil)},
+  # The reset is far in the future and its label is worked out when the test
+  # runs: `LocalTime.short/2` drops the date on the day itself, so a label
+  # fixed at compile time, or a reset that is "tomorrow", breaks as the
+  # clock moves.
+  for {name, raw} <- [
+        {"a reset time", "2099-10-01T09:00:00Z"},
         {"unknown reset", "unknown reset"}
       ] do
-    test "spent ChatGPT usage shows #{label} to owners and members", ctx do
+    test "spent ChatGPT usage shows #{name} to owners and members", ctx do
+      label =
+        case DateTime.from_iso8601(unquote(raw)) do
+          {:ok, at, _} -> RavixWeb.LocalTime.short(at, nil)
+          _ -> unquote(raw)
+        end
+
       ctx.project |> Ecto.Changeset.change(runtime: "codex") |> Repo.update!()
       member = insert_user()
       insert_project_member(ctx.project, member)
@@ -751,7 +761,7 @@ defmodule RavixWeb.TrackLiveTest do
         assert has_element?(
                  view,
                  ~s(#track-agent-health-banner time[datetime="#{unquote(raw)}"]),
-                 unquote(label)
+                 label
                )
 
         {:ok, overview, _} =
@@ -762,7 +772,7 @@ defmodule RavixWeb.TrackLiveTest do
         assert has_element?(
                  overview,
                  ~s(#project-agent-health-#{ctx.project.id}-banner time[datetime="#{unquote(raw)}"]),
-                 unquote(label)
+                 label
                )
 
         refute has_element?(view, "#track-agent-health-banner button")
