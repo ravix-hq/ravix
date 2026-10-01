@@ -107,11 +107,14 @@ test('RAV-40: a preview on an asleep machine wakes it, says so throughout, and a
   expect(seen.filter(s => /Status: (waking|starting)/.test(s) && s.startsWith('Asleep'))).toEqual([]);
 
   // Opened with a ticket minted for this session. What the gateway then
-  // serves inside it is the gateway's own suite's to prove. (The mock's
-  // service read carries no definition, so an open re-defines the service
-  // there and passes through starting again; Sprites does not.)
+  // serves inside it is the gateway's own suite's to prove.
   await page.locator('button[phx-value-action="open"]').click();
   await expect(status).toHaveText('Status: ready', { timeout: 60_000 });
   await expect(page.locator('iframe.workspace-preview')).toHaveAttribute('src', /\/__ravix\/open#.+/);
   await page.screenshot({ path: 'tmp/rav-40-3-ready.png' });
+
+  // Leave nothing running for the specs after this one: a preview with a
+  // live lease is kept up by the reconciler for as long as it lasts.
+  await page.locator('button[phx-value-action="stop"]').click();
+  await expect(empty.locator('h3')).toHaveText('No preview running');
 });
