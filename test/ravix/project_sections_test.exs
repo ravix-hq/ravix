@@ -9,7 +9,8 @@ defmodule Ravix.ProjectSectionsTest do
   use Ravix.DataCase, async: true
 
   alias Ravix.Projects.{Section, SectionPlacement, Sections}
-  alias Ravix.Workspaces.Store
+  alias Ravix.Projects.Sections.Store, as: SectionStore
+  alias Ravix.Workspaces.{Backfill, Store}
 
   test "sections persist names, collapse state and exclusive project placement" do
     user = insert_user()
@@ -218,7 +219,7 @@ defmodule Ravix.ProjectSectionsTest do
       legacy = old_writer_section(ctx.me, "Legacy")
       place!(ctx.me, ctx.mine, legacy)
 
-      assert %{sections: 3} = Ravix.Workspaces.Backfill.run()
+      assert %{sections: 3} = Backfill.run()
 
       assert reload(filed).workspace_id == ctx.team.id
       assert reload(empty).workspace_id == ctx.personal.id
@@ -232,7 +233,7 @@ defmodule Ravix.ProjectSectionsTest do
       assert placements == %{ctx.mine.id => legacy.id}
       assert {empty.name, legacy.name} == {"Empty", "Legacy"}
 
-      assert %{sections: 0} = Ravix.Workspaces.Backfill.run()
+      assert %{sections: 0} = Backfill.run()
     end
 
     test "a section spanning workspaces is split, placements following their copy", ctx do
@@ -250,7 +251,7 @@ defmodule Ravix.ProjectSectionsTest do
       for project <- [ctx.mine, ctx.team_project, their_project, shared],
           do: place!(ctx.me, project, mixed)
 
-      assert %{sections: 1} = Ravix.Workspaces.Backfill.run()
+      assert %{sections: 1} = Backfill.run()
 
       assert {:ok, {[home], placements}} = Sections.list(ctx.me, ctx.personal.id)
       assert home.id == mixed.id
@@ -270,7 +271,7 @@ defmodule Ravix.ProjectSectionsTest do
 
       # A second run has nothing left.
       rows = Repo.all(from s in Section, order_by: s.id)
-      assert %{sections: 0} = Ravix.Workspaces.Backfill.run()
+      assert %{sections: 0} = Backfill.run()
       assert Repo.all(from s in Section, order_by: s.id) == rows
     end
 
@@ -281,7 +282,7 @@ defmodule Ravix.ProjectSectionsTest do
       place!(ctx.me, ctx.team_project, old)
       place!(ctx.me, ctx.mine, old)
 
-      assert %{sections: 1} = Ravix.Workspaces.Backfill.run()
+      assert %{sections: 1} = Backfill.run()
       assert Repo.get(Section, old.id) == nil
       assert {:ok, {[^work], placements}} = Sections.list(ctx.me, ctx.team.id)
       assert placements == %{ctx.team_project.id => work.id}
@@ -295,13 +296,13 @@ defmodule Ravix.ProjectSectionsTest do
       for n <- 1..3, do: old_writer_section(ctx.me, "Batch #{n}")
 
       # The step alone, in bounded batches: the newcomer's row is not ready.
-      assert Ravix.Projects.Sections.Store.scope_sections(2) == 2
-      assert Ravix.Projects.Sections.Store.scope_sections(2) == 1
-      assert Ravix.Projects.Sections.Store.scope_sections(2) == 0
+      assert SectionStore.scope_sections(2) == 2
+      assert SectionStore.scope_sections(2) == 1
+      assert SectionStore.scope_sections(2) == 0
       assert is_nil(reload(waiting).workspace_id)
 
       # The whole backfill makes the newcomer's workspace first, then settles it.
-      assert %{sections: 1} = Ravix.Workspaces.Backfill.run(batch_size: 1)
+      assert %{sections: 1} = Backfill.run(batch_size: 1)
       assert reload(waiting).workspace_id == Store.personal_workspace(newcomer.id).id
       assert Repo.aggregate(from(s in Section, where: is_nil(s.workspace_id)), :count) == 0
     end

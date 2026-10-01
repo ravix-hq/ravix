@@ -94,40 +94,46 @@ defmodule Ravix.Projects.Sections.Store do
         fn {project, _workspace, _member?} -> project end
       )
 
-    # The personal workspace first, so a section of only legacy and shared
-    # projects keeps its row rather than a copy.
-    targets =
-      case by_workspace |> Map.keys() |> Enum.sort_by(&{&1 != personal, &1}) do
-        [] -> [personal]
-        targets -> targets
-      end
-
     claimed =
-      Enum.reduce(targets, false, fn workspace, claimed ->
-        projects = Map.get(by_workspace, workspace, [])
-
-        case same_named(section, workspace) do
-          %Section{id: target} ->
-            repoint(id, projects, target)
-            claimed
-
-          nil when claimed ->
-            copy =
-              %Section{user_id: user_id, workspace_id: workspace}
-              |> Section.changeset(%{name: section.name, collapsed: section.collapsed})
-              |> Repo.insert!()
-
-            repoint(id, projects, copy.id)
-            claimed
-
-          nil ->
-            section |> Ecto.Changeset.change(workspace_id: workspace) |> Repo.update!()
-            true
-        end
+      Enum.reduce(targets(by_workspace, personal), false, fn workspace, claimed ->
+        settle_in(section, workspace, Map.get(by_workspace, workspace, []), claimed)
       end)
 
     # Every placement joined a section that already existed: nothing left.
     unless claimed, do: Repo.delete!(section)
+  end
+
+  # The personal workspace first, so a section of only legacy and shared
+  # projects keeps its row rather than a copy.
+  defp targets(by_workspace, personal) do
+    case by_workspace |> Map.keys() |> Enum.sort_by(&{&1 != personal, &1}) do
+      [] -> [personal]
+      targets -> targets
+    end
+  end
+
+  # One target workspace: its placements join a same-named section already
+  # there; failing that the row itself is claimed for the first workspace,
+  # and every later one gets a copy. Returns whether the row is claimed.
+  defp settle_in(section, workspace, projects, claimed) do
+    case same_named(section, workspace) do
+      %Section{id: target} ->
+        repoint(section.id, projects, target)
+        claimed
+
+      nil when claimed ->
+        copy =
+          %Section{user_id: section.user_id, workspace_id: workspace}
+          |> Section.changeset(%{name: section.name, collapsed: section.collapsed})
+          |> Repo.insert!()
+
+        repoint(section.id, projects, copy.id)
+        claimed
+
+      nil ->
+        section |> Ecto.Changeset.change(workspace_id: workspace) |> Repo.update!()
+        true
+    end
   end
 
   defp same_named(%Section{user_id: user_id, name: name}, workspace) do
