@@ -22,7 +22,7 @@ defmodule RavixWeb.TrackLiveTest do
     Transcript
   }
 
-  alias RavixWeb.Live.Guard
+  alias RavixWeb.Live.{Form, Guard}
 
   alias Ravix.Plans.Progress
 
@@ -2643,7 +2643,7 @@ defmodule RavixWeb.TrackLiveTest do
       render_async(ctx.view)
 
       # A form unlike the one a rebuild would make, so keeping it is visible.
-      kept = RavixWeb.Live.Form.new(:preview_config, %{"command" => "kept"})
+      kept = Form.new(:preview_config, %{"command" => "kept"})
 
       :sys.replace_state(ctx.view.pid, fn state ->
         put_in(state.socket.assigns.preview_form, kept)
