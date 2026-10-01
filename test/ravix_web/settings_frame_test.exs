@@ -69,9 +69,8 @@ defmodule RavixWeb.SettingsFrameTest do
     end
 
     test "a project's groups end with Danger zone alone, and leave out what is not shown" do
-      project = %{id: "p1", display_name: "Atlas"}
       shown = Enum.map(Settings.sections(:project), &elem(&1, 0))
-      groups = Settings.project_groups(project, shown, %{"access" => 2})
+      groups = Settings.project_groups("p1", "Atlas", shown, %{"access" => 2})
 
       assert Enum.map(groups, & &1.label) == ["Atlas", nil]
 
@@ -83,7 +82,7 @@ defmodule RavixWeb.SettingsFrameTest do
       assert %{count: 2, path: "/p/p1/settings/access"} =
                groups |> Enum.flat_map(& &1.items) |> Enum.find(&(&1.key == "access"))
 
-      assert [%{label: "Atlas"}] = Settings.project_groups(project, ["general"])
+      assert [%{label: "Atlas"}] = Settings.project_groups("p1", "Atlas", ["general"])
     end
 
     test "the dialog's old tabs are parts of the new pages" do

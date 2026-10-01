@@ -145,19 +145,19 @@ defmodule RavixWeb.Live.Settings do
 
   @doc """
   A project's groups: the project's own pages, then Danger zone alone and
-  last. `shown` lists the section keys the page can show.
+  last, headed by `label`, the project's name as the page reads it. `shown`
+  lists the section keys the page can show.
   """
-  @spec project_groups(%{id: String.t(), display_name: String.t()}, [String.t()], map()) ::
-          [group()]
-  def project_groups(project, shown, counts \\ %{}) do
+  @spec project_groups(String.t(), String.t(), [String.t()], map()) :: [group()]
+  def project_groups(project_id, label, shown, counts \\ %{}) do
     items =
       for {key, _label} = section <- @project,
           key in shown,
           into: %{},
-          do: {key, item(:project, project.id, section, counts)}
+          do: {key, item(:project, project_id, section, counts)}
 
     [
-      {project.display_name, ~w(general access agent machine)},
+      {label, ~w(general access agent machine)},
       {nil, ~w(danger)}
     ]
     |> Enum.map(fn {label, keys} ->

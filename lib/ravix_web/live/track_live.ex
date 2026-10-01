@@ -2192,6 +2192,12 @@ defmodule RavixWeb.TrackLive do
   # which a floor alone would get wrong by padding it out to the floor.
   defp fits?(text, chars), do: String.length(text) <= chars
 
+  # The crumb's name (RAV-128). A track page sits inside its project's
+  # workspace -- the parent scopes its sidebar to it (`WorkspaceLive`'s
+  # `scope_rail/2`) -- so a workspace project reads bare here, and a legacy
+  # project shared with the viewer still says whose it is.
+  defp project_label(project), do: Ravix.Projects.View.label(project, project.workspace_id)
+
   # Whoever pays for this track's agent, as refusals name them: the creator
   # of a creator-billed track, else the project's owner, as before.
   defp payer_name(%{assigns: %{track: %{billing: :creator, payer_login: login}}}),

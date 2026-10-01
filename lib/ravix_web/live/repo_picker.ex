@@ -55,7 +55,9 @@ defmodule RavixWeb.Live.RepoPicker do
       <%!-- The chip shows the selection; this line announces it. --%>
       <p id="repo-picker-selected" class="sr-only" aria-live="polite">
         Selected: <strong :if={!@scratch?}>{@selected.repo}</strong>
-        <strong :if={@scratch?}>No repository (scratch) · {@selected.display_name}</strong>
+        <strong :if={@scratch?}>
+          No repository (scratch) · {Ravix.Projects.View.label(@selected, @selected.workspace_id)}
+        </strong>
       </p>
 
       <ul

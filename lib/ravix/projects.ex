@@ -49,6 +49,7 @@ defmodule Ravix.Projects do
   alias Ravix.Projects.Machine.Provisioned
   alias Ravix.Spec
   alias Ravix.Workspaces.Repositories
+  alias Ravix.Workspaces.Workspace
 
   @typedoc "How the caller reaches a project. See `Ravix.Accounts.Access.access_of/3`."
   @type access :: Ravix.Accounts.Access.access()
@@ -112,7 +113,11 @@ defmodule Ravix.Projects do
     tracks = People.Store.member_tracks(user.id)
 
     # The fourth way in, when the switch lets it count (`Access.access_of/3`).
-    %{projects: in_workspaces, workspace_ids: workspace_ids} = Access.workspace_reach(user)
+    %{projects: in_workspaces, workspaces: workspaces, workspace_ids: workspace_ids} =
+      Access.workspace_reach(user)
+
+    # The same read names each workspace project's container (RAV-128).
+    reach = Map.new(workspaces, &{&1.id, &1})
 
     # The projects behind the track memberships, in the order the tracks were
     # cut: the order the rail has always drawn them in, kept through the map.
@@ -150,7 +155,13 @@ defmodule Ravix.Projects do
           do: Machine.state(project),
           else: Machine.none()
 
-      present(project, access, machine, Map.get(owners, project.user_id, user))
+      present(
+        project,
+        access,
+        machine,
+        Map.get(owners, project.user_id, user),
+        label_workspace(project, user, reach)
+      )
     end
   end
 
@@ -167,7 +178,14 @@ defmodule Ravix.Projects do
   def get(%User{} = user, id) do
     with %Project{archived_at: nil} = project <- Store.live_project(id) || {:error, :not_found},
          access when not is_nil(access) <- access_of(user.id, project) do
-      {:ok, present(project, access, Machine.state(project), owner_of(project, user))}
+      {:ok,
+       present(
+         project,
+         access,
+         Machine.state(project),
+         owner_of(project, user),
+         label_workspace(project, user, nil)
+       )}
     else
       _ -> {:error, :not_found}
     end
@@ -765,15 +783,24 @@ defmodule Ravix.Projects do
   The `Project` map for a row. `role` is the owner/not-owner question almost
   every gate in the UI asks; `access` is the second question, asked in the
   two places that need it.
-  """
-  @spec present(Project.t(), access(), machine(), User.t() | nil) :: View.t()
-  def present(%Project{} = project, access, machine, owner) do
-    owner_login = (owner && owner.login) || ""
 
-    %View{
+  `workspace` is the project's workspace when it is what the name is read
+  against for this viewer (`label_workspace/3`); nil reads the legacy way,
+  as a project with no workspace does, and as one whose workspace does not
+  yet count for access does while the switch is off.
+  """
+  @spec present(Project.t(), access(), machine(), User.t() | nil, Workspace.t() | nil) ::
+          View.t()
+  def present(%Project{} = project, access, machine, owner, workspace \\ nil) do
+    owner_login = (owner && owner.login) || ""
+    {container, container_id} = container(project, access, owner_login, workspace)
+
+    view = %View{
       id: project.id,
       name: project.name,
-      display_name: display_name(project.name, access, owner_login),
+      display_name: project.name,
+      container: container,
+      container_id: container_id,
       repo: project.repo_full_name,
       repo_private: project.repo_private == true,
       default_branch: project.default_branch,
@@ -789,14 +816,61 @@ defmodule Ravix.Projects do
       workspace_id: project.workspace_id,
       legacy_duplicate: not is_nil(project.legacy_duplicate_at)
     }
+
+    %{view | display_name: View.label(view)}
   end
 
-  # The owner reads the bare name; anyone it is shared with reads whose it is.
-  # An owner whose account is gone has no login to show, so the name stands
-  # alone rather than behind an empty prefix.
-  defp display_name(name, :owner, _owner_login), do: name
-  defp display_name(name, _access, ""), do: name
-  defp display_name(name, _access, owner_login), do: "#{owner_login} / #{name}"
+  # What the name is read against (RAV-128): the container the project
+  # lives in, and only where the viewer is not already inside it.
+  #
+  # A workspace project is the workspace's repository (ADR 0009), so its
+  # container is the workspace, named the same for its creator and every
+  # other member: the creator is attribution, not an owner anybody is
+  # looking in on. A legacy project is still its owner's (ADR 0005): the
+  # owner reads the bare name, and anyone it is shared with reads whose it
+  # is. An owner whose account is gone has no login to show, so the name
+  # stands alone rather than behind an empty prefix. The id beside the name
+  # is the workspace's, for a surface scoped to it to drop the prefix
+  # (`View.prefix/2`); a person's is nil, because no surface sits inside one.
+  defp container(%Project{workspace_id: id}, _access, _owner_login, %Workspace{id: id} = ws),
+    do: {ws.name, ws.id}
+
+  defp container(_project, :owner, _owner_login, _workspace), do: {nil, nil}
+  defp container(_project, _access, "", _workspace), do: {nil, nil}
+  defp container(_project, _access, owner_login, _workspace), do: {owner_login, nil}
+
+  # The workspace `present/5` reads a project's name against for `user`, or
+  # nil for legacy labelling: the project's own, when the switch lets a
+  # membership count and `user` is a live member of it -- the same facts
+  # `Access.access_of/3` admits them on -- and not a personal workspace. A
+  # personal workspace has one member, who is already inside it, and is
+  # named after a login, which would read as the retired creator prefix
+  # rather than as a place; so a personal-workspace project reads bare
+  # wherever it is shown, as the owner's own project always has.
+  #
+  # `reach` is `Access.workspace_reach/1`'s workspaces keyed by id, when the
+  # caller lists several projects and has them in hand; `get/2` asks the
+  # door for the one it needs.
+  defp label_workspace(%Project{workspace_id: id}, %User{} = user, reach) when is_binary(id) do
+    workspace =
+      case reach do
+        %{} -> Map.get(reach, id)
+        nil -> reached_workspace(user, id)
+      end
+
+    if workspace && workspace.kind != :personal, do: workspace
+  end
+
+  defp label_workspace(%Project{}, _user, _reach), do: nil
+
+  defp reached_workspace(user, workspace_id) do
+    with true <- Ravix.Config.workspace_access?(),
+         {:ok, %{workspace: workspace}} <- Access.workspace_access(user, workspace_id) do
+      workspace
+    else
+      _ -> nil
+    end
+  end
 
   # ── plumbing ──────────────────────────────────────────────────────────
 

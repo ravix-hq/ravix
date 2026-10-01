@@ -7,7 +7,7 @@ defmodule RavixWeb.WorkspaceLive do
   alias Ravix.{Accounts, Hub, People, Projects, Schedules, Tracks, Workspaces}
   alias Ravix.Accounts.Access
   alias Ravix.Hub.Event
-  alias Ravix.Projects.Sections
+  alias Ravix.Projects.{Sections, View}
   alias Ravix.Tracks.{MachineState, Track}
   alias Ravix.Workspaces.{Picker, Repositories}
   alias RavixWeb.Live.Form
@@ -1631,6 +1631,9 @@ defmodule RavixWeb.WorkspaceLive do
 
   defp recheck_rail(socket), do: socket
 
+  # Matched on the spanning label, so a workspace project answers to its
+  # workspace's name and a legacy project to its owner's login (RAV-128),
+  # whichever way the result is then drawn.
   defp project_matches?(project, query),
     do:
       String.contains?(String.downcase(project.display_name), String.downcase(String.trim(query)))
@@ -2055,7 +2058,9 @@ defmodule RavixWeb.WorkspaceLive do
     scope =
       case page do
         %{kind: :project} ->
-          if assigns.project, do: assigns.project.display_name, else: "Project"
+          if assigns.project,
+            do: label(assigns.project, assigns.current_workspace),
+            else: "Project"
 
         %{kind: :workspace, id: id} ->
           Enum.find_value(
@@ -2086,13 +2091,15 @@ defmodule RavixWeb.WorkspaceLive do
 
   defp assign_page_title(%{assigns: assigns} = socket, requested) do
     project = assigns.project
+    # The page is inside the current workspace, as the sidebar is.
+    name = label(project, assigns.current_workspace)
 
     title =
       case Enum.find(assigns.tracks[project.id] || [], &(&1.id == assigns.track_id)) ||
              (requested && requested.id == assigns.track_id && requested) do
-        nil when assigns.live_action == :plans -> "Plans · " <> project.display_name
-        nil -> project.display_name
-        track -> Track.label(track) <> " · " <> project.display_name
+        nil when assigns.live_action == :plans -> "Plans · " <> name
+        nil -> name
+        track -> Track.label(track) <> " · " <> name
       end
 
     assign(socket, page_title: title <> " · Ravix")
@@ -2153,6 +2160,8 @@ defmodule RavixWeb.WorkspaceLive do
           do: Track.label(track),
           else: "#{Track.label(track)} · #{thread.title}"
         ),
+      # A desktop notice arrives whatever workspace is current, so it names
+      # the project's (RAV-128).
       project: project && project.display_name,
       status: thread.status,
       mention: Map.get(thread, :mention) && thread.mention.author_login
@@ -2474,8 +2483,20 @@ defmodule RavixWeb.WorkspaceLive do
   defp ref_label(%{name: name}), do: name
 
   # The New track chips (RAV-60): where the track opens, and who sees it.
-  defp track_destination(%{repo: repo}) when is_binary(repo), do: repo
-  defp track_destination(project), do: "Scratch · #{project.display_name}"
+  defp track_destination(%{repo: repo}, _current) when is_binary(repo), do: repo
+  defp track_destination(project, current), do: "Scratch · #{label(project, current)}"
+
+  # A project's name as this page reads it (RAV-128): the page is scoped to
+  # the current workspace, so a project in it reads bare, and a legacy
+  # project somebody shared still says whose it is. Every surface on this
+  # page -- the sidebar, the crumbs, the title, quick-jump, Recent, the
+  # Inbox and New track -- is cut to that scope (`scope_rail/2`). What
+  # spans workspaces, the desktop notice and Schedules, reads the
+  # `display_name` instead.
+  defp label(project, current), do: View.label(project, within(current))
+
+  defp within(%{workspace: %{id: id}}), do: id
+  defp within(_current), do: nil
 
   defp private_tracks?(user), do: Ravix.Config.dedicated_opens_enabled?(user)
 
@@ -2764,7 +2785,7 @@ defmodule RavixWeb.WorkspaceLive do
           patch={"/p/#{project.id}"}
           data-jump-result
         >
-          <span class="search-label">{project.display_name}</span>
+          <span class="search-label">{View.label(project, @within)}</span>
           <span
             :if={project_attention(@tracks, project.id) > 0}
             class="badge"
@@ -2775,7 +2796,7 @@ defmodule RavixWeb.WorkspaceLive do
           )}</span>
         </.link>
         <span :if={!project_matches?(project, @query)} class="search-label">
-          {project.display_name}
+          {View.label(project, @within)}
         </span>
         <span class="search-count" aria-label={count_label(length(tracks) + length(plans))}>
           {length(tracks) + length(plans)}
@@ -2816,10 +2837,17 @@ defmodule RavixWeb.WorkspaceLive do
   defp plan_matches?(plan, query),
     do: String.contains?(String.downcase(plan.title), String.downcase(query))
 
+  # The haystack names the project's container (RAV-128): a workspace
+  # project is found by its workspace's name, a legacy one by its owner's
+  # login, as the label shows them. The owner's login stays in it as it
+  # was, so what somebody found by it before -- their own project, or the
+  # creator's among a workspace's -- they still find.
   defp matching?(track, project, query),
     do:
       String.contains?(
-        String.downcase("#{project.owner_login} #{project.name} #{track.title} #{track.branch}"),
+        String.downcase(
+          "#{project.container} #{project.owner_login} #{project.name} #{track.title} #{track.branch}"
+        ),
         String.downcase(query)
       )
 end

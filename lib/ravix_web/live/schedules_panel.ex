@@ -106,6 +106,8 @@ defmodule RavixWeb.Live.SchedulesPanel do
     )
   end
 
+  # Schedules span every workspace the viewer reaches (ADR 0009), so a
+  # project is named with its workspace (RAV-128), as the select below is.
   defp project_name(projects, id),
     do: Enum.find_value(projects, "Project", &if(&1.id == id, do: &1.display_name))
 
