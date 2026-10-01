@@ -684,7 +684,7 @@ html[data-yard="closed"] .workspace-trigger-skeleton { flex: none; width: 28px; 
    row's end: always on the open project, on hover or focus on the others
    (and always where there is no hover to reveal them). */
 .workspace-project { padding: 1px 0; }
-.workspace-project-row { display: flex; align-items: center; gap: 2px; height: var(--rail-row); padding-left: var(--tree-indent, 0px); border-radius: var(--radius); }
+.workspace-project-row { display: flex; align-items: center; gap: 2px; height: var(--rail-row); margin-left: var(--tree-indent, 0px); border-radius: var(--radius); }
 .workspace-project-row:hover { background: var(--surface-hover); }
 .workspace-project.current .workspace-project-row { background: var(--surface-active); }
 .workspace-project-name {
@@ -694,6 +694,9 @@ html[data-yard="closed"] .workspace-trigger-skeleton { flex: none; width: 28px; 
 .workspace-project-row:hover .workspace-project-name, .workspace-project-name.selected { color: var(--ink); }
 .workspace-project-name:hover, .account-item:hover { text-decoration: none; }
 .project-actions { flex: none; display: flex; align-items: center; gap: 1px; padding-right: 3px; }
+/* A project's actions sit edge to edge, giving its name back the 6px the
+   deeper indent under a heading takes (RAV-126). */
+.workspace-project-row > .project-action ~ .project-action { margin-left: -2px; }
 .project-action, .section-action {
   flex: none; width: 22px; height: 22px; padding: 0; display: grid; place-items: center;
   color: var(--dim); background: transparent; border: none; border-radius: var(--radius); text-decoration: none;
@@ -2671,12 +2674,14 @@ body:has(.phx-error) #request-progress { display: none; }
 .section-toggle:hover:not(:disabled) { color: var(--dim); background: transparent; border-color: transparent; }
 .section-toggle .truncate { flex: 1; }
 .section-toggle .dim { font-weight: 400; font-variant-numeric: tabular-nums; }
-/* Under a heading, a project steps in by about a chevron's width (RAV-125),
-   so heading, project and track read as three levels. The row pads its
-   contents, so its hover and selected fill still span the rail; its tracks
-   move with it (`.project-tree-tracks`). The empty line's words start where
-   a project's name would. Without a heading there is nothing to step in from. */
-.project-section.labelled { --tree-indent: 12px; }
+/* Under a heading, a project steps in so its chevron sits under the first
+   letter of the heading's label (RAV-126): the label starts 24px in (6px
+   padding, 12px chevron, 6px gap) and the project's 12px chevron is centred
+   in a 24px button, so 18px. The row itself steps in, so its hover and
+   selected fill start at its level; its tracks move with it
+   (`.project-tree-tracks`). The empty line's words start where a project's
+   name would. Without a heading there is nothing to step in from. */
+.project-section.labelled { --tree-indent: 18px; }
 .section-empty { margin: 0; padding: 2px 6px 4px calc(32px + var(--tree-indent, 0px)); font-size: 12px; }
 .project-section-picker { display: flex; align-items: center; gap: 8px; padding: 4px 0; }
 .project-section-picker label { flex: 1; min-width: 0; }
@@ -2860,7 +2865,13 @@ body:has(.phx-error) #request-progress { display: none; }
 /* A single project picker serves the desktop rail and narrow navigation. */
 
 /* The rail shares one tree on desktop and in the mobile menu. */
-.project-tree-tracks { display: flex; flex-direction: column; gap: 1px; padding: 1px 0 4px calc(24px + var(--tree-indent, 0px)); min-width: 0; }
+/* A quiet guide (RAV-126) runs down from an open project's chevron beside
+   its tracks, so they read as that project's even when several are open. */
+.project-tree-tracks { position: relative; display: flex; flex-direction: column; gap: 1px; padding: 1px 0 4px calc(24px + var(--tree-indent, 0px)); min-width: 0; }
+.project-tree-tracks::before {
+  content: ""; position: absolute; top: 0; bottom: 4px; left: calc(var(--tree-indent, 0px) + 11.5px); width: 1px;
+  background: var(--line); pointer-events: none;
+}
 .project-tree-tracks[hidden] { display: none; }
 /* One height and one inset for every row (RAV-96), so a list of tracks, a
    hint and the closed list below keep the project rows' beat. */

@@ -53,8 +53,9 @@ test('sidebar avatars line up whether or not a row shows a status dot', async ({
 });
 
 // RAV-44/45: a chevron that follows each disclosure's state (mouse and
-// keyboard), and a quiet empty section. RAV-125: a project steps in from its
-// section's heading, and its tracks step in from it as they always did.
+// keyboard), and a quiet empty section. RAV-125/126: a project steps in under
+// its section's label, its fill steps in with it, and its tracks step in from
+// it as they always did.
 test('the sidebar tree steps in per level and its chevrons follow their state', async ({ page }) => {
   test.setTimeout(120_000);
   await page.setViewportSize({ width: 1440, height: 900 });
@@ -106,15 +107,19 @@ test('the sidebar tree steps in per level and its chevrons follow their state', 
       await menu.click();
       await expect(menu).toHaveAttribute('aria-expanded', 'true');
     }
-    // The project's chevron steps in from its heading's, and the track's dot
-    // sits where it did relative to its project before RAV-125 (26px).
-    const section = await x(filed.locator('.section-toggle svg'));
+    // The project's chevron sits under the first letter of its heading's
+    // label, and the track's dot sits where it always did relative to its
+    // project (26px).
+    const label = await x(filed.locator('.section-toggle .truncate'));
     const projectX = await x(projectToggle.locator('svg'));
     const track = await x(project.locator('.track-status').first());
-    expect(projectX - section).toBeGreaterThanOrEqual(10);
+    expect(Math.abs(projectX - label), `project chevron ${projectX}, heading label ${label}`).toBeLessThanOrEqual(2);
     expect(Math.round(track - projectX)).toBe(26);
-    // Only the contents step in: the row's fill still starts at the rail's edge.
-    expect(Math.round(await x(project.locator('.workspace-project-row')))).toBe(Math.round(await x(filed)));
+    // The row's fill steps in with it: it starts at the project's chevron
+    // button, not at the rail's edge.
+    const pill = await x(project.locator('.workspace-project-row'));
+    expect(Math.round(pill)).toBe(Math.round(await x(projectToggle)));
+    expect(pill - await x(filed)).toBeGreaterThanOrEqual(12);
     // The empty line's words start where its projects' names would.
     expect(await shelf.locator('.section-empty').evaluate(el => el.getBoundingClientRect().x + parseFloat(getComputedStyle(el).paddingLeft))).toBeGreaterThan(projectX);
     // Every row stays on one line, and nothing scrolls sideways.
