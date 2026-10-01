@@ -2470,6 +2470,31 @@ defmodule RavixWeb.TrackLiveTest do
       assert has_element?(ctx.view, "#run-status", "Status: starting")
     end
 
+    test "a preview change leaves the track, its tabs and an open dialog as they were", ctx do
+      # The suspicion after #438 merged: that the re-read reassigns something
+      # other than the preview. It must not touch the crumbs, the thread tabs
+      # or a dialog somebody is typing in. (The header's machine chip does move:
+      # it says Starting while the machine wakes, which is the point.)
+      render_click(ctx.view, "dialog", %{name: "rename"})
+      assert has_element?(ctx.view, "#rename-dialog #rename-title")
+      track = :sys.get_state(ctx.view.pid).socket.assigns.track
+      threads = :sys.get_state(ctx.view.pid).socket.assigns.threads
+      form = :sys.get_state(ctx.view.pid).socket.assigns.rename_form
+      crumbs = ctx.view |> element(".track-title-crumb") |> render()
+      tabs = ctx.view |> element("#thread-tablist") |> render()
+
+      for state <- [:waking, :starting, :ready, :failed] do
+        preview_says(ctx, state: state, url: "https://preview.test")
+        assigns = :sys.get_state(ctx.view.pid).socket.assigns
+        assert assigns.track == track
+        assert assigns.threads == threads
+        assert assigns.rename_form == form
+        assert assigns.dialog == :rename
+        assert ctx.view |> element(".track-title-crumb") |> render() == crumbs
+        assert ctx.view |> element("#thread-tablist") |> render() == tabs
+      end
+    end
+
     test "a change for another track is not read", ctx do
       reject(&Previews.status/2)
       send(ctx.view.pid, {:preview, Ecto.UUID.generate()})
