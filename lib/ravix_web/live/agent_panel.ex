@@ -63,10 +63,28 @@ defmodule RavixWeb.Live.AgentPanel do
 
   The value somebody pastes is sent to `Ravix.Accounts.Inference.connect/2`
   inside the task and nowhere else. It is never assigned: an assign is in the
-  page's state and in its next diff, and the form is rebuilt empty whether the
-  write worked or not. A ChatGPT sign-in has nothing to paste; what is
+  page's state and in its next diff, and the form is rendered with no value
+  whether the write worked or not. What the field shows while Fountain is
+  asked, and still after a refusal, is the browser's own copy of the paste:
+  the input is `phx-update="ignore"` and the `CredentialField` hook
+  (`assets/js/hooks/credential_field.js`) clears it when the server says the
+  attempt is over (RAV-135). A ChatGPT sign-in has nothing to paste; what is
   assigned is the code and the attempt's id, which is what Fountain shows to
   anybody holding the account key anyway.
+
+  ## The connect step
+
+  The steps, the field and its button are one card headed "Connect …"
+  (RAV-133), so that inside the new-project dialog they read as a sub-step
+  and not as the dialog's own submit: the button is the card's, right-aligned
+  and plain, and Add repository stays the one primary action. An empty submit
+  is refused here, on the field, rather than by the browser's `required`
+  (RAV-134), whose bubble covered the hint and stayed up until the next
+  click. While Fountain is asked, the button itself says so in the width it
+  already had, and nothing is inserted above the form (RAV-135); `pending`
+  names the action whose button is showing its own progress, and the
+  "Updating agent connection…" line is kept for the ones that have no button
+  to show it in (Make default, Remove).
 
   ## An account already linked
 
@@ -79,6 +97,7 @@ defmodule RavixWeb.Live.AgentPanel do
   """
   use RavixWeb, :live_component
 
+  alias Phoenix.LiveView.JS
   alias Ravix.Accounts.{Inference, ThreadPreference, User}
   alias RavixWeb.Live.Form
 
@@ -94,6 +113,9 @@ defmodule RavixWeb.Live.AgentPanel do
      assign(socket,
        credential_form: Form.new(:credential),
        busy: false,
+       # The action whose own button is showing its progress (`:connect`,
+       # `:begin_link`), while `busy`; nil when the status line says it.
+       pending: nil,
        # The ChatGPT sign-in that is open, if one is; whether this Fountain
        # lets anybody start one (`nil` until asked); why the last one ended,
        # when it ended badly; the classified "already linked" refusal, when
@@ -298,18 +320,34 @@ defmodule RavixWeb.Live.AgentPanel do
   def handle_event("connect", _params, %{assigns: %{busy: true}} = socket),
     do: {:noreply, socket}
 
+  # Nothing pasted: said beside the field, and nothing sent (RAV-134). The
+  # context refuses an empty value too (`Inference.connect/2`); this is the
+  # sentence for the field it is about, not a second copy of the rule.
   def handle_event("connect", %{"credential" => %{"value" => value}}, socket)
       when is_binary(value) do
     %{current_user: user, agent: agent, kind: kind} = socket.assigns
-    attrs = %{agent: agent, kind: kind, value: value}
-    track_inline(socket, :inline_connect_started, agent, kind)
 
-    # The field is given back empty, not absent: `used_input?/1` is what lets a
-    # refusal show beside it, and it reads whether the field was submitted.
-    {:noreply,
-     socket
-     |> assign(busy: true, credential_form: Form.new(:credential, %{"value" => ""}))
-     |> traced_async(:connect, fn -> Inference.connect(user, attrs) end)}
+    if String.trim(value) == "" do
+      {:ok, form} =
+        Form.refuse(
+          Form.new(:credential),
+          {:unprocessable, "no_credential", empty_message(agent, kind)}
+        )
+
+      {:noreply, assign(socket, credential_form: form)}
+    else
+      attrs = %{agent: agent, kind: kind, value: value}
+      track_inline(socket, :inline_connect_started, agent, kind)
+
+      # The form is left as it is until the answer comes: a refusal still
+      # beside the field is replaced then, not cleared now, so a retry moves
+      # nothing under the button (RAV-135). The field's value is the
+      # browser's own copy (see "The credential"); the server renders none.
+      {:noreply,
+       socket
+       |> assign(busy: true, pending: :connect)
+       |> traced_async(:connect, fn -> Inference.connect(user, attrs) end)}
+    end
   end
 
   def handle_event("begin-link", _params, %{assigns: %{link: nil, busy: false}} = socket) do
@@ -318,7 +356,7 @@ defmodule RavixWeb.Live.AgentPanel do
 
     {:noreply,
      socket
-     |> assign(busy: true, link_error: nil, link_conflict: nil)
+     |> assign(busy: true, pending: :begin_link, link_error: nil, link_conflict: nil)
      |> traced_async(:begin_link, fn -> Inference.begin_link(user) end)}
   end
 
@@ -363,10 +401,11 @@ defmodule RavixWeb.Live.AgentPanel do
   def handle_event("cancel-link", _params, socket), do: {:noreply, socket}
 
   @impl true
+  # The answer: a fresh form, carrying the refusal if that is what it is.
   def handle_async(:connect, {:ok, response}, socket) do
     {:noreply,
      result(
-       assign(socket, busy: false),
+       assign(socket, busy: false, pending: nil, credential_form: Form.new(:credential)),
        response,
        fn s, %User{} = user -> connected(s, user, s.assigns.agent, s.assigns.kind) end,
        :credential_form
@@ -397,7 +436,9 @@ defmodule RavixWeb.Live.AgentPanel do
   def handle_async(:link_status, _other, socket), do: {:noreply, socket}
 
   def handle_async(:begin_link, {:ok, {:ok, %Inference.Link{} = link}}, socket),
-    do: {:noreply, socket |> assign(busy: false, link_conflict: nil) |> show_link(link)}
+    do:
+      {:noreply,
+       socket |> assign(busy: false, pending: nil, link_conflict: nil) |> show_link(link)}
 
   # Whatever the refusal was, the conflict the page was holding is spent: the
   # context has just read the account again and this is what it says now.
@@ -406,6 +447,7 @@ defmodule RavixWeb.Live.AgentPanel do
       {:noreply,
        assign(socket,
          busy: false,
+         pending: nil,
          link_conflict: nil,
          link_error: RavixWeb.Error.from(reason).message
        )}
@@ -503,7 +545,7 @@ defmodule RavixWeb.Live.AgentPanel do
   end
 
   def handle_async(_name, {:exit, reason}, socket),
-    do: {:noreply, socket |> assign(busy: false) |> exit(reason)}
+    do: {:noreply, socket |> assign(busy: false, pending: nil) |> exit(reason)}
 
   # The person changed. The panel shows what they now have, and the page is
   # told, since it is the page that holds them.
@@ -620,6 +662,38 @@ defmodule RavixWeb.Live.AgentPanel do
   defp conflict_action(:reconnect), do: "Reconnect it"
   defp conflict_action(:remove), do: "Remove the old connection and try again"
 
+  # What an empty submit is told, for the thing this field takes (RAV-134).
+  defp empty_message(:claude, :subscription),
+    do: "Paste the token from claude setup-token first."
+
+  defp empty_message(_agent, :api_key), do: "Paste your API key first."
+  defp empty_message(_agent, _kind), do: "Paste the token or key first."
+
+  # The field's state, as the browser-side hook reads it: an attempt under
+  # way, one refused, or neither. Only the change back to `idle` clears what
+  # the person pasted.
+  defp credential_state(%{pending: :connect}), do: "connecting"
+
+  defp credential_state(%{credential_form: form}),
+    do: if(form[:value].errors == [], do: "idle", else: "refused")
+
+  defp credential_errors(form), do: for({message, _opts} <- form[:value].errors, do: message)
+
+  @doc """
+  The `phx-remove` for the connect step leaving the page: it folds up rather
+  than vanishing, so what is under it moves with it instead of jumping
+  (RAV-135). The stylesheet runs the fold, and none under
+  prefers-reduced-motion. The new-project form uses it on the wrapper it
+  removes, since a removed element's descendants run no `phx-remove` of
+  their own.
+  """
+  def collapse,
+    do:
+      JS.hide(
+        transition: {"agent-collapse", "agent-collapse-from", "agent-collapse-to"},
+        time: 220
+      )
+
   defp replace_hint(agent, kind) do
     if Inference.pasted?(agent, kind),
       do: "Paste a new one to replace it",
@@ -721,7 +795,7 @@ defmodule RavixWeb.Live.AgentPanel do
 
       <.thread_default :if={not @compact} {thread_default_assigns(assigns)} />
       <.disconnect_confirmation :if={@disconnect_confirmation} {confirmation_assigns(assigns)} />
-      <.loading_status :if={@busy}>Updating agent connection…</.loading_status>
+      <.loading_status :if={@busy and is_nil(@pending)}>Updating agent connection…</.loading_status>
 
       <div
         :if={not @compact and is_nil(@scoped_agent)}
@@ -787,9 +861,17 @@ defmodule RavixWeb.Live.AgentPanel do
 
       <.held :if={not @compact} {held_assigns(assigns)} />
 
-      <div :if={@agent && (not @compact or @connecting)} class="agent-credential">
-        <.kinds :if={not @compact} agent={@agent} kind={@kind} busy={@busy} myself={@myself} />
-        <.credential {credential_assigns(assigns)} />
+      <div
+        :if={@agent && (not @compact or @connecting)}
+        class="agent-connect"
+        id="agent-connect"
+        phx-remove={collapse()}
+      >
+        <div class="agent-credential" role="group" aria-labelledby="agent-connect-title">
+          <p class="agent-connect-title" id="agent-connect-title">Connect {agent_name(@agent)}</p>
+          <.kinds :if={not @compact} agent={@agent} kind={@kind} busy={@busy} myself={@myself} />
+          <.credential {credential_assigns(assigns)} />
+        </div>
       </div>
 
       <div
@@ -848,6 +930,7 @@ defmodule RavixWeb.Live.AgentPanel do
         :linking,
         :credential_form,
         :busy,
+        :pending,
         :myself
       ])
 
@@ -898,7 +981,7 @@ defmodule RavixWeb.Live.AgentPanel do
         class="primary"
         phx-click="confirm-disconnect"
         phx-target={@myself}
-        phx-mounted={Phoenix.LiveView.JS.focus()}
+        phx-mounted={JS.focus()}
       >Remove connection</button>
       <button type="button" phx-click="cancel-disconnect" phx-target={@myself}>Cancel</button>
     </div>
@@ -1227,47 +1310,101 @@ defmodule RavixWeb.Live.AgentPanel do
           </button>
         </div>
       </div>
-      <div :if={is_nil(@link) && @linking != false} class="workspace-actions">
-        <button
+      <div :if={is_nil(@link) && @linking != false} class="agent-connect-actions">
+        <.busy_button
+          id="chatgpt-connect"
           type="button"
-          class="primary"
           phx-click="begin-link"
           phx-target={@myself}
           disabled={@busy}
-          id="chatgpt-connect"
+          busy={@pending == :begin_link}
+          busy_label="Asking ChatGPT…"
         >
-          {if @busy, do: "Asking ChatGPT…", else: "Connect ChatGPT"}
-        </button>
+          Connect ChatGPT
+        </.busy_button>
       </div>
       <p class="hint">
         Credentials stay encrypted with the agent service and are never shown — not to you, not to teammates, and not on this page. Disconnecting Ravix does not sign you out of ChatGPT.
       </p>
     </div>
 
+    <%!-- `novalidate`: an empty submit reaches the server and is refused on
+      the field (RAV-134); the browser's own bubble covered the hint and
+      stayed until the next click. The input is `phx-update="ignore"` so the
+      paste survives every patch until the attempt is over; the hook applies
+      what the server says about it from its data attributes. --%>
     <.form
-      :let={f}
       :if={Inference.pasted?(@agent, @kind)}
       for={@credential_form}
       id="credential-form"
       phx-submit="connect"
       phx-target={@myself}
       autocomplete="off"
+      novalidate
     >
-      <.input
-        field={f[:value]}
-        id="credential-value"
-        type="password"
-        label={if @kind == :subscription, do: "Subscription token", else: "API key"}
-        autocomplete="off"
-        required
-      />
-      <p class="hint">
-        Stored encrypted with the agent service. Never displayed or shared with teammates.
-      </p>
-      <button class="primary" disabled={@busy} phx-disable-with="Connecting…">
-        Connect {agent_name(@agent)}
-      </button>
+      <div class="field">
+        <label for="credential-value">
+          {if @kind == :subscription, do: "Subscription token", else: "API key"}
+        </label>
+        <input
+          type="password"
+          name="credential[value]"
+          id="credential-value"
+          autocomplete="off"
+          spellcheck="false"
+          aria-describedby="credential-value-error credential-value-hint"
+          aria-invalid={credential_errors(@credential_form) != [] && "true"}
+          disabled={@busy}
+          phx-update="ignore"
+          phx-hook="CredentialField"
+          data-state={credential_state(assigns)}
+          data-disabled={to_string(@busy)}
+          data-invalid={to_string(credential_errors(@credential_form) != [])}
+        />
+        <div id="credential-value-error" aria-live="polite">
+          <p :for={message <- credential_errors(@credential_form)} class="error fine">{message}</p>
+        </div>
+        <p class="hint" id="credential-value-hint">
+          Stored encrypted with the agent service. Never displayed or shared with teammates.
+        </p>
+      </div>
+      <div class="agent-connect-actions">
+        <span class="sr-only" role="status" id="credential-status">{if @pending == :connect,
+          do: "Connecting #{agent_name(@agent)}…"}</span>
+        <.busy_button
+          id="credential-submit"
+          disabled={@busy}
+          busy={@pending == :connect}
+          busy_label="Connecting…"
+        >
+          Connect {agent_name(@agent)}
+        </.busy_button>
+      </div>
     </.form>
+    """
+  end
+
+  attr :busy, :boolean, required: true
+  attr :busy_label, :string, required: true
+  attr :rest, :global, include: ~w(disabled type)
+  slot :inner_block, required: true
+
+  # A button that shows its own progress in the width it already had: both
+  # labels are drawn in the same cell and one is hidden, so the box never
+  # moves under the pointer that pressed it (RAV-135). The hidden label is
+  # out of the accessible name as well, so the button reads as whichever
+  # label is showing and never both; the sr-only status beside the connect
+  # form is what announces the wait.
+  defp busy_button(assigns) do
+    ~H"""
+    <button class="agent-connect-submit" aria-busy={to_string(@busy)} {@rest}>
+      <span class="agent-connect-label" aria-hidden={to_string(@busy)}>
+        {render_slot(@inner_block)}
+      </span>
+      <span class="agent-connect-busy" aria-hidden={to_string(not @busy)}>
+        <span class="loading-spinner" aria-hidden="true"></span>{@busy_label}
+      </span>
+    </button>
     """
   end
 end

@@ -220,12 +220,14 @@ test.describe.serial('first visit, then the account dialog', () => {
     await capture(page, 'welcome-agent');
 
     // The mock refuses anything containing "invalid", the way Fountain refuses
-    // a token its provider rejects. The refusal lands on the field and the value
-    // is not given back.
+    // a token its provider rejects. The refusal lands on the field; what the
+    // field shows is the browser's own paste, never given back by the server
+    // (RAV-135), so it is not in the page's markup.
     await page.getByLabel('Subscription token', { exact: true }).fill('sk-ant-oat01-invalid');
     await page.getByRole('button', { name: 'Connect Claude Code', exact: true }).click();
     await expect(page.getByText(/Anthropic did not accept that/)).toBeVisible();
-    await expect(page.getByLabel('Subscription token', { exact: true })).toHaveValue('');
+    await expect(page.getByLabel('Subscription token', { exact: true })).toHaveValue('sk-ant-oat01-invalid');
+    expect(await page.content()).not.toContain('sk-ant-oat01-invalid');
     await accessible(page);
 
     await page.getByLabel('Subscription token', { exact: true }).fill('sk-ant-oat01-mock');
