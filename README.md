@@ -454,7 +454,8 @@ command. Shared tracks keep their separate port allocations; dedicated tracks
 run on their own machines.
 
 The track agent helper supports `run` (an alias for `start`), `restart`, `stop`,
-`status`, and `logs`. The MCP catalog does not yet expose preview/run tools.
+`status`, and `logs`. The MCP catalog exposes preview/run configuration, start, restart, stop, status,
+and bounded logs; see [agent tooling](docs/agent-tooling.md#preview-and-run-tools).
 
 Plain run scripts are observed after startup, not automatically relaunched.
 A successful exit becomes stopped; a non-zero exit, provider failure, or
