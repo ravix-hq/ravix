@@ -617,24 +617,29 @@ defmodule Ravix.Accounts.Access do
 
   @doc """
   The projects a live workspace membership admits `user` to, and those
-  workspaces' ids -- none while the switch is off. For a caller listing
-  several projects (`Ravix.Projects.list/2`), which passes the ids back to
-  `access_of/3` as `known: [workspaces: ...]`.
+  workspaces themselves and their ids -- none while the switch is off. For
+  a caller listing several projects (`Ravix.Projects.list/2`), which passes
+  the ids back to `access_of/3` as `known: [workspaces: ...]` and reads each
+  project's name against its workspace (RAV-128) without a read per row.
   """
   @spec workspace_reach(User.t()) :: %{
           projects: [Project.t()],
+          workspaces: [Ravix.Workspaces.Workspace.t()],
           workspace_ids: [String.t()]
         }
   def workspace_reach(%User{id: user_id}) do
     if Ravix.Config.workspace_access?() do
       # ownership: no door before this one -- a live membership is the fourth
       # way in, and these reads are that fact.
+      workspaces = Enum.map(Ravix.Workspaces.Store.workspaces_of(user_id), &elem(&1, 0))
+
       %{
         projects: Ravix.Workspaces.Store.member_projects(user_id),
-        workspace_ids: Enum.map(Ravix.Workspaces.Store.workspaces_of(user_id), &elem(&1, 0).id)
+        workspaces: workspaces,
+        workspace_ids: Enum.map(workspaces, & &1.id)
       }
     else
-      %{projects: [], workspace_ids: []}
+      %{projects: [], workspaces: [], workspace_ids: []}
     end
   end
 

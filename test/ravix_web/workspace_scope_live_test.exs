@@ -15,6 +15,7 @@ defmodule RavixWeb.WorkspaceScopeLiveTest do
 
   alias Ravix.{Accounts, Projects, QueryCount, Repo, Tracks, Workspaces}
   alias Ravix.Fountain.Shapes.Catalog
+  alias Ravix.Tracks.{Header, Track, Transcript}
   alias Ravix.Workspaces.Store
 
   setup do
@@ -574,6 +575,154 @@ defmodule RavixWeb.WorkspaceScopeLiveTest do
     assert switch.() == before
   end
 
+  # RAV-128: a project's name is read against the container it lives in,
+  # and only where the viewer is not already inside it. Home, the
+  # crumbs, the title and quick-jump are scoped to the current workspace;
+  # Schedules spans every workspace the viewer reaches.
+  describe "project names" do
+    # The track page, with the track's own reads stood in for, as
+    # `RavixWeb.TrackLiveTest` does: the crumb is the parent's top bar.
+    defp open_track(conn, project, track) do
+      stub(Tracks, :get, fn _, id, _opts ->
+        row = Repo.get!(Track, id)
+
+        {:ok,
+         %{
+           track: Tracks.present(row, role: :member),
+           header: %Header{
+             copy_of: nil,
+             branched_from: nil,
+             created: %{dir: "t", files: nil},
+             has_setup_script: false
+           },
+           threads: [],
+           starters: [],
+           models: []
+         }}
+      end)
+
+      stub(Tracks, :events, fn _, _, _ -> {:ok, Transcript.empty("claude")} end)
+      stub(Tracks, :follow, fn _, _, _ -> {:ok, self()} end)
+      stub(Tracks, :beat, fn _, _, _ -> :ok end)
+      stub(Tracks, :mark_read, fn _, _, _ -> :ok end)
+
+      {:ok, parent, _} = live(conn, "/p/#{project.id}/t/#{track.id}")
+      render_async(parent, 5_000)
+      child = find_live_child(parent, "track-host")
+      render_async(child, 5_000)
+      render_async(child, 5_000)
+      {parent, child}
+    end
+
+    test "a team workspace's creator and its other members read the same bare name inside it",
+         ctx do
+      mate = insert_user(login: "mate")
+      :ok = Store.add_member(ctx.team.id, mate.id, :member, ctx.me.id)
+      project = ctx.team_project
+      track = ctx.tracks.team
+
+      for user <- [ctx.me, mate] do
+        {:ok, _} = Accounts.put_current_workspace(user, ctx.team.id)
+        conn = log_in_user(build_conn(), user)
+
+        view = open(conn, "/home")
+        assert has_element?(view, "#workspace-switcher-trigger", "Team")
+
+        assert view |> element("#project-link-#{project.id} .project-label") |> render() =~
+                 "TeamApp"
+
+        refute has_element?(view, "#project-link-#{project.id} .project-label .dim")
+
+        view = open(conn, "/p/#{project.id}")
+        assert has_element?(view, ".topbar-crumbs a", "Team")
+        assert has_element?(view, ".topbar-crumbs .project-label", "TeamApp")
+        refute has_element?(view, ".topbar-crumbs .project-label .dim")
+        assert has_element?(view, "#workspace-stage .crumbs .project-label", "TeamApp")
+        refute has_element?(view, "#workspace-stage .crumbs .project-label .dim")
+        assert page_title(view) == "TeamApp · Ravix"
+
+        {parent, _child} = open_track(conn, project, track)
+        assert page_title(parent) == "team-track · TeamApp · Ravix"
+        assert has_element?(parent, ".topbar-crumbs .project-label", "TeamApp")
+        refute has_element?(parent, ".topbar-crumbs .project-label .dim")
+      end
+    end
+
+    test "across workspaces, the workspace names it: Schedules, for everybody", ctx do
+      mate = insert_user(login: "mate")
+      :ok = Store.add_member(ctx.team.id, mate.id, :member, ctx.me.id)
+
+      view = open(ctx.conn, "/schedules")
+      html = view |> element("#schedule-form") |> render()
+      assert html =~ "Team / TeamApp"
+      # The viewer's own legacy project, and one somebody shared, as before.
+      assert html =~ ">Mine<"
+      assert html =~ "friend / Friendly"
+
+      view = open(log_in_user(build_conn(), mate), "/schedules")
+      assert view |> element("#schedule-form") |> render() =~ "Team / TeamApp"
+    end
+
+    test "a legacy project somebody shared still says whose it is, and the viewer's own does not",
+         ctx do
+      {:ok, _} = Accounts.put_current_workspace(ctx.me, ctx.personal.id)
+      view = open(ctx.conn, "/home")
+
+      assert has_element?(view, "#project-link-#{ctx.shared.id} .project-label .dim", "friend /")
+
+      assert view |> element("#project-link-#{ctx.shared.id} .project-label") |> render() =~
+               "Friendly"
+
+      assert view |> element("#project-link-#{ctx.mine.id} .project-label") |> render() =~ "Mine"
+      refute has_element?(view, "#project-link-#{ctx.mine.id} .project-label .dim")
+
+      view = open(ctx.conn, "/p/#{ctx.shared.id}")
+      assert has_element?(view, ".topbar-crumbs .project-label .dim", "friend /")
+      assert has_element?(view, "#workspace-stage .crumbs .project-label .dim", "friend /")
+      assert page_title(view) == "friend / Friendly · Ravix"
+
+      {parent, _child} = open_track(ctx.conn, ctx.shared, ctx.tracks.shared)
+      assert page_title(parent) == "shared-track · friend / Friendly · Ravix"
+      assert has_element?(parent, ".topbar-crumbs .project-label .dim", "friend /")
+    end
+
+    test "quick-jump finds a workspace project by its workspace's name and a legacy one by its owner's",
+         ctx do
+      {:ok, _} = Workspaces.rename(ctx.me, ctx.team.id, "Orbit")
+      {:ok, _} = Accounts.put_current_workspace(ctx.me, ctx.team.id)
+      view = open(ctx.conn, "/inbox")
+
+      search(view, "orbit")
+      assert has_element?(view, "#search-project-link-#{ctx.team_project.id}")
+      assert has_element?(view, "#search-track-link-#{ctx.tracks.team.id}")
+      # Drawn as Home draws it: inside the workspace, bare.
+      assert has_element?(
+               view,
+               "#search-project-link-#{ctx.team_project.id} .search-label",
+               "TeamApp"
+             )
+
+      refute view
+             |> element("#search-project-link-#{ctx.team_project.id} .search-label")
+             |> render() =~ "Orbit /"
+
+      render_click(view, "dismiss-switcher", %{})
+
+      {:ok, _} = Accounts.put_current_workspace(Repo.reload!(ctx.me), ctx.personal.id)
+      view = open(ctx.conn, "/inbox")
+      search(view, "friend")
+
+      assert has_element?(
+               view,
+               "#search-project-link-#{ctx.shared.id} .search-label",
+               "friend / Friendly"
+             )
+
+      assert has_element?(view, "#search-track-link-#{ctx.tracks.shared.id}")
+      refute has_element?(view, "#search-project-link-#{ctx.mine.id}")
+    end
+  end
+
   describe "with RAVIX_WORKSPACE_ACCESS off" do
     setup do
       Application.put_env(:ravix, :workspace_access, false)
@@ -592,6 +741,11 @@ defmodule RavixWeb.WorkspaceScopeLiveTest do
       assert has_element?(view, "#home-project-#{ctx.mine.id}")
       assert has_element?(view, "#home-project-#{ctx.shared.id}")
       assert has_element?(view, "#home-project-#{ctx.team_project.id}")
+
+      # The workspace does not count yet, so its project is labelled the
+      # legacy way (RAV-128): the owner's, bare; a share, the owner's login.
+      refute has_element?(view, "#project-link-#{ctx.team_project.id} .project-label .dim")
+      assert has_element?(view, "#project-link-#{ctx.shared.id} .project-label .dim", "friend /")
 
       assert {:error, :not_found} = Workspaces.current(ctx.me)
       assert {:error, :not_found} = Accounts.put_current_workspace(ctx.me, ctx.personal.id)

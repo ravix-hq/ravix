@@ -554,7 +554,14 @@ defmodule RavixWeb.Live.WorkspaceSettings do
             <h2 id="members-heading">Members</h2>
             <ul id="workspace-members" class="workspace-people">
               <li :for={member <- @members} id={"member-#{member.user.id}"}>
-                <img :if={member.user.avatar_url} src={member.user.avatar_url} alt="" class="avatar" />
+                <img
+                  :if={member.user.avatar_url}
+                  src={member.user.avatar_url}
+                  alt=""
+                  class="avatar"
+                  width="24"
+                  height="24"
+                />
                 <span class="truncate">@{member.user.login}</span>
                 <small :if={member.user.id == @current_user.id}>you</small>
                 <span class="spacer"></span>

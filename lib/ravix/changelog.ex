@@ -2,6 +2,24 @@ defmodule Ravix.Changelog do
   @moduledoc "Curated user-facing changes shipped with Ravix."
   @entries [
     %{
+      id: "2026-10-01-section-create",
+      date: ~D[2026-10-01],
+      kind: :fixed,
+      title: "Creating a section clears the field",
+      body:
+        "After you create a sidebar section, the New section field empties and keeps the focus for the next name, the new section is pointed out, and a name you already use is explained under the field instead of in a toast.",
+      action: nil
+    },
+    %{
+      id: "2026-10-01-connect-step",
+      date: ~D[2026-10-01],
+      kind: :fixed,
+      title: "A steadier agent connection step",
+      body:
+        "Connecting Claude Code or Codex is now its own card, in Add a repository as everywhere else. An empty token is refused in words beside the field, the button shows its progress without moving, and a token you pasted stays in the field until the answer comes.",
+      action: nil
+    },
+    %{
       id: "2026-09-30-effort-and-fast",
       date: ~D[2026-09-30],
       kind: :new,
@@ -98,7 +116,10 @@ defmodule Ravix.Changelog do
     do: Enum.filter(@entries, &(DateTime.compare(at(&1), seen) == :gt))
 
   def newest([]), do: nil
-  def newest(entries), do: Enum.max_by(entries, & &1.date)
+  # By the calendar, not by term order: a Date struct compared as a map sorts
+  # on the day of the month first, so the 1st of a month would lose to the
+  # 30th before it, leaving that newest entry unseen after an acknowledgement.
+  def newest(entries), do: Enum.max_by(entries, & &1.date, Date)
 
   @doc """
   The moment an entry counts as shipped, in the precision the column holds.

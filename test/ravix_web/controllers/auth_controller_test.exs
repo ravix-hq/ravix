@@ -277,6 +277,8 @@ defmodule RavixWeb.AuthControllerTest do
              project_view: %{
                name: "acme",
                display_name: "ana / acme",
+               container: "ana",
+               container_id: nil,
                owner_login: "ana",
                role: :member
              },
@@ -316,6 +318,8 @@ defmodule RavixWeb.AuthControllerTest do
              project_view: %{
                name: "acme",
                display_name: "ana / acme",
+               container: "ana",
+               container_id: nil,
                owner_login: "ana",
                role: :member
              },

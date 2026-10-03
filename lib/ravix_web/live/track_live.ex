@@ -33,6 +33,14 @@ defmodule RavixWeb.TrackLive do
   # four times a minute. `RavixWeb.Live.Guard` keeps its own fifteen because
   # what it backstops is somebody's access being revoked.
   @refresh_ms 60_000
+  # How long the finished setup card stays whole, its last step checked,
+  # before folding to its one line (RAV-132).
+  @setup_card_collapse_ms 1_500
+  # How long that one line stays before the card goes for good.
+  @setup_card_remove_ms 6_000
+  # How long the first prompt may wait on nothing but the queue before the
+  # page says so and offers to send it again (RAV-131).
+  @queue_stale_ms 20_000
 
   # How long the page lets transcript events pile up before it draws them.
   #
@@ -217,7 +225,23 @@ defmodule RavixWeb.TrackLive do
         # (`Ravix.Terminal.status/3`), with the sleep the row recorded when it
         # answered, or nil before it does. See `probed/2`.
         machine_probe: nil,
-        setup_now: DateTime.utc_now()
+        # The `{track_id, thread_id}` this page last woke on open, so that a
+        # refresh or a patch does not wake it again. See `wake_on_open/1`.
+        open_wake: nil,
+        setup_now: DateTime.utc_now(),
+        # The setup card past setup itself (RAV-132): nil, `:setup`,
+        # `:handoff`, `:finished` or `:collapsed`; whether this page saw
+        # setup in progress at all, and whether it saw a first prompt handed
+        # over. See `assign_setup_card/1`.
+        setup_card: nil,
+        setup_seen?: false,
+        setup_handed?: false,
+        setup_handoff: nil,
+        # The first queued prompt's wait while the agent is idle (RAV-131):
+        # `%{id:, since:, timer:}` once the queue is all it waits on, and
+        # whether that wait has grown long. See `watch_queue_wait/1`.
+        queue_wait: nil,
+        queue_stale?: false
       )
 
     if authorized?(socket) do
@@ -234,6 +258,7 @@ defmodule RavixWeb.TrackLive do
         |> attach_hook(:track_event_access, :handle_event, fn _, _, s -> guard(s) end)
         |> attach_hook(:track_message_access, :handle_info, &guard(&2, &1))
         |> attach_hook(:track_async_access, :handle_async, fn _, _, s -> guard(s) end)
+        |> rejoined()
 
       if connected?(socket) do
         Hub.subscribe(socket.assigns.project_id)
@@ -628,8 +653,11 @@ defmodule RavixWeb.TrackLive do
   def handle_event("queue", %{"action" => "cancel", "id" => id}, socket),
     do: {:noreply, queued(socket, &PromptQueue.cancel/3, id)}
 
+  # A refused prompt sent again, or a waiting one nudged (RAV-131): either
+  # way the wait starts over, so the long-wait hint goes until it has earned
+  # itself again.
   def handle_event("queue", %{"action" => "retry", "id" => id}, socket),
-    do: {:noreply, queued(socket, &PromptQueue.retry/3, id)}
+    do: {:noreply, queued(socket, &PromptQueue.retry/3, id, &reset_queue_wait/1)}
 
   # RAV-94: Edit is Cancel, then the words back in the box to change and send
   # again. Only a waiting, text-only prompt this page is showing; the cancel
@@ -1063,6 +1091,45 @@ defmodule RavixWeb.TrackLive do
 
   def handle_info(:refresh_plan_items, socket), do: {:noreply, refresh_plan_items(socket)}
 
+  # The finished card has been read; fold it to its one line (RAV-132).
+  # Nothing is read for it, so no guard: a page that lost the track meanwhile
+  # has been redirected by the hub or the next async result.
+  def handle_info(:collapse_setup_card, socket) do
+    if socket.assigns.setup_card == :finished do
+      Process.send_after(self(), :remove_setup_card, @setup_card_remove_ms)
+      {:noreply, assign(socket, setup_card: :collapsed)}
+    else
+      {:noreply, socket}
+    end
+  end
+
+  # The folded line has been read: the card goes, and stays gone for this
+  # page (`setup_card/1`), so the composer's column is the conversation's.
+  def handle_info(:remove_setup_card, socket) do
+    if socket.assigns.setup_card == :collapsed,
+      do: {:noreply, assign(socket, setup_card: :gone)},
+      else: {:noreply, socket}
+  end
+
+  # The first prompt has waited on nothing but the queue for a while now
+  # (RAV-131): say so, and offer to send it again. Local state only.
+  def handle_info(:queue_wait_check, socket) do
+    case socket.assigns.queue_wait do
+      %{since: since} ->
+        elapsed = System.monotonic_time(:millisecond) - since
+
+        if elapsed >= @queue_stale_ms do
+          {:noreply, assign(socket, queue_stale?: true)}
+        else
+          timer = Process.send_after(self(), :queue_wait_check, @queue_stale_ms - elapsed)
+          {:noreply, update(socket, :queue_wait, &%{&1 | timer: timer})}
+        end
+
+      nil ->
+        {:noreply, socket}
+    end
+  end
+
   def handle_info(:refresh, socket) do
     Process.send_after(self(), :refresh, @refresh_ms)
 
@@ -1211,6 +1278,7 @@ defmodule RavixWeb.TrackLive do
     |> keep_shown_thread()
     |> assign_turn()
     |> billing_notice(detail.track)
+    |> wake_on_open()
     # This render is the one that puts `#transcript-turns` on the page, and a
     # stream's pending inserts are consumed by whichever render comes next
     # whether or not that render contains the container. So a transcript that
@@ -1382,14 +1450,39 @@ defmodule RavixWeb.TrackLive do
       else: cache_result(tab, response, socket)
   end
 
+  @not_in_snapshot "This was not in the snapshot taken when the machine went to sleep."
+
+  # A file or a folder the snapshot does not hold, picked from a snapshot
+  # listing: the listing stays, and only the pick says it needs the machine.
+  defp async_result(:file, {:ok, {:error, :machine_asleep}}, socket)
+       when is_struct(socket.assigns.panel.data, Files.Listing) and
+              socket.assigns.panel.data.snapshot_at != nil,
+       do:
+         update_panel(
+           socket,
+           &Panel.failed(&1, @not_in_snapshot <> " Wake it to read this file.")
+         )
+
   defp async_result(name, {:ok, {:error, :machine_asleep}}, socket)
        when name in [:panel, :file],
        do: asleep_panel(socket)
 
   defp async_result({:directory, path, token}, {:ok, {:error, :machine_asleep}}, socket) do
-    if socket.assigns.panel.directories[path] == {:loading, token},
-      do: asleep_panel(socket),
-      else: socket
+    cond do
+      socket.assigns.panel.directories[path] != {:loading, token} ->
+        socket
+
+      snapshot_at(socket.assigns.panel.data) ->
+        message = @not_in_snapshot <> " Wake it to open this folder."
+
+        update_panel(
+          socket,
+          &%{&1 | directories: Map.put(&1.directories, path, {:error, message})}
+        )
+
+      true ->
+        asleep_panel(socket)
+    end
   end
 
   # The open file lands in the panel beside whatever the tab is listing, so
@@ -1494,6 +1587,27 @@ defmodule RavixWeb.TrackLive do
       result(settle(socket, :wake), response, fn s, _ ->
         s |> refresh_detail() |> reload_panel()
       end)
+
+  # The wake on open, for the track and thread still shown. Woken is what the
+  # Wake button's answer is, minus re-reading a tab that was not refused; an
+  # already awake machine changes nothing, unless the chip said Asleep. A
+  # refusal or a crash says nothing: nobody pressed anything, and Wake and
+  # send still give the reason.
+  defp async_result(
+         {:open_wake, track_id, thread_id},
+         {:ok, {:ok, state}},
+         %{assigns: %{track_id: track_id, thread_id: thread_id}} = socket
+       )
+       when state in [:awake, :waking] do
+    socket =
+      if state == :waking or match?(%{machine: %{state: :asleep}}, socket.assigns.turn),
+        do: refresh_detail(socket),
+        else: socket
+
+    reread_refused(socket, %{available: true})
+  end
+
+  defp async_result({:open_wake, _track_id, _thread_id}, _response, socket), do: socket
 
   # The hub event `set_model/4` publishes refreshes every page on the track,
   # this one included; the refresh here is so this page does not wait on it.
@@ -1913,6 +2027,42 @@ defmodule RavixWeb.TrackLive do
   # is no route that renders this LiveView on its own today --- says nothing.
   defp announce(%{parent_pid: pid}) when is_pid(pid), do: send(pid, {:track_host, self()})
   defp announce(_socket), do: :ok
+
+  # RAV-141: somebody opening a track is about to type into it, so the shown
+  # thread is woken in the background once the page has read it, without
+  # waiting for the answer. Once per open: a mount, a switch of track or of
+  # thread. The refresh tick and the reads after a Wake or a retry are the
+  # same track and thread, and wake nothing again. `Tracks.wake_on_open/3`
+  # holds the access check and every other reason not to.
+  defp wake_on_open(%{assigns: %{open_wake: key}} = socket)
+       when key == {socket.assigns.track_id, socket.assigns.thread_id},
+       do: socket
+
+  defp wake_on_open(socket) do
+    %{current_user: user, track_id: track_id, thread_id: thread_id} = socket.assigns
+    rejoined? = socket.assigns.open_wake == {:rejoined, track_id}
+    socket = assign(socket, open_wake: {track_id, thread_id})
+
+    if rejoined?,
+      do: socket,
+      else:
+        traced_async(socket, {:open_wake, track_id, thread_id}, fn ->
+          Tracks.wake_on_open(user, track_id, thread_id)
+        end)
+  end
+
+  # A LiveView that reconnects mounts again, and its client counts the joins
+  # (`_mounts`): the first read after a rejoin is the track already open, not
+  # an open. A second thread or track after it is.
+  defp rejoined(socket) do
+    case connected?(socket) && get_connect_params(socket) do
+      %{"_mounts" => mounts} when is_integer(mounts) and mounts > 0 ->
+        assign(socket, open_wake: {:rejoined, socket.assigns.track_id})
+
+      _ ->
+        socket
+    end
+  end
 
   # Hand this page over to another track, keeping only what belongs to the
   # person looking at it: the session, the guard's hash and expiry, the upload
@@ -2945,7 +3095,12 @@ defmodule RavixWeb.TrackLive do
   # makes Asleep too, rather than only the pane that asked saying so under
   # an Idle chip. A working turn outranks such a refusal: the machine is
   # awake for it, and the pane reads again (`after_turn/2`).
-  defp assign_turn(socket), do: assign(socket, turn: turn(socket.assigns))
+  defp assign_turn(socket),
+    do:
+      socket
+      |> assign(turn: turn(socket.assigns))
+      |> assign_setup_card()
+      |> watch_queue_wait()
 
   defp turn(%{threads: threads, thread_states: states, thread_id: thread_id, track: track} = a) do
     labels = Map.new(threads, &{&1.id, thread_status(&1, states)})
@@ -3060,15 +3215,17 @@ defmodule RavixWeb.TrackLive do
   end
 
   # Fountain's diff answered but the sprite was asleep, so files Git is not
-  # tracking yet could not be listed: "No changes" would be a guess.
+  # tracking yet could not be listed: "No changes" would be a guess. From a
+  # snapshot the bar above already says asleep; what is left to say is where
+  # those files are.
   defp panel_body(%{data: %Diff{diff: "", untracked: :asleep}} = assigns) do
     ~H"""
     <.empty
       pane
       id="changes-empty"
-      icon="moon"
+      icon={if @data.snapshot_at, do: "branch", else: "moon"}
       title="No tracked changes"
-      because="The machine is asleep, so new files Git is not tracking yet cannot be listed."
+      because={untracked_asleep(@data)}
     />
     """
   end
@@ -3112,7 +3269,7 @@ defmodule RavixWeb.TrackLive do
       </p>
       <p :if={@data.truncated} class="changes-note">Diff is truncated.</p>
       <p :if={@data.untracked == :asleep} id="changes-untracked-asleep" class="changes-note">
-        The machine is asleep, so new files Git is not tracking yet are not listed.
+        {untracked_asleep(@data)}
       </p>
       <div :if={!@selected}>
         <form id="diff-filter-form" phx-change="filter-diff" phx-submit="filter-diff">
@@ -3248,6 +3405,55 @@ defmodule RavixWeb.TrackLive do
     </.empty>
     """
   end
+
+  attr :at, DateTime, required: true
+  attr :zone, :string, default: nil
+  attr :tab, :atom, required: true
+  attr :can_wake, :boolean, required: true, doc: "Write access (ADR 0010)"
+  attr :waking, :boolean, default: false
+
+  # Files or Changes from the snapshot Fountain took as the machine parked:
+  # what it held then, said with when, and the Wake that brings the live tab
+  # back. Above the tab rather than in place of it, which is the whole point
+  # of the snapshot. A Read member gets the words and no button, as `asleep/1`.
+  defp snapshot_note(assigns) do
+    ~H"""
+    <p id="panel-snapshot" class="panel-snapshot" role="status">
+      <.icon name="moon" size={14} />
+      <span>
+        Asleep. Showing {if @tab == :changes, do: "changes", else: "files"} as of
+        <.local_time id="panel-snapshot-at" at={@at} zone={@zone} title_prefix="Snapshot taken " />.
+      </span>
+      <button
+        :if={@can_wake}
+        id="panel-snapshot-wake"
+        type="button"
+        class="ghost"
+        phx-click="wake"
+        disabled={@waking}
+      >
+        {cond do
+          @waking -> "Waking…"
+          @tab == :changes -> "Wake for live changes"
+          true -> "Wake for live files"
+        end}
+      </button>
+    </p>
+    """
+  end
+
+  defp untracked_asleep(%Diff{snapshot_at: nil}),
+    do: "The machine is asleep, so new files Git is not tracking yet are not listed."
+
+  defp untracked_asleep(%Diff{}),
+    do:
+      "New files Git is not tracking yet are not in this diff. Files shows them as of the snapshot."
+
+  # When what the panel is holding was answered from the parked machine's
+  # snapshot rather than by the machine.
+  defp snapshot_at(%Files.Listing{snapshot_at: at}), do: at
+  defp snapshot_at(%Diff{snapshot_at: at}), do: at
+  defp snapshot_at(_data), do: nil
 
   attr :git, :map,
     default: nil,
@@ -3436,8 +3642,13 @@ defmodule RavixWeb.TrackLive do
   # step under way is the machine's stage where it reports one (a dedicated
   # machine does) and otherwise follows `setup_state`. Each step is `:done`,
   # `:now`, `:failed` or `:todo`.
+  #
+  # `handoff` is the last step's own state once setup is ready (RAV-132):
+  # `:now` while the first prompt is being handed over, `:done` once its turn
+  # has started, `:skipped` when there was none to hand, `:failed` when it
+  # needs a person; nil leaves it to the sequence, as before.
   @doc false
-  def setup_steps(track, project) do
+  def setup_steps(track, project, handoff \\ nil) do
     current = setup_step_now(track.sandbox_stage, track.setup_state)
     failed = track.setup_state == "failed"
 
@@ -3445,9 +3656,174 @@ defmodule RavixWeb.TrackLive do
     |> setup_step_labels(project && project.repo)
     |> Enum.with_index()
     |> Enum.map(fn {{key, label}, index} ->
-      %{key: key, label: label, state: setup_step_state(index, current, failed)}
+      state =
+        if key == :agent and handoff,
+          do: handoff,
+          else: setup_step_state(index, current, failed)
+
+      %{key: key, label: label, state: state}
     end)
   end
+
+  # RAV-132: the setup card stays until its last step is really done. Setup
+  # reporting ready is three steps of four; the fourth is the first prompt
+  # reaching the agent, which the queue does afterwards and which used to
+  # take the card away with it. So the card is `:setup` while setup runs,
+  # `:handoff` while a first prompt waits to go or is going, `:finished`
+  # once its turn has started (or there was none to hand), `:collapsed`
+  # -- one line, "Setup finished · 42s" -- a moment later, and `:gone` a
+  # few seconds after that: nothing drawn, and nothing drawn again for this
+  # page unless setup itself runs again. Once finished the card does not
+  # reopen for a prompt queued later: its last step was the first prompt
+  # *during* setup, and a later one has the queue's own dot and words. A
+  # page opened on a track that was ready before it looked draws nothing
+  # at any point: there was no setup to watch. The card sits in the
+  # conversation column's flow above the composer, which the scroller's
+  # own growth absorbs, so the composer does not move when it goes.
+  defp assign_setup_card(%{assigns: %{track: nil}} = socket), do: socket
+
+  defp assign_setup_card(socket) do
+    was = socket.assigns.setup_card
+    card = setup_card(socket.assigns)
+
+    if card == :finished and was != :finished,
+      do: Process.send_after(self(), :collapse_setup_card, @setup_card_collapse_ms)
+
+    handed? = socket.assigns.setup_handed? or card == :handoff
+
+    assign(socket,
+      setup_card: card,
+      setup_seen?: socket.assigns.setup_seen? or card in [:setup, :handoff],
+      setup_handed?: handed?,
+      setup_handoff: handoff_step(card, socket.assigns.queue, handed?)
+    )
+  end
+
+  defp setup_card(%{track: track} = a) do
+    cond do
+      track.setup_state != "ready" -> :setup
+      not a.setup_seen? -> nil
+      a.setup_card in [:finished, :collapsed, :gone] -> a.setup_card
+      handoff_pending?(a) -> :handoff
+      not a.transcript_loading -> :finished
+      true -> nil
+    end
+  end
+
+  # A first prompt waiting to go, going, or needing a person, on a track
+  # whose transcript has been read and shows no turn of anybody's yet.
+  defp handoff_pending?(a) do
+    not a.transcript_loading and not first_turn?(a) and
+      match?(
+        %{status: status} when status in [:queued, :sending, :failed, :unconfirmed],
+        List.first(a.queue)
+      )
+  end
+
+  # The opening turn is not drawn (`Transcript.visible_turns/1`), so a turn
+  # on the page is somebody's; a thread the stream says is working has one
+  # the page has not drawn yet.
+  defp first_turn?(%{page: page, turn: turn}),
+    do: Transcript.visible_turns(page) != [] or turn.working?
+
+  defp handoff_step(:handoff, queue, _handed?) do
+    case List.first(queue) do
+      %{status: status} when status in [:failed, :unconfirmed] -> :failed
+      _ -> :now
+    end
+  end
+
+  defp handoff_step(card, _queue, handed?) when card in [:finished, :collapsed],
+    do: if(handed?, do: :done, else: :skipped)
+
+  defp handoff_step(_card, _queue, _handed?), do: nil
+
+  # The card's heading in each state; `:collapsed` is the whole line.
+  defp setup_heading(:setup, track, now, _queue), do: setup_label(track, now)
+
+  defp setup_heading(:handoff, _track, _now, queue) do
+    case List.first(queue) do
+      %{status: status} when status in [:failed, :unconfirmed] ->
+        "Your first prompt needs attention"
+
+      _ ->
+        "Starting your first turn…"
+    end
+  end
+
+  defp setup_heading(_card, _track, _now, _queue), do: "Setup finished"
+
+  # How long setup took, from the track's creation to its opening turn
+  # verified, as "42s" or "1m 12s"; nil where the row cannot say.
+  @doc false
+  def setup_duration(%{created_at: %DateTime{} = from, opened_at: %DateTime{} = to}) do
+    case DateTime.diff(to, from) do
+      seconds when seconds < 0 -> nil
+      seconds when seconds < 60 -> "#{seconds}s"
+      seconds when rem(seconds, 60) == 0 -> "#{div(seconds, 60)}m"
+      seconds -> "#{div(seconds, 60)}m #{rem(seconds, 60)}s"
+    end
+  end
+
+  def setup_duration(_track), do: nil
+
+  # RAV-131: a queued prompt's label gets a pulsing dot while it is alive
+  # (the Starting chip's, `.dot.queued`; `.dot.working` once it is going),
+  # and once the first prompt has waited `@queue_stale_ms` on nothing but
+  # the queue -- setup ready, the machine too, no turn running -- the page
+  # says what it waits for and offers Retry. The wait is this page's clock,
+  # started when the head first meets those conditions and dropped the
+  # moment it stops meeting them, so a prompt behind a running turn never
+  # reads as stuck.
+  defp watch_queue_wait(%{assigns: %{track: nil}} = socket), do: socket
+
+  defp watch_queue_wait(socket) do
+    a = socket.assigns
+    head = List.first(a.queue)
+
+    cond do
+      not queue_waiting?(a, head) ->
+        reset_queue_wait(socket)
+
+      match?(%{id: id} when id == head.id, a.queue_wait) ->
+        socket
+
+      true ->
+        socket = reset_queue_wait(socket)
+        timer = Process.send_after(self(), :queue_wait_check, @queue_stale_ms)
+        since = System.monotonic_time(:millisecond)
+        assign(socket, queue_wait: %{id: head.id, since: since, timer: timer})
+    end
+  end
+
+  defp reset_queue_wait(socket) do
+    case socket.assigns.queue_wait do
+      %{timer: timer} -> Process.cancel_timer(timer)
+      nil -> :ok
+    end
+
+    assign(socket, queue_wait: nil, queue_stale?: false)
+  end
+
+  defp queue_waiting?(%{track: track, turn: turn}, head) do
+    match?(%PromptQueue.View{status: :queued}, head) and track.setup_state == "ready" and
+      machine_ready?(track) and not turn.working?
+  end
+
+  defp machine_ready?(%{sandbox_layout: :dedicated, sandbox_state: state}), do: state == :ready
+  defp machine_ready?(_track), do: true
+
+  # The long wait, said under the one item it is about, unless the item
+  # already carries a line of its own (`queue_feedback/2`).
+  defp queue_stale_feedback(item, runtime, wait, stale?) do
+    if stale? and match?(%{id: id} when id == item.id, wait) and
+         is_nil(queue_feedback(item, runtime)),
+       do: item.wait_reason || "Still waiting for the agent to take this prompt.",
+       else: nil
+  end
+
+  defp queue_dot(:queued), do: "queued"
+  defp queue_dot(:sending), do: "working"
 
   defp setup_step_labels(track, repo) do
     machine =
@@ -3522,7 +3898,12 @@ defmodule RavixWeb.TrackLive do
   # the chip there once the machine answers.
   defp reread_refused(socket, %{available: true}) do
     socket
-    |> then(&if(&1.assigns.panel.data == :machine_asleep, do: reload_panel(&1), else: &1))
+    |> then(
+      &if(&1.assigns.panel.data == :machine_asleep or snapshot_at(&1.assigns.panel.data),
+        do: reload_panel(&1),
+        else: &1
+      )
+    )
     |> then(&if(match?(%{asleep?: true}, &1.assigns.git), do: load_git(&1), else: &1))
   end
 
@@ -3672,7 +4053,14 @@ defmodule RavixWeb.TrackLive do
         aria-hidden="true"
         title={"@" <> viewer.login}
       >
-        <img :if={Map.get(viewer, :avatar_url)} src={viewer.avatar_url} alt="" loading="lazy" />
+        <img
+          :if={Map.get(viewer, :avatar_url)}
+          src={viewer.avatar_url}
+          alt=""
+          loading="lazy"
+          width="20"
+          height="20"
+        />
         <span :if={!Map.get(viewer, :avatar_url)}>{viewer.login |> String.first() |> String.upcase()}</span>
       </span>
       <span :if={@more > 0} class="track-viewer track-viewer-more" aria-hidden="true">+{@more}</span>

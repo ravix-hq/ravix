@@ -213,7 +213,7 @@ defmodule RavixWeb.WorkspaceVisibilityLiveTest do
       stub(Tracks, :mark_read, fn _, _, _ -> :ok end)
       test = self()
 
-      stub(Ravix.Terminal, :status, fn _, _, _ ->
+      stub(Ravix.Terminal, :status, fn _, _ ->
         send(test, :probed)
         {:ok, %Ravix.Terminal.Status{available: true, why: nil, cwd: "/"}}
       end)

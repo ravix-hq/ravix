@@ -71,6 +71,7 @@ defmodule Ravix.Tracks do
   alias Ravix.Tracks.{
     Attribution,
     Billing,
+    CredentialRecovery,
     Diff,
     Files,
     Follower,
@@ -1468,18 +1469,37 @@ defmodule Ravix.Tracks do
   Wake the track's machine now, rather than with the next message.
 
   Setup parked on a sleeping shared machine is woken the way `retry/3` wakes
-  it. Anything else is asked whether it is running with a probe that runs a
-  command (`Ravix.Terminal.status/3` without `passive`), which is what wakes
-  a suspended machine; its answer clears the asleep mark
-  (`Ravix.Tracks.Sleep`). Write access, like a message: a Read member
-  (ADR 0010) cannot wake a machine they could not prompt.
+  it. Anything else asks Fountain to wake the track's conversation
+  (`Ravix.Fountain.wake/2`), which resumes the machine without opening a
+  turn and is refused for the reasons a prompt would be, a 404 included.
+  Either answer clears the asleep mark (`Ravix.Tracks.Sleep`) once the
+  machine answers a read, since Fountain's `:waking` comes back while it is
+  still resuming: `:awake` is a machine already up, and `:waking` one
+  Fountain has resumed or is replacing, which no stream event will say
+  again. One that has not answered within the wait is refused as still
+  waking, and stays marked asleep. A track with no conversation yet has
+  nothing to wake and is refused. Write access, like a message: a Read
+  member (ADR 0010) cannot wake a machine they could not prompt.
   """
   @spec wake(User.t(), String.t()) :: :ok | {:error, reason()}
   def wake(%User{} = user, track_id) do
-    with {:ok, %{track: track}} <- Access.track_access(user, track_id, :write) do
-      if track.setup_state == "running" and track.setup_error_code == "sandbox_suspended",
-        do: retry(user, track_id),
-        else: probe_awake(user, track_id)
+    Trace.span("tracks.wake", wake_reason(track_id, :button), fn -> press_wake(user, track_id) end)
+  end
+
+  defp press_wake(user, track_id) do
+    with {:ok, %{track: track, project: project}} <- Access.track_access(user, track_id, :write) do
+      cond do
+        track.setup_state == "running" and track.setup_error_code == "sandbox_suspended" ->
+          retry(user, track_id)
+
+        track.conversation_id in [nil, ""] ->
+          {:error,
+           {:conflict, "no_conversation",
+            "This track has no agent session to wake yet. Send a message to start one."}}
+
+        true ->
+          wake_conversation(track, project)
+      end
     end
   end
 
@@ -1495,20 +1515,192 @@ defmodule Ravix.Tracks do
   def asleep?(%Track{setup_state: "running", setup_error_code: "sandbox_suspended"}), do: true
   def asleep?(%Track{}), do: false
 
-  defp probe_awake(user, track_id) do
-    case Ravix.Terminal.status(user, track_id) do
-      {:ok, %{available: true}} ->
-        :ok
+  @doc """
+  Wake the shown thread's machine because somebody opened it (RAV-141),
+  rather than because they pressed Wake.
 
-      {:ok, _} ->
-        {:error,
-         {:conflict, "machine_not_awake",
-          "This track's machine did not wake. Try again, or send a message."}}
+  Somebody who opens a track is usually about to type into it, so the
+  conversation is asked to wake (`Ravix.Fountain.wake/2`) while they read,
+  and the first prompt does not wait on the machine resuming. Only that
+  thread's conversation: a sibling tab is not what they opened.
 
-      {:error, _} = error ->
-        error
+  The same Write rule as `wake/2` (ADR 0010), checked before Fountain is
+  asked. Nothing is asked, and `{:ok, :skipped}` answered, for a thread with
+  no conversation, a track whose setup has not finished (setup parked on a
+  sleeping machine included: that wake is `retry/3`'s, and an explicit
+  one), a closed track or thread, or a conversation the memo already says
+  has ended or is mid-turn. A refusal is returned as it is, for the caller to
+  keep to itself: nobody asked for this wake, so nobody is told it failed.
+  Either answer clears the asleep mark, as `wake/2`'s does.
+
+  Each open keeps the machine up for Fountain's idle period on the project
+  payer's compute (ADR 0005).
+  """
+  @spec wake_on_open(User.t(), String.t(), String.t() | nil) ::
+          {:ok, :awake | :waking | :skipped} | {:error, reason()}
+  def wake_on_open(%User{} = user, track_id, thread_id) do
+    Trace.span("tracks.wake", wake_reason(track_id, :open), fn ->
+      with {:ok, access} <- Access.thread_access(user, track_id, thread_id, :write),
+           do: open_wake(access)
+    end)
+  end
+
+  defp open_wake(%{track: track, project: project, thread: thread}) do
+    case open_skip(track, thread, project) do
+      nil ->
+        wake_machine(track, project, thread.id, thread.conversation_id)
+
+      why ->
+        Trace.annotate(%{"ravix.wake_skipped" => Atom.to_string(why)})
+        {:ok, :skipped}
     end
   end
+
+  defp wake_reason(track_id, reason),
+    do: %{"ravix.track_id" => track_id, "ravix.wake_reason" => Atom.to_string(reason)}
+
+  defp open_skip(track, thread, project) do
+    cond do
+      thread.conversation_id in [nil, ""] -> :no_conversation
+      track.setup_state != "ready" -> :setup
+      track.closed_at != nil or track.sandbox_state in [:closing, :terminated] -> :closed
+      thread.closed_at != nil -> :closed
+      true -> conversation_skip(conversations_of(project, fresh: false)[thread.conversation_id])
+    end
+  end
+
+  # What the memo `get/3` just read says of the conversation. One it does not
+  # list is asked anyway: Fountain is the authority, and refuses an ended one.
+  defp conversation_skip(nil), do: nil
+
+  defp conversation_skip(conversation) do
+    cond do
+      Fountain.Shapes.ended?(conversation) -> :ended
+      Fountain.Shapes.busy?(conversation) -> :turn_running
+      true -> nil
+    end
+  end
+
+  # The track's own conversation is its main thread's, whose id is the track's.
+  defp wake_conversation(track, project) do
+    with {:ok, _awake_or_waking} <-
+           wake_machine(track, project, track.id, track.conversation_id),
+         do: :ok
+  end
+
+  defp wake_machine(track, project, thread_id, conversation_id) do
+    with {:ok, client} <- fountain(),
+         {:ok, state} <-
+           recover_refused(
+             Fountain.wake(client, conversation_id),
+             client,
+             track,
+             project,
+             thread_id
+           ),
+         :ok <- await_ready(client, track, project, state) do
+      Trace.annotate(%{"ravix.wake_state" => Atom.to_string(state)})
+      # ownership: wake/2 and wake_on_open/3 admitted this track with Write.
+      if asleep?(track), do: Sleep.record(track.id, false)
+      {:ok, state}
+    end
+  end
+
+  # A conversation started on a revision of its payer's credential set that
+  # has since been written to is refused for good (`inference_source_changed`),
+  # so waking it again can only be refused again. A prompt in that state is
+  # carried onto a successor conversation on the same disk
+  # (`Ravix.Tracks.CredentialRecovery`); a wake starts the same successor, and
+  # the successor starting is the wake. A track that recovery does not cover
+  # keeps the refusal.
+  defp recover_refused(
+         {:error, %Fountain.Error{code: "inference_source_changed"}} = refused,
+         client,
+         track,
+         project,
+         thread_id
+       ) do
+    if CredentialRecovery.enabled?(track, project) do
+      Trace.annotate(%{"ravix.wake_recovery" => "true"})
+      # ownership: wake/2 and wake_on_open/3 admitted this thread with Write.
+      CredentialRecovery.reject(track, project, thread_id)
+
+      case CredentialRecovery.prepare(client, track, project, thread_id) do
+        :rebound ->
+          {:ok, :waking}
+
+        _waiting ->
+          {:error,
+           {:conflict, "agent_reconnecting",
+            "Reconnecting this thread's agent. Send a message, or wake it again in a moment."}}
+      end
+    else
+      refused
+    end
+  end
+
+  defp recover_refused(result, _client, _track, _project, _thread_id), do: result
+
+  # Fountain answers `waking` once it has started the conversation's server,
+  # but the machine behind it goes on resuming for tens of seconds: a read in
+  # that time is refused as suspended, or hangs and fails as unreachable
+  # (managoat/fountain#2555). Clearing the asleep mark on the answer alone had
+  # the inspector read straight into that window, show the failure, and mark
+  # the machine asleep again with nothing left to read once it was up. So the
+  # wake answers once a read does: a live listing, not the park's snapshot.
+  # An `awake` answer for a row not marked asleep is a machine already up,
+  # and is not asked again.
+  defp await_ready(_client, %Track{sandbox_suspended_at: nil}, _project, :awake), do: :ok
+
+  defp await_ready(client, track, project, _state) do
+    case machine_of_track(project, track) do
+      {:ok, %{sandbox_id: sandbox_id}} when is_binary(sandbox_id) ->
+        config = Application.get_env(:ravix, :wake_ready, [])
+        deadline = System.monotonic_time(:millisecond) + Keyword.get(config, :timeout_ms, 120_000)
+        poll_ready(client, sandbox_id, deadline, Keyword.get(config, :interval_ms, 2_000))
+
+      _ ->
+        :ok
+    end
+  end
+
+  defp poll_ready(client, sandbox_id, deadline, interval) do
+    case Fountain.listing(client, sandbox_id, ".") do
+      {:ok, %{"snapshot_at" => at}} when is_binary(at) ->
+        poll_again(client, sandbox_id, deadline, interval)
+
+      {:ok, _} ->
+        :ok
+
+      {:error, %Fountain.Error{} = error} ->
+        if still_resuming?(error),
+          do: poll_again(client, sandbox_id, deadline, interval),
+          else: :ok
+
+      {:error, _} ->
+        :ok
+    end
+  end
+
+  defp poll_again(client, sandbox_id, deadline, interval) do
+    if System.monotonic_time(:millisecond) + interval < deadline do
+      Process.sleep(interval)
+      poll_ready(client, sandbox_id, deadline, interval)
+    else
+      Trace.annotate(%{"ravix.wake_ready" => "timeout"})
+
+      {:error,
+       {:unavailable, "machine_waking",
+        "This track's machine is still waking. Try again in a moment, or send a message."}}
+    end
+  end
+
+  # What a resuming machine answers. Anything else is not the wake's to wait
+  # out (a sandbox replaced or gone, a refused path): the wake Fountain
+  # accepted stands, and the reads that follow say what they find.
+  defp still_resuming?(%Fountain.Error{status: 409, code: "sandbox_not_ready"}), do: true
+  defp still_resuming?(%Fountain.Error{status: status}) when status in 502..504, do: true
+  defp still_resuming?(error), do: Fountain.Error.unreachable?(error)
 
   defp send_opening_turn(_client, %Track{conversation_id: nil}, _project, _origin, _mode), do: :ok
 
@@ -2493,7 +2685,7 @@ defmodule Ravix.Tracks do
   @spec git_status(User.t(), String.t()) ::
           {:ok, Git.Status.t()} | {:error, reason() | Ravix.Terminal.reason()}
   def git_status(%User{} = user, track_id) do
-    with {:ok, status} <- Ravix.Terminal.status(user, track_id, passive: true),
+    with {:ok, status} <- Ravix.Terminal.status(user, track_id),
          :ok <- check(status.why != :unreachable, :machine_asleep),
          {:ok, result} <-
            Ravix.Terminal.exec(user, track_id, %{command: Git.status_command(), timeout_sec: 15}) do
@@ -2704,8 +2896,10 @@ defmodule Ravix.Tracks do
 
   @doc """
   One directory, confined to the track's working directory. Reads never wake
-  a parked machine. Shared tracks retain the legacy provider result; dedicated
-  tracks return `{:error, :machine_asleep}` when Fountain reports suspension.
+  a parked machine. A parked machine's directory comes from the snapshot
+  Fountain took as it parked, where that snapshot has it, with `snapshot_at`
+  set; otherwise shared tracks retain the legacy provider result and
+  dedicated tracks return `{:error, :machine_asleep}`.
   """
   @spec files(User.t(), String.t(), String.t() | nil) ::
           {:ok, Files.Listing.t()} | {:error, reason()}
@@ -2773,9 +2967,11 @@ defmodule Ravix.Tracks do
     end
   end
 
+  # A snapshot listing is a parked machine's, so there is nothing to ask.
   defp read_file_metadata(user, track, listing) do
-    with true <- confine(track.workdir, listing.path) == listing.path,
-         {:ok, %{available: true}} <- Ravix.Terminal.status(user, track.id, passive: true) do
+    with nil <- listing.snapshot_at,
+         true <- confine(track.workdir, listing.path) == listing.path,
+         {:ok, %{available: true}} <- Ravix.Terminal.status(user, track.id) do
       metadata =
         Ravix.Terminal.exec(user, track.id, %Ravix.Terminal.Request{
           command: Files.metadata_command(track.workdir, listing),
@@ -2822,10 +3018,14 @@ defmodule Ravix.Tracks do
         diff: diff,
         truncated: raw["truncated"] == true,
         changes: Enum.map(files, & &1.change),
-        files: files
+        files: files,
+        snapshot_at: Files.snapshot_at(raw)
       }
 
-      {:ok, Diff.with_untracked(tracked, read_untracked(user, track))}
+      # A snapshot is Fountain saying the machine is parked, so there is no
+      # machine to ask for the untracked files.
+      untracked = if tracked.snapshot_at, do: :asleep, else: read_untracked(user, track)
+      {:ok, Diff.with_untracked(tracked, untracked)}
     end
   end
 
@@ -2836,7 +3036,7 @@ defmodule Ravix.Tracks do
       Task.Supervisor.async_nolink(
         Ravix.TaskSupervisor,
         Ravix.Trace.link(fn ->
-          case Ravix.Terminal.status(user, track.id, passive: true) do
+          case Ravix.Terminal.status(user, track.id) do
             {:ok, %{available: true}} ->
               Ravix.Terminal.exec(user, track.id, %Ravix.Terminal.Request{
                 command: Diff.untracked_command(track.workdir),
@@ -2875,6 +3075,15 @@ defmodule Ravix.Tracks do
     else
       {:error, error}
     end
+  end
+
+  # An answer from the snapshot Fountain took as the machine parked is
+  # Fountain saying it is parked, as a refusal would have; only a row not yet
+  # marked asleep is written.
+  defp disk_result(%{sandbox_layout: :dedicated} = track, {:ok, %{"snapshot_at" => at}} = result)
+       when is_binary(at) do
+    if is_nil(track.sandbox_suspended_at), do: Sleep.record(track.id, true)
+    result
   end
 
   # A dedicated machine that answered a read is awake; only a row still

@@ -1125,6 +1125,11 @@ defmodule RavixWeb.Live.ProjectSettings do
   defp plural(1, noun), do: "1 #{noun}"
   defp plural(n, noun), do: "#{n} #{noun}s"
 
+  # The crumb and the nav heading (RAV-128): a project's settings sit inside
+  # its workspace, so a workspace project reads bare, and a legacy project
+  # still says whose it is.
+  defp project_label(project), do: Projects.View.label(project, project.workspace_id)
+
   # ── the page ──────────────────────────────────────────────────────────
 
   @impl true
@@ -1134,8 +1139,8 @@ defmodule RavixWeb.Live.ProjectSettings do
       <Settings.frame
         kind={:project}
         section={@section}
-        crumbs={[@project.display_name]}
-        nav={Settings.project_groups(@project, shown())}
+        crumbs={[project_label(@project)]}
+        nav={Settings.project_groups(@project.id, project_label(@project), shown())}
       >
         <div class="settings-content" id={"settings-section-#{@section}"}>
           <%!-- Access is Ravix's own; the rest is read from Fountain, which

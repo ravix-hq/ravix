@@ -150,6 +150,14 @@ export const TranscriptTail = {
       this.asked = false
     }
     this.anchor = null
+    // A patch writes the scroller's class attribute back to what the server
+    // rendered, so the two classes this hook put there are gone until the
+    // next scroll event: `unpinned` is what shows Jump to latest, and the
+    // first patch after the reader scrolled up -- the setup card folding,
+    // a token landing -- took the pill away. Both are this hook's state and
+    // are put back here.
+    this.el.classList.toggle("unpinned", !this.pinned)
+    this.el.classList.toggle("scrolled", this.el.scrollTop > 0)
     this.observeContent()
     this.reveal()
   },

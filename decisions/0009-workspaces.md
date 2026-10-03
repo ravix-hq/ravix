@@ -1,7 +1,7 @@
 ---
 type: ADR
 title: "Workspaces own repositories; a track's creator pays"
-description: "Amended: workspaces own repository projects, sharing is workspace-only, and the track creator pays for every thread and runtime on a dedicated track. Workspace audit and departed-member private-track handling are deferred; implementation remains staged with legacy project-owner billing preserved."
+description: "Amended: workspaces own repository projects, sharing is workspace-only, and the track creator pays for every thread and runtime on a dedicated track. Sidebar sections are per person, per workspace (RAV-127). A project's name is read against its workspace, not its creator (RAV-128). Workspace audit and departed-member private-track handling are deferred; implementation remains staged with legacy project-owner billing preserved."
 tags: [architecture, workspaces, access, billing, fountain]
 status: stable
 adr: "0009"
@@ -33,6 +33,74 @@ deferred handling departed members' private tracks. The previously accepted
 owner-only orphan count and blind close remain unchanged. The decisions and
 phases are amended inline below; repository identity, workspace scratch and
 visibility defaults remain as accepted.
+
+## Amended 2026-10-01 — sidebar sections are per person, per workspace (RAV-127)
+
+A sidebar section (ADR 0008's personal sections) was keyed by person only,
+so a section whose projects live in one workspace appeared, empty, in every
+other workspace the person switched to. Hiding empty sections would not do:
+a section just created is empty too, and must be there to drag projects
+into. Sections now belong to one person **in one workspace**. They stay
+personal — not shared with other members, and never conferring access —
+and a workspace's sidebar lists only its own sections, empty or not.
+
+- A legacy project with no workspace counts as its owner's personal
+  workspace for section purposes. A project in a workspace the person is
+  not a member of — a legacy share — sits in their personal workspace, as
+  `Ravix.Workspaces.partition/4` places it, so their sections there may hold it.
+- A project that changes workspace loses its placement and lands in "Other
+  projects" of its new workspace; the section does not move with it. The
+  legacy adoption paths drop the placements too.
+- Existing sections take the workspace of their placed projects. One
+  spanning several workspaces is split into one same-named copy per
+  workspace, keeping its collapsed state; one with no placements goes to the
+  person's personal workspace. A section the previous release writes without
+  a workspace during the deploy is read as the personal workspace, so nothing
+  disappears, and the backfill fills it in after every migration.
+- With no current workspace (`RAVIX_WORKSPACE_ACCESS` off) behaviour is
+  unchanged: every section is listed and any of them takes any project.
+
+Expand/contract across two releases, per ADR 0003: the first adds a nullable
+`workspace_id`, a `(user_id, workspace_id, name)` uniqueness and the
+backfill, narrowing the old `(user_id, name)` index to workspace-less rows
+so the serving release still refuses its duplicates; the second makes the
+column required and drops that narrowed index once no running instance
+writes sections without a workspace.
+
+## Amended 2026-10-01 — a project is named by its workspace (RAV-128)
+
+[#163](https://github.com/ravix-hq/ravix/pull/163) prefixed a shared
+project's name with its owner's login ("raunak / ravix") for everyone but
+the owner. That predates this decision: under it the creator of a workspace
+project is attribution history, not its owner, the project is unique per
+repository inside its workspace, and every member should read the same name.
+
+The rule: **the prefix names the container a project lives in, and only
+where the viewer is not already inside that container.**
+
+- A workspace project (`workspace_id` set, the switch on, the viewer a live
+  member) reads its bare name inside its workspace, identical for its
+  creator and every other member. On a surface that spans workspaces it
+  reads "Workspace name / name". A personal workspace never prefixes: it has
+  one member, already inside it, and its name is a login, which would read as
+  the retired creator prefix rather than as a place.
+- A legacy project (`workspace_id` nil), and a workspace project for a viewer
+  the workspace does not yet admit (the switch off, or a legacy share into a
+  workspace they are not in), keeps ADR 0005's reading: "owner / name" for
+  anybody it was shared with, the bare name for its owner, and the bare name
+  when the owner has no login. It retires with the legacy layout; nothing is
+  migrated.
+
+`Ravix.Projects.View` carries the container as plain text (`container`,
+with `container_id` for a workspace) and `display_name` as the spanning
+label; a surface scoped to one workspace reads `View.label/2` with that
+workspace's id. The sidebar, project and track crumbs, page titles,
+quick-jump, Recent, the Inbox, New track, project settings and the people
+dialog are scoped to the current workspace; Schedules, desktop notifications
+and the sign-in invite page span workspaces. Quick-jump matches a workspace
+project by its workspace's name and a legacy project by its owner's login.
+Payer copy ("This project runs on @owner's Claude") is a billing label and
+is not changed by this amendment.
 
 ## Context
 

@@ -31,6 +31,7 @@
 //   QuickJump       Cmd/Ctrl-K, Cmd/Ctrl-N and keyboard selection in navigation search
 //   QuickJumpQuery  search's query: focused as it mounts, with the keys typed on the way
 //   ProjectFormFocus synchronous dialog focus that never steals later typing
+//   SectionForm     the New section field, emptied and refocused once the section exists
 //   CopyCode        copy a Help example exactly, with success or failure feedback
 //   TurnTimer       a running turn's elapsed time, ticking without a round-trip
 //   RelativeTime    a row's "22h" age, kept current without server ticks
@@ -38,6 +39,7 @@
 //   SubmitOnEnter   the create dialog's first prompt: Enter creates, Shift+Enter is a new line
 //   ChipMenu        a chip's popover: aria-expanded, Escape and focus return inside a dialog
 //   SharePopover    the Share popover placed under its button; Share again closes it
+//   CredentialField the agent panel's token field: the paste survives patches, never the server
 //
 // Adding a hook is a product decision, not a convenience. Say why in its
 // file's header, and list it here.
@@ -66,8 +68,10 @@ import {AgentConfirmation} from "./hooks/agent_confirmation"
 import {UnsavedChanges} from "./hooks/unsaved_changes"
 import {SettingsFrame} from "./hooks/settings_frame"
 import {ProjectFormFocus} from "./hooks/project_form_focus"
+import {SectionForm} from "./hooks/section_form"
 import {CopyCode} from "./hooks/copy_code"
 import {SharePopover} from "./hooks/share_popover"
+import {CredentialField} from "./hooks/credential_field"
 import {ShareMention} from "./hooks/share_mention"
 import {TurnTimer} from "./hooks/turn_timer"
 import {RelativeTime} from "./hooks/relative_time"
@@ -77,7 +81,7 @@ import {ChipMenu} from "./hooks/chip_menu"
 
 
 
-const hooks = {ThreadTabs, AgentConfirmation, Theme, PanelResize, PanelToggle, TranscriptTail, Composer, Terminal, Notify, NotifyToggle, UnsavedChanges, SettingsFrame, QuickJump, QuickJumpQuery, CopyCode, ProjectFormFocus, ShareMention, TurnTimer, RelativeTime, SubmitOnEnter, Shell, LocalTime, ChipMenu, SharePopover}
+const hooks = {ThreadTabs, AgentConfirmation, Theme, PanelResize, PanelToggle, TranscriptTail, Composer, Terminal, Notify, NotifyToggle, UnsavedChanges, SettingsFrame, QuickJump, QuickJumpQuery, CopyCode, ProjectFormFocus, SectionForm, ShareMention, TurnTimer, RelativeTime, SubmitOnEnter, Shell, LocalTime, ChipMenu, SharePopover, CredentialField}
 
 const csrfToken = document.querySelector("meta[name='csrf-token']").getAttribute("content")
 clearTransportFallback(window)

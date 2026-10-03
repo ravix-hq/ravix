@@ -229,6 +229,185 @@ defmodule RavixWeb.Live.AgentPanelTest do
     refute has_element?(view, "#account-dialog")
   end
 
+  # ── the connect step (RAV-133, RAV-134, RAV-135) ──────────────────────
+
+  defp open_new_project(conn, user) do
+    stub(Inference, :usable_agents, fn _ -> {:ok, []} end)
+    {:ok, view, _} = live(log_in_user(conn, user), "/home")
+    render_click(view, "dialog", %{name: "new-project"})
+    render_async(view)
+    view |> element("#project-agent-claude") |> render_click()
+    view
+  end
+
+  test "the connect step is one card headed for its agent, wherever the panel is drawn", %{
+    conn: conn
+  } do
+    stub(Inference, :held, fn _ -> {:ok, []} end)
+    user = insert_user()
+
+    # Inline in the new-project dialog, under the agent it is for, with the
+    # dialog's submit still the only primary button.
+    view = open_new_project(conn, user)
+    card = "#project-connect-claude #agent-connect .agent-credential[role=group]"
+    assert has_element?(view, card <> "[aria-labelledby=agent-connect-title]")
+    assert has_element?(view, card <> " #agent-connect-title", "Connect Claude Code")
+
+    assert has_element?(
+             view,
+             card <> " #credential-form #credential-submit",
+             "Connect Claude Code"
+           )
+
+    refute has_element?(view, "#credential-form button.primary")
+    assert has_element?(view, "#project-connect-claude[phx-remove]")
+
+    # The walkthrough, Settings › Agents and the account dialog draw the same card.
+    {:ok, welcome, _} = live(log_in_user(conn, user), "/welcome/agent")
+    welcome |> element("#agent-claude") |> render_click()
+
+    assert has_element?(
+             welcome,
+             "#agent-connect[phx-remove] #agent-connect-title",
+             "Connect Claude Code"
+           )
+
+    assert has_element?(welcome, "#agent-connect #credential-submit", "Connect Claude Code")
+
+    {:ok, settings, _} = live(log_in_user(conn, user), "/settings/agents")
+    settings |> element("#agent-claude") |> render_click()
+    assert has_element?(settings, "#agent-connect #agent-connect-title", "Connect Claude Code")
+
+    account = open_account(conn, user)
+    account |> element("#agent-codex") |> render_click()
+    account |> element("#kind-api_key") |> render_click()
+    assert has_element?(account, "#agent-connect #agent-connect-title", "Connect Codex")
+    assert has_element?(account, "#agent-connect #credential-submit", "Connect Codex")
+  end
+
+  test "an empty or blank token is refused on the field, by the page and not the browser", %{
+    conn: conn
+  } do
+    reject(&Inference.connect/2)
+    stub(Inference, :held, fn _ -> {:ok, []} end)
+    view = open_new_project(conn, insert_user())
+
+    # Nothing native: no `required` reaches the browser, and the form says so.
+    # The input is `phx-update="ignore"`, so what the server tells it after
+    # mount is its data attributes; the hook turns those into `aria-invalid`
+    # and `disabled` (`assets/test/credential_field.test.js`).
+    assert has_element?(view, "#credential-form[novalidate]")
+    refute has_element?(view, "#credential-form [required]")
+    refute has_element?(view, "#credential-value[data-invalid=true]")
+
+    assert has_element?(
+             view,
+             "#credential-value[aria-describedby='credential-value-error credential-value-hint']"
+           )
+
+    for blank <- ["", "   \n"] do
+      view |> form("#credential-form", credential: [value: blank]) |> render_submit()
+
+      assert has_element?(
+               view,
+               "#credential-value-error .error",
+               "Paste the token from claude setup-token first."
+             )
+
+      assert has_element?(view, "#credential-value[data-invalid=true][data-state=refused]")
+      # Nothing was started: no busy button, no status line.
+      refute has_element?(view, "#credential-submit[disabled]")
+      refute has_element?(view, "#project-connect-claude .loading-status")
+    end
+
+    # The API key variant has its own sentence, and choosing it clears the last one.
+    view |> element("#kind-api_key") |> render_click()
+    refute has_element?(view, "#credential-value-error .error")
+    assert has_element?(view, "#credential-value[data-state=idle]")
+    view |> form("#credential-form", credential: [value: " "]) |> render_submit()
+    assert has_element?(view, "#credential-value-error .error", "Paste your API key first.")
+  end
+
+  test "connecting shows its progress in the button and inserts nothing above the form", %{
+    conn: conn
+  } do
+    user = insert_user()
+    owner = self()
+    stub(Inference, :held, fn _ -> {:ok, []} end)
+
+    expect(Inference, :connect, fn _, %{value: "sk-ant-oat01-private"} ->
+      send(owner, {:connecting, self()})
+
+      receive do
+        :finish -> {:error, {:unprocessable, "bad_credential", "Anthropic did not accept that."}}
+      end
+    end)
+
+    view = open_new_project(conn, user)
+    button = "#credential-form #credential-submit"
+    refute has_element?(view, "#{button}[aria-busy=true]")
+
+    view
+    |> form("#credential-form", credential: [value: "sk-ant-oat01-private"])
+    |> render_submit()
+
+    assert_receive {:connecting, task}
+
+    html = render(view)
+
+    assert has_element?(
+             view,
+             "#{button}[disabled][aria-busy=true] .agent-connect-busy",
+             "Connecting…"
+           )
+
+    assert has_element?(view, "#{button} .agent-connect-busy .loading-spinner")
+
+    assert has_element?(
+             view,
+             "#credential-form #credential-status[role=status]",
+             "Connecting Claude Code…"
+           )
+
+    assert has_element?(view, "#credential-value[data-state=connecting][data-disabled=true]")
+    refute has_element?(view, "#project-connect-claude .loading-status")
+    refute html =~ "Updating agent connection"
+    # The value is the browser's to keep; the server renders none.
+    refute html =~ "sk-ant-oat01-private"
+    refute has_element?(view, "#credential-value[value]")
+
+    send(task, :finish)
+    render_async(view)
+    assert has_element?(view, "#credential-value-error .error", "Anthropic did not accept that.")
+    assert has_element?(view, "#credential-value[data-state=refused][data-disabled=false]")
+    refute has_element?(view, "#{button}[aria-busy=true]")
+    refute has_element?(view, "#{button}[disabled]")
+    refute render(view) =~ "sk-ant-oat01-private"
+  end
+
+  test "an action with no button of its own still says it is updating", %{conn: conn} do
+    user = insert_user(agent: :claude, credential_kind: :api_key, credential_set_id: "s")
+    owner = self()
+    stub(Inference, :held, fn _ -> {:ok, [{:claude, :api_key}, {:codex, :api_key}]} end)
+
+    expect(Inference, :make_default, fn _, :codex ->
+      send(owner, {:making, self()})
+
+      receive do
+        :finish -> {:ok, user}
+      end
+    end)
+
+    view = open_account(conn, user)
+    render_async(view)
+    view |> element("#make-default-codex") |> render_click()
+    assert_receive {:making, task}
+    assert has_element?(view, "#agent-panel .loading-status", "Updating agent connection…")
+    send(task, :finish)
+    render_async(view)
+    refute has_element?(view, "#agent-panel .loading-status")
+  end
+
   test "the workspace hands the panel its polling tick", %{conn: conn} do
     user = insert_user()
     stub(Inference, :link_status, fn _ -> {:ok, %{enabled?: true, pending: nil}} end)

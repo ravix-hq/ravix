@@ -19,6 +19,7 @@ defmodule RavixWeb.CoreComponents do
 
   alias Phoenix.HTML.Form
   alias Phoenix.LiveView.JS
+  alias Ravix.Projects.View
 
   @doc "The shared track/thread activity marker; one place for the harness-logo follow-up."
   attr :status, :string, required: true
@@ -112,15 +113,25 @@ defmodule RavixWeb.CoreComponents do
     """
   end
 
-  @doc "A viewer-relative project label; the context supplies ownership and plain text."
+  @doc """
+  A project's name, read against its container (RAV-128): "Workspace / name"
+  or "owner / name" where the viewer is looking in from outside, bare where
+  they are already inside. The context supplies the container as plain
+  text (`Ravix.Projects.View`); `within` is the id of the workspace this
+  surface is scoped to, left nil on one that spans workspaces, and decides
+  only whether the prefix is shown.
+  """
   attr :project, :map, required: true
+  attr :within, :string, default: nil, doc: "the workspace the surface is scoped to, or nil"
 
   def project_name(assigns) do
+    assigns = assign(assigns, prefix: View.prefix(assigns.project, assigns.within))
+
     ~H"""
-    <span class="project-label" title={@project.display_name}><span
-      :if={@project.display_name != @project.name}
+    <span class="project-label" title={View.label(@project, @within)}><span
+      :if={@prefix}
       class="dim"
-    >{@project.owner_login} / </span>{@project.name}</span>
+    >{@prefix} / </span>{@project.name}</span>
     """
   end
 

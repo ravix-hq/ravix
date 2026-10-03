@@ -58,7 +58,7 @@ defmodule RavixWeb.PlansLiveTest do
 
     for user <- [ctx.user, member] do
       {:ok, view, _} = live(log_in_user(build_conn(), user), "/inbox")
-      render_async(view)
+      render_async(view, 5_000)
       render_click(view, "dialog", %{name: "search"})
       view |> form("#search-form", q: "launch") |> render_change()
 
@@ -70,7 +70,7 @@ defmodule RavixWeb.PlansLiveTest do
     end
 
     {:ok, view, _} = live(log_in_user(build_conn(), guest), "/inbox")
-    render_async(view)
+    render_async(view, 5_000)
     render_click(view, "dialog", %{name: "search"})
     refute has_element?(view, "#search-plan-link-#{plan.id}")
     view |> form("#search-form", q: "launch") |> render_change()

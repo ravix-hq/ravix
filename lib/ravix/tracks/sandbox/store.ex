@@ -275,6 +275,43 @@ defmodule Ravix.Tracks.Sandbox.Store do
     List.first(rows)
   end
 
+  @doc """
+  Claim a track's open operation that is waiting on setup, once setup has
+  reported ready and the machine has not (RAV-131).
+
+  `claim/1` honours the pause the operation took between setup checks, so an
+  open whose setup the prompt queue's sweep just finished would wait out that
+  pause and the reconciler's next tick before recording the machine ready,
+  and the first prompt with it. Setup being ready is what the pause was for,
+  so it is not honoured here; the lease still is, and nothing is claimed
+  for a generation the track has moved past.
+  """
+  def claim_handoff(track_id) do
+    now = DateTime.utc_now()
+    token = Ecto.UUID.generate()
+
+    {_, rows} =
+      Repo.update_all(handoff_candidate(track_id, now),
+        set: [lease: token, lease_until: DateTime.add(now, 360), updated_at: now],
+        inc: [attempts: 1, revision: 1]
+      )
+
+    List.first(rows)
+  end
+
+  # The track's current open, waiting on setup, unleased, with setup ready
+  # and the machine not yet.
+  defp handoff_candidate(track_id, now) do
+    from o in Operation,
+      join: t in Track,
+      on: t.id == o.track_id,
+      where: o.track_id == ^track_id and o.action in [:open, :rebuild] and o.phase == "setup",
+      where: is_nil(o.completed_at) and (is_nil(o.lease_until) or o.lease_until < ^now),
+      where: t.setup_state == "ready" and t.sandbox_state == :provisioning,
+      where: t.sandbox_generation == o.generation and is_nil(t.closed_at),
+      select: o
+  end
+
   @doc "A leased transition records progress and fences updates to the current generation."
   def progress(op, attrs, track_attrs \\ []) do
     Repo.transaction(fn ->

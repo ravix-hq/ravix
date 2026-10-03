@@ -315,7 +315,13 @@ defmodule RavixWeb.Live.ProjectTracks do
           <h2>People</h2>
           <ul class="project-people">
             <li :for={person <- Enum.take(@people, 12)} title={"@" <> person.login}>
-              <img :if={person.avatar_url} src={person.avatar_url} alt={"@" <> person.login} />
+              <img
+                :if={person.avatar_url}
+                src={person.avatar_url}
+                width="32"
+                height="32"
+                alt={"@" <> person.login}
+              />
               <span :if={!person.avatar_url} role="img" aria-label={"@" <> person.login}>
                 {person.login |> String.slice(0, 2) |> String.upcase()}
               </span>
@@ -592,7 +598,14 @@ defmodule RavixWeb.Live.ProjectTracks do
       class={["track-owner", @class]}
       data-tip={"Started by " <> if(@yours?, do: "you", else: "@#{@track.created_by_login}")}
     >
-      <img :if={@track.creator_avatar_url} src={@track.creator_avatar_url} alt="" loading="lazy" />
+      <img
+        :if={@track.creator_avatar_url}
+        src={@track.creator_avatar_url}
+        alt=""
+        loading="lazy"
+        width="22"
+        height="22"
+      />
       <span :if={!@track.creator_avatar_url} class="track-owner-mark" aria-hidden="true">
         {(@track.created_by_login || "?") |> String.slice(0, 2) |> String.upcase()}
       </span>

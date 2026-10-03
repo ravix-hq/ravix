@@ -1549,11 +1549,20 @@ defmodule Ravix.PromptQueueTest do
     assert {:ok, [%{id: ^id}]} = PromptQueue.list(f.owner, f.track.id)
   end
 
-  test "a prompt being delivered cannot be cancelled, and only a refused one can be retried", f do
+  test "a prompt being delivered cannot be cancelled, and only a refused or waiting one can be retried",
+       f do
     {:ok, %Item{id: id}} = send_prompt(f.track, f.owner, "in flight")
-    assert {:error, {:conflict, "not_failed", _}} = PromptQueue.retry(f.owner, f.track.id, id)
+
+    # Still waiting: a retry is a nudge (RAV-131). The row stays queued with
+    # its note cleared, and the worker is told to look now.
+    PromptQueue.Store.annotate(id, :queued, "Waiting for the machine connection.")
+    Phoenix.PubSub.subscribe(Ravix.PubSub, Server.wake_topic())
+    assert :ok = PromptQueue.retry(f.owner, f.track.id, id)
+    assert_receive :prompt_queued
+    assert %Item{status: :queued, error: nil} = PromptQueue.Store.get(id)
 
     assert PromptQueue.Store.claim(id)
+    assert {:error, {:conflict, "not_failed", _}} = PromptQueue.retry(f.owner, f.track.id, id)
 
     assert {:error, {:conflict, "already_sending", _}} =
              PromptQueue.cancel(f.owner, f.track.id, id)

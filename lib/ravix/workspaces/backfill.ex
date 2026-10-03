@@ -21,6 +21,12 @@ defmodule Ravix.Workspaces.Backfill do
   exactly the remainder. The unique personal-workspace index and
   `ON CONFLICT DO NOTHING` make the concurrent case safe as well as correct.
 
+  Its sections step (RAV-127) gives every sidebar section written without
+  a workspace the workspace of the projects placed in it, splitting one
+  that spans several; see `Ravix.Projects.Sections.Store.scope_sections/1`.
+  It runs after the personal workspaces exist, because a section with no
+  placements, or with only legacy projects, goes to its owner's.
+
   `Ravix.Release.migrate/0` runs it after every migration, so each deploy
   reconciles whatever the previous release wrote while this one rolled out.
   """
@@ -39,7 +45,8 @@ defmodule Ravix.Workspaces.Backfill do
           workspaces: non_neg_integer(),
           memberships: non_neg_integer(),
           projects: non_neg_integer(),
-          installations: non_neg_integer()
+          installations: non_neg_integer(),
+          sections: non_neg_integer()
         }
 
   @doc """
@@ -59,7 +66,10 @@ defmodule Ravix.Workspaces.Backfill do
       workspaces: drain(step.(&Store.insert_personal_workspaces/1), max),
       memberships: drain(step.(&Store.insert_owner_memberships/1), max),
       projects: drain(step.(&Store.fill_project_attribution/1), max),
-      installations: drain(step.(&Store.attach_backing_installations/1), max)
+      installations: drain(step.(&Store.attach_backing_installations/1), max),
+      # ownership: no door -- the release-time backfill, which runs as no
+      # user; the sections step needs the personal workspaces made above.
+      sections: drain(step.(&Ravix.Projects.Sections.Store.scope_sections/1), max)
     }
 
     Logger.info("workspace backfill: #{inspect(result)}")

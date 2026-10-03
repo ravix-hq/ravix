@@ -31,6 +31,7 @@ defmodule RavixWeb.Live.HomeProjects do
   attr :viewer, :any, required: true, doc: "the person looking, to say which tracks are theirs"
   attr :active, :list, default: [], doc: "`{project, track}` for each open track, newest first"
   attr :loaded, :boolean, default: true
+  attr :within, :string, default: nil, doc: "the workspace the page is scoped to, or nil"
 
   def side(assigns) do
     ~H"""
@@ -91,7 +92,10 @@ defmodule RavixWeb.Live.HomeProjects do
               <RavixWeb.Live.ProjectTracks.dot track={track} />
               <span class="home-activity-text">
                 <span class="truncate">{Track.label(track)}</span>
-                <small class="home-active-meta truncate"><.project_name project={project} /></small>
+                <small class="home-active-meta truncate"><.project_name
+                  project={project}
+                  within={@within}
+                /></small>
               </span>
               <span class="track-who">
                 <small class="home-active-state">{state_word(track)}</small>
@@ -116,6 +120,7 @@ defmodule RavixWeb.Live.HomeProjects do
   attr :previews, :map, default: %{}, doc: "each project's previews that are up or coming up"
   attr :errors, :any, required: true, doc: "projects whose tracks could not be read"
   attr :loading, :any, required: true, doc: "projects whose tracks are being read again"
+  attr :within, :string, default: nil, doc: "the workspace the page is scoped to, or nil"
 
   def list(assigns) do
     shown =
@@ -162,7 +167,7 @@ defmodule RavixWeb.Live.HomeProjects do
                 patch={"/p/#{project.id}"}
                 class="home-project-name"
               >
-                <.project_name project={project} />
+                <.project_name project={project} within={@within} />
               </.link>
               <span class="chip">{if project.repo_private, do: "Private", else: "Public"}</span>
               <span :if={project.repo} class="chip mono">{project.repo}</span>
@@ -225,6 +230,7 @@ defmodule RavixWeb.Live.HomeProjects do
   end
 
   attr :needs, :list, required: true, doc: "`{project, track, reason}` for each that needs you"
+  attr :within, :string, default: nil, doc: "the workspace the page is scoped to, or nil"
 
   def activity(assigns) do
     ~H"""
@@ -241,7 +247,7 @@ defmodule RavixWeb.Live.HomeProjects do
               <RavixWeb.Live.ProjectTracks.dot track={track} />
               <span class="home-activity-text">
                 <span><strong>{Track.label(track)}</strong> {reason}</span>
-                <small class="truncate"><.project_name project={project} /></small>
+                <small class="truncate"><.project_name project={project} within={@within} /></small>
               </span>
             </.link>
           </li>

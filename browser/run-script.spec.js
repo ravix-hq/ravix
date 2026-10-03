@@ -69,6 +69,10 @@ test('project run script is inherited: run, ready, restart, stop and plain overr
   // Idle, the override is reached through the empty state's small link.
   await expect(page.getByText('Run script override', { exact: true })).toBeHidden();
   await empty.getByRole('button', { name: 'Run script…', exact: true }).click();
+  // The link focuses the first field, and LiveView applies that focus a
+  // frame later: filling another field before it lands sends the typing to
+  // the directory instead.
+  await expect(page.locator('#preview-directory')).toBeFocused();
   // Open by the reader and left open by every patch that follows: a status
   // refresh landing here used to collapse the section mid-edit.
   await expect(page.locator('#preview-path')).toBeVisible();

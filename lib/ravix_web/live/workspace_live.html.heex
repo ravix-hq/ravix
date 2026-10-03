@@ -1,4 +1,4 @@
-<Layouts.app flash={@flash}>
+<Layouts.app flash={@flash} stale_assets={@static_changed?}>
   <main :if={is_nil(@current_user)} class="centred signin-page">
     <div class="corner-theme"><.theme_picker id="signin-theme" /></div>
     <div class="signin-card">
@@ -73,7 +73,7 @@
           aria-current={if is_nil(@track_id), do: "page"}
           class={is_nil(@track_id) && "here"}
         >
-          <.project_name project={@project} />
+          <.project_name project={@project} within={within(@current_workspace)} />
         </.link>
         <span :if={@track_id} class="crumb-sep" aria-hidden="true">/</span>
         <span :if={@track_id} class="dim">Tracks</span>
@@ -182,7 +182,13 @@
           opened, and opening it clears the dot. The button's name and
           tooltip both say so. --%>
         <span class="account-icon">
-          <img :if={@current_user.avatar_url} src={@current_user.avatar_url} alt="" />
+          <img
+            :if={@current_user.avatar_url}
+            src={@current_user.avatar_url}
+            alt=""
+            width="32"
+            height="32"
+          />
           <span :if={!@current_user.avatar_url} aria-hidden="true">
             {@current_user.login |> String.slice(0, 2) |> String.upcase()}
           </span>
@@ -275,7 +281,9 @@
         >
           <%!-- The project's name and repository are the top bar's breadcrumb;
             this is the tab bar under it. --%>
-          <h1 class="sr-only"><.project_name project={@project} /></h1>
+          <h1 class="sr-only">
+            <.project_name project={@project} within={within(@current_workspace)} />
+          </h1>
           <nav class="repo-tabs" aria-label="Project">
             <.link
               id="crumb-tracks"
@@ -498,6 +506,7 @@
           class="home-dashboard"
         >
           <RavixWeb.Live.HomeProjects.side
+            within={within(@current_workspace)}
             workspace={workspace_name(@current_workspace, @current_user)}
             kind={
               if @current_workspace && @current_workspace.workspace.kind == :team,
@@ -548,6 +557,7 @@
             </section>
             <RavixWeb.Live.HomeProjects.list
               :if={@rail_loaded && !fresh_start?(@projects)}
+              within={within(@current_workspace)}
               heading={home_heading(assigns)}
               groups={home_groups(assigns)}
               tracks={@tracks}
@@ -561,6 +571,7 @@
           </div>
           <RavixWeb.Live.HomeProjects.activity
             :if={@rail_loaded}
+            within={within(@current_workspace)}
             needs={home_needs(assigns)}
           />
         </div>
@@ -717,7 +728,10 @@
                       true -> "Unread reply"
                     end}
                   </span>
-                  <span class="dim"><.project_name project={project} /></span><span class="spacer"></span><.inbox_age
+                  <span class="dim"><.project_name
+                    project={project}
+                    within={within(@current_workspace)}
+                  /></span><span class="spacer"></span><.inbox_age
                     id={"inbox-age-#{track.id}"}
                     at={inbox_time(track)}
                     zone={@timezone}
@@ -754,25 +768,33 @@
       on_close={dismiss(@project, @track_id, @settings)}
     >
       <p class="hint">Group your projects on Home. Sections are visible only to you.</p>
-      <form id="new-section-form" phx-submit="create-section">
+      <%!-- A created section empties the field and keeps the focus there,
+        ready for the next name (RAV-130, `SectionForm`); a refused one
+        keeps the name beside what was wrong with it. Browsers offer their
+        own history over a field like this, so that is turned off. --%>
+      <form id="new-section-form" phx-submit="create-section" phx-hook="SectionForm">
         <.input
-          name="section[name]"
+          field={@section_form[:name]}
           id="section-name"
-          value=""
           label="New section"
+          autocomplete="off"
           required
           maxlength="80"
         />
         <button class="primary" phx-disable-with="Creating…">Create section</button>
       </form>
-      <div :for={section <- @sections} class="section-editor">
+      <div
+        :for={section <- @sections}
+        id={"section-editor-#{section.id}"}
+        class={["section-editor", section.id == @created_section && "created"]}
+      >
         <form id={"rename-section-#{section.id}"} phx-submit="rename-section">
           <input type="hidden" name="section_id" value={section.id} />
           <.input
-            name="section[name]"
+            field={rename_form(section, @rename_forms)[:name]}
             id={"section-name-#{section.id}"}
-            value={section.name}
             label="Section name"
+            autocomplete="off"
             required
             maxlength="80"
           />
@@ -794,12 +816,12 @@
         >
           <input type="hidden" name="project" value={project.id} />
           <label for={"project-section-#{project.id}"} class="truncate">
-            {project.display_name}
+            {label(project, @current_workspace)}
           </label>
           <select
             id={"project-section-#{project.id}"}
             name="section"
-            aria-label={"Section for #{project.display_name}"}
+            aria-label={"Section for #{label(project, @current_workspace)}"}
           >
             <option value="" selected={is_nil(@section_placements[project.id])}>
               Other projects
@@ -847,6 +869,7 @@
         plans={@search_plans}
         query={@query}
         user={@current_user}
+        within={within(@current_workspace)}
       />
     </.dialog>
     <.dialog
@@ -895,7 +918,7 @@
       <div class="new-track-chips">
         <RavixWeb.Live.ModelMenu.chip
           id="new-track-repo"
-          label={track_destination(@track_project)}
+          label={track_destination(@track_project, @current_workspace)}
           haspopup="dialog"
           class="pick-chip"
           menu_class="chip-popover-below repo-popover"
@@ -904,7 +927,7 @@
         >
           <:trigger>
             <.icon name={if @track_project.repo, do: "folder", else: "machine"} size={13} />
-            {track_destination(@track_project)}
+            {track_destination(@track_project, @current_workspace)}
           </:trigger>
           <RavixWeb.Live.RepoPicker.picker
             :if={@picker}
@@ -921,7 +944,7 @@
                 value={project.id}
                 selected={project.id == @track_project.id}
               >
-                {project.display_name}{if project.repo, do: " · #{project.repo}"}
+                {label(project, @current_workspace)}{if project.repo, do: " · #{project.repo}"}
               </option>
             </select>
           </form>

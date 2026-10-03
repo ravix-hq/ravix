@@ -97,7 +97,16 @@ defmodule Ravix.PromptQueue do
     end
   end
 
-  @doc "Send a refused or unconfirmed prompt again, explicitly. Same rule of who may as `cancel/3`."
+  @doc """
+  Send a refused or unconfirmed prompt again, explicitly. Same rule of who
+  may as `cancel/3`.
+
+  A prompt still waiting may be retried too (RAV-131): nothing about it
+  changes but the note it carries, which is cleared, and the worker is woken
+  to look at it now rather than on its backstop. The page offers this once a
+  first prompt has waited long on nothing but the queue. One already being
+  delivered cannot be.
+  """
   @spec retry(User.t(), String.t(), String.t()) :: :ok | {:error, reason()}
   def retry(%User{} = user, track_id, id) do
     with {:ok, %{role: role, track: track, project: project}} <-
@@ -191,7 +200,7 @@ defmodule Ravix.PromptQueue do
     with {:ok, row} <- Store.lock_row(id, track.id),
          :ok <- refuse_if(not is_nil(track.closed_at), :not_found),
          :ok <- require_sender_or_owner(row, role, user, "resend"),
-         :ok <- refuse_if(row.status not in [:failed, :unconfirmed], not_failed()) do
+         :ok <- refuse_if(row.status not in [:failed, :unconfirmed, :queued], not_failed()) do
       Store.set_status(id, :queued)
     else
       {:error, reason} -> Repo.rollback(reason)

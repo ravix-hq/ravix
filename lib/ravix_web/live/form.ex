@@ -60,6 +60,7 @@ defmodule RavixWeb.Live.Form do
           | :workspace
           | :credential
           | :quick_start
+          | :section
 
   @typedoc """
   A form's shape: the field types to cast, and which field each refusal
@@ -141,6 +142,10 @@ defmodule RavixWeb.Live.Form do
          "rebuild_required" => :runtime
        }},
     workspace: {%{name: :string}, %{"name" => :name}},
+    # A sidebar section's one field, for creating one and for renaming each
+    # (RAV-130). No codes: `Ravix.Projects.Sections` refuses with the
+    # section's own changeset, whose errors are already on `:name`.
+    section: {%{name: :string}, %{}},
     secret:
       {%{store: :string, key: :string, value: :string},
        %{

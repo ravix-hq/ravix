@@ -7,7 +7,7 @@ defmodule RavixWeb.WorkspaceLive do
   alias Ravix.{Accounts, Hub, People, Previews, Projects, Schedules, Tracks, Workspaces}
   alias Ravix.Accounts.Access
   alias Ravix.Hub.Event
-  alias Ravix.Projects.Sections
+  alias Ravix.Projects.{Sections, View}
   alias Ravix.Tracks.Track
   alias Ravix.Workspaces.{Picker, Repositories}
   alias RavixWeb.Live.Form
@@ -102,6 +102,12 @@ defmodule RavixWeb.WorkspaceLive do
         url_notice: nil,
         sections: [],
         section_placements: %{},
+        # The Project sections dialog's forms (RAV-130): the New section
+        # form, each rename form that was refused (by section id), and the
+        # section just created, which the list points out for a moment.
+        section_form: Form.new(:section),
+        rename_forms: %{},
+        created_section: nil,
         tracks: %{},
         # Closed tracks of the projects this person asked to see them for:
         # listed, never counted, never a URL to open.
@@ -568,15 +574,44 @@ defmodule RavixWeb.WorkspaceLive do
 
   def handle_event("dismiss-switcher", _, socket), do: {:noreply, assign(socket, dialog: nil)}
 
+  # Sections are the current workspace's (RAV-127): created in it, and a
+  # project placed only into one of its own. The id is the page's resolved
+  # one, never the browser's, and the context checks membership again.
+  #
+  # A refusal about the name lands under the field (RAV-130): the New section
+  # form keeps what was typed beside its error, and a rename's error sits in
+  # that section's own form. Success empties the New section form; the
+  # browser is told so (`section-created`), because a re-render whose value
+  # was "" before and is "" after patches nothing, and the typed name would
+  # stay in the field looking as if the click had done nothing.
   def handle_event("create-section", %{"section" => attrs}, socket) do
-    section_result(socket, Sections.create(socket.assigns.current_user, attrs))
+    case Sections.create(socket.assigns.current_user, current_workspace_id(socket), attrs) do
+      {:ok, section} ->
+        {:noreply,
+         socket
+         |> load_sections()
+         |> assign(
+           section_form: Form.new(:section),
+           rename_forms: %{},
+           created_section: section.id
+         )
+         |> push_event("section-created", %{id: section.id})}
+
+      {:error, reason} ->
+        {:noreply, refuse_section(socket, Form.new(:section, attrs), reason, :section_form)}
+    end
   end
 
   def handle_event("rename-section", %{"section_id" => id, "section" => attrs}, socket) do
-    section_result(
-      socket,
-      Sections.update(socket.assigns.current_user, id, Map.take(attrs, ["name"]))
-    )
+    attrs = Map.take(attrs, ["name"])
+
+    case Sections.update(socket.assigns.current_user, id, attrs) do
+      {:ok, _} ->
+        section_result(socket, {:ok, nil})
+
+      {:error, reason} ->
+        {:noreply, refuse_section(socket, Form.new(:section, attrs), reason, {:rename, id})}
+    end
   end
 
   def handle_event("retry-tracks", %{"id" => id}, socket) do
@@ -674,7 +709,10 @@ defmodule RavixWeb.WorkspaceLive do
   end
 
   def handle_event("move-project", %{"project" => id, "section" => section_id}, socket) do
-    section_result(socket, Sections.move(socket.assigns.current_user, id, section_id))
+    section_result(
+      socket,
+      Sections.move(socket.assigns.current_user, current_workspace_id(socket), id, section_id)
+    )
   end
 
   def handle_event("top-new-track", _, socket) do
@@ -1506,8 +1544,10 @@ defmodule RavixWeb.WorkspaceLive do
         send_update(RavixWeb.Live.WorkspaceSettings, id: "workspace-settings-page", reload: true)
         {:noreply, recheck_or_leave(socket)}
 
+      # Leaving, so not left a second time by the rail read
+      # (`leave_lost_settings/1`).
       {:error, :not_found} ->
-        {:noreply, socket |> recheck_rail() |> redirect(to: "/")}
+        {:noreply, socket |> assign(settings: nil) |> recheck_rail() |> redirect(to: "/")}
     end
   end
 
@@ -1563,14 +1603,38 @@ defmodule RavixWeb.WorkspaceLive do
 
   defp clear_thread_unread(row, _track_id, _thread_id), do: row
 
-  defp section_result(socket, {:ok, _}) do
-    {sections, placements} = Sections.list(socket.assigns.current_user)
-    {:noreply, assign(socket, sections: sections, section_placements: placements)}
-  end
+  # Any section change that went through leaves no refused rename behind, and
+  # the just-created mark belongs to the create that made it, not to whatever
+  # came after.
+  defp section_result(socket, {:ok, _}),
+    do: {:noreply, socket |> load_sections() |> assign(rename_forms: %{}, created_section: nil)}
 
   defp section_result(socket, {:error, reason}) do
     {:noreply, put_flash(socket, :error, RavixWeb.Error.from(reason).message)}
   end
+
+  # A refusal about the name goes on `form`, under the field; one about
+  # anything else (the section gone, the workspace left) is the toast it
+  # always was. `where` is the New section form's assign, or the rename form
+  # of one section.
+  defp refuse_section(socket, form, reason, where) do
+    case Form.refuse(form, reason) do
+      {:ok, refused} ->
+        socket = assign(socket, created_section: nil)
+
+        case where do
+          {:rename, id} -> update(socket, :rename_forms, &Map.put(&1, id, refused))
+          assign_name -> assign(socket, assign_name, refused)
+        end
+
+      :error ->
+        error(socket, reason)
+    end
+  end
+
+  # A section's rename form: the one its last refusal left, or its name.
+  defp rename_form(section, rename_forms),
+    do: rename_forms[section.id] || Form.new(:section, %{"name" => section.name})
 
   # The named sections first, then whatever is in none of them. Last, so the
   # Projects heading is never followed straight away by a second heading
@@ -1661,6 +1725,9 @@ defmodule RavixWeb.WorkspaceLive do
 
   defp recheck_rail(socket), do: socket
 
+  # Matched on the spanning label, so a workspace project answers to its
+  # workspace's name and a legacy project to its owner's login (RAV-128),
+  # whichever way the result is then drawn.
   defp project_matches?(project, query),
     do:
       String.contains?(String.downcase(project.display_name), String.downcase(String.trim(query)))
@@ -1812,8 +1879,6 @@ defmodule RavixWeb.WorkspaceLive do
         {closed, Map.put(open, id, live)}
       end)
 
-    {sections, placements} = Sections.list(socket.assigns.current_user)
-
     if connected?(socket) do
       old = MapSet.new(socket.assigns.all_projects, & &1.id)
       new = MapSet.new(projects, & &1.id)
@@ -1825,8 +1890,6 @@ defmodule RavixWeb.WorkspaceLive do
     |> assign(
       rail_loaded: true,
       rail_error: false,
-      sections: sections,
-      section_placements: placements,
       all_projects: projects,
       all_tracks: tracks,
       all_notices: People.notices(socket.assigns.current_user),
@@ -1916,8 +1979,46 @@ defmodule RavixWeb.WorkspaceLive do
         socket.assigns.track_project &&
           Enum.find(projects, &(&1.id == track_project_id(socket) && &1.access != :tracks))
     )
+    |> load_sections()
     |> derive_scope()
+    |> leave_lost_settings()
   end
+
+  # A workspace's settings page leaves once its viewer is no longer a member,
+  # whichever learns it first: the Hub's `:members` notice, or a rail read.
+  # A read landing between a removal's commit and its notice falls back to
+  # another workspace and unsubscribes from this one (`watch_workspace/2`),
+  # so the notice would reach nobody. The settings' workspace is current
+  # while it is open (`current_for_settings/2`), so only a fallback reads;
+  # a page already leaving is left to go.
+  defp leave_lost_settings(
+         %{redirected: nil, assigns: %{settings: %{kind: :workspace, id: id}}} = socket
+       ) do
+    if current_workspace_id(socket) != id and
+         match?({:error, :not_found}, Workspaces.get(socket.assigns.current_user, id)),
+       do: redirect(socket, to: "/"),
+       else: socket
+  end
+
+  defp leave_lost_settings(socket), do: socket
+
+  # The current workspace's sections (RAV-127), read whenever the scope is:
+  # on every rail read, so switching workspace swaps them, and after each
+  # section change. The workspace is checked again inside; one this viewer
+  # was removed from meanwhile shows no sections rather than another's.
+  defp load_sections(socket) do
+    case Sections.list(socket.assigns.current_user, current_workspace_id(socket)) do
+      {:ok, {sections, placements}} ->
+        assign(socket, sections: sections, section_placements: placements)
+
+      {:error, :not_found} ->
+        assign(socket, sections: [], section_placements: %{})
+    end
+  end
+
+  # Nil unscoped (`RAVIX_WORKSPACE_ACCESS` off, or nobody's workspace yet).
+  defp current_workspace_id(%{assigns: %{current_workspace: %{workspace: %{id: id}}}}), do: id
+  defp current_workspace_id(_socket), do: nil
 
   # The one resolution of the current workspace, for the mount and for every
   # rail read: the session's own user, through `Access.workspace_access/2`.
@@ -2054,7 +2155,9 @@ defmodule RavixWeb.WorkspaceLive do
     scope =
       case page do
         %{kind: :project} ->
-          if assigns.project, do: assigns.project.display_name, else: "Project"
+          if assigns.project,
+            do: label(assigns.project, assigns.current_workspace),
+            else: "Project"
 
         %{kind: :workspace, id: id} ->
           Enum.find_value(
@@ -2085,13 +2188,15 @@ defmodule RavixWeb.WorkspaceLive do
 
   defp assign_page_title(%{assigns: assigns} = socket, requested) do
     project = assigns.project
+    # The page is inside the current workspace, as the sidebar is.
+    name = label(project, assigns.current_workspace)
 
     title =
       case Enum.find(assigns.tracks[project.id] || [], &(&1.id == assigns.track_id)) ||
              (requested && requested.id == assigns.track_id && requested) do
-        nil when assigns.live_action == :plans -> "Plans · " <> project.display_name
-        nil -> project.display_name
-        track -> Track.label(track) <> " · " <> project.display_name
+        nil when assigns.live_action == :plans -> "Plans · " <> name
+        nil -> name
+        track -> Track.label(track) <> " · " <> name
       end
 
     assign(socket, page_title: title <> " · Ravix")
@@ -2152,6 +2257,8 @@ defmodule RavixWeb.WorkspaceLive do
           do: Track.label(track),
           else: "#{Track.label(track)} · #{thread.title}"
         ),
+      # A desktop notice arrives whatever workspace is current, so it names
+      # the project's (RAV-128).
       project: project && project.display_name,
       status: thread.status,
       mention: Map.get(thread, :mention) && thread.mention.author_login
@@ -2170,7 +2277,15 @@ defmodule RavixWeb.WorkspaceLive do
 
   defp open_dialog(socket, :new_track), do: new_track_dialog(socket, socket.assigns.project)
 
-  defp open_dialog(socket, :sections), do: assign(socket, dialog: :sections)
+  # Opened afresh: nothing half-typed or refused last time, nothing marked new.
+  defp open_dialog(socket, :sections),
+    do:
+      assign(socket,
+        dialog: :sections,
+        section_form: Form.new(:section),
+        rename_forms: %{},
+        created_section: nil
+      )
 
   defp open_dialog(socket, :search),
     do:
@@ -2507,8 +2622,20 @@ defmodule RavixWeb.WorkspaceLive do
   defp ref_label(%{name: name}), do: name
 
   # The New track chips (RAV-60): where the track opens, and who sees it.
-  defp track_destination(%{repo: repo}) when is_binary(repo), do: repo
-  defp track_destination(project), do: "Scratch · #{project.display_name}"
+  defp track_destination(%{repo: repo}, _current) when is_binary(repo), do: repo
+  defp track_destination(project, current), do: "Scratch · #{label(project, current)}"
+
+  # A project's name as this page reads it (RAV-128): the page is scoped to
+  # the current workspace, so a project in it reads bare, and a legacy
+  # project somebody shared still says whose it is. Every surface on this
+  # page -- the sidebar, the crumbs, the title, quick-jump, Recent, the
+  # Inbox and New track -- is cut to that scope (`scope_rail/2`). What
+  # spans workspaces, the desktop notice and Schedules, reads the
+  # `display_name` instead.
+  defp label(project, current), do: View.label(project, within(current))
+
+  defp within(%{workspace: %{id: id}}), do: id
+  defp within(_current), do: nil
 
   defp private_tracks?(user), do: Ravix.Config.dedicated_opens_enabled?(user)
 
@@ -2636,7 +2763,7 @@ defmodule RavixWeb.WorkspaceLive do
           patch={"/p/#{project.id}"}
           data-jump-result
         >
-          <span class="search-label">{project.display_name}</span>
+          <span class="search-label">{View.label(project, @within)}</span>
           <span
             :if={project_attention(@tracks, project.id) > 0}
             class="badge"
@@ -2647,7 +2774,7 @@ defmodule RavixWeb.WorkspaceLive do
           )}</span>
         </.link>
         <span :if={!project_matches?(project, @query)} class="search-label">
-          {project.display_name}
+          {View.label(project, @within)}
         </span>
         <span class="search-count" aria-label={count_label(length(tracks) + length(plans))}>
           {length(tracks) + length(plans)}
@@ -2688,10 +2815,17 @@ defmodule RavixWeb.WorkspaceLive do
   defp plan_matches?(plan, query),
     do: String.contains?(String.downcase(plan.title), String.downcase(query))
 
+  # The haystack names the project's container (RAV-128): a workspace
+  # project is found by its workspace's name, a legacy one by its owner's
+  # login, as the label shows them. The owner's login stays in it as it
+  # was, so what somebody found by it before -- their own project, or the
+  # creator's among a workspace's -- they still find.
   defp matching?(track, project, query),
     do:
       String.contains?(
-        String.downcase("#{project.owner_login} #{project.name} #{track.title} #{track.branch}"),
+        String.downcase(
+          "#{project.container} #{project.owner_login} #{project.name} #{track.title} #{track.branch}"
+        ),
         String.downcase(query)
       )
 end

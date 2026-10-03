@@ -224,8 +224,8 @@ defmodule RavixWeb.NewTrackPickerTest do
   test "the scratch group sits beside real sections, which keep their projects", ctx do
     app = insert_project(user: ctx.user, repo_full_name: "me/app", name: "App")
     scratch = insert_project(user: ctx.user, repo_full_name: nil, name: "Sandbox")
-    {:ok, section} = Sections.create(ctx.user, %{"name" => "Work"})
-    {:ok, _} = Sections.move(ctx.user, app.id, section.id)
+    {:ok, section} = Sections.create(ctx.user, nil, %{"name" => "Work"})
+    {:ok, _} = Sections.move(ctx.user, nil, app.id, section.id)
 
     {:ok, view, _} = live(ctx.conn, "/home")
     render_async(view)

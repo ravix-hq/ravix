@@ -423,8 +423,8 @@ defmodule RavixWeb.ProjectTracksTest do
       insert_track(project: work, title: "ravix/fix-login")
       somebody_elses = insert_project(user: insert_user(), name: "not-mine")
 
-      {:ok, section} = Sections.create(user, %{"name" => "Work"})
-      {:ok, _} = Sections.move(user, work.id, section.id)
+      {:ok, section} = Sections.create(user, nil, %{"name" => "Work"})
+      {:ok, _} = Sections.move(user, nil, work.id, section.id)
 
       view = live_at(conn, user, "/home")
 
