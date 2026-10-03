@@ -11,9 +11,10 @@ defmodule RavixWeb.Layouts do
   rail, the stage, the inspector) as the page, and the LiveView pages do the
   same, so a layout with furniture of its own would be furniture in the way.
 
-  The one thing the app layout adds is the toasts, because errors in Ravix
-  are toasts and never a replaced screen (see `App.tsx`): the flash, and the
-  two the LiveView runtime raises itself when the socket drops.
+  The app layout adds the toasts, because errors in Ravix are toasts and
+  never a replaced screen (see `App.tsx`): the flash, and the two the
+  LiveView runtime raises itself when the socket drops. It also adds the
+  reload bar a tab gets when it outlives a deploy (`RavixWeb.Live.StaleAssets`).
   """
   use RavixWeb, :html
 
@@ -22,11 +23,15 @@ defmodule RavixWeb.Layouts do
   @doc """
   The app layout: the page, and the toasts over it.
 
-      <Layouts.app flash={@flash}>
+      <Layouts.app flash={@flash} stale_assets={@static_changed?}>
         <div class="app">...</div>
       </Layouts.app>
   """
   attr :flash, :map, required: true, doc: "the map of flash messages"
+
+  attr :stale_assets, :boolean,
+    default: false,
+    doc: "the page's CSS and JS are an earlier release's; see `RavixWeb.Live.StaleAssets`"
 
   attr :current_scope, :map,
     default: nil,
@@ -37,12 +42,31 @@ defmodule RavixWeb.Layouts do
   def app(assigns) do
     ~H"""
     {render_slot(@inner_block)}
-    <.flash_group flash={@flash} />
+    <.flash_group flash={@flash} stale_assets={@stale_assets} />
     """
   end
 
   @doc """
-  The flash as toasts, plus the two the socket raises on its own.
+  "Ravix was updated", and a Reload that the person presses when they are
+  ready to: nothing reloads by itself, because a reload loses an unsent
+  draft or an open dialog. Persistent, because the page stays wrong until
+  it is reloaded.
+
+  Reload is a server event, answered by `RavixWeb.Live.StaleAssets`,
+  because the script on this page is the stale one.
+  """
+  def reload_bar(assigns) do
+    ~H"""
+    <div id="reload-bar" class="reload-bar" role="status">
+      <span>Ravix was updated.</span>
+      <button type="button" class="primary" phx-click="reload_stale_assets">Reload</button>
+    </div>
+    """
+  end
+
+  @doc """
+  The flash as toasts, plus the two the socket raises on its own, and the
+  reload bar above them when the page's assets are stale.
 
   The reconnect toasts are hidden until the runtime flips `phx-disconnected`,
   and they are `bad` because a dropped socket is the one error a LiveView
@@ -52,10 +76,12 @@ defmodule RavixWeb.Layouts do
   """
   attr :flash, :map, required: true, doc: "the map of flash messages"
   attr :id, :string, default: "flash-group", doc: "the optional id of flash container"
+  attr :stale_assets, :boolean, default: false, doc: "show `reload_bar/1` first in the stack"
 
   def flash_group(assigns) do
     ~H"""
     <div id={@id} class="toasts" aria-live="polite">
+      <.reload_bar :if={@stale_assets} />
       <.toast :if={msg = Phoenix.Flash.get(@flash, :info)} id="flash-info" kind={:info}>
         {msg}
       </.toast>

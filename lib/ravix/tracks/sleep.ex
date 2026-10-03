@@ -8,8 +8,9 @@ defmodule Ravix.Tracks.Sleep do
   (`Ravix.Tracks.Transcript.Event.suspension/1`). It sends nothing on a
   resume, but a turn that starts is a machine that is awake. A file read
   refused with `409 sandbox_not_ready` and `status: "suspended"` says the
-  same thing. Those three are the only inputs: nothing here asks Fountain,
-  so the rail can show Asleep from its one query.
+  same thing, and so does one answered from the snapshot Fountain took as the
+  machine parked (`snapshot_at`). Those are the only inputs: nothing here
+  asks Fountain, so the rail can show Asleep from its one query.
 
   What it cannot see is a sandbox parked while nobody followed its stream, or
   by Fountain's reaper, which parks without an event; that track reads Idle
