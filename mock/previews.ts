@@ -53,6 +53,16 @@ export function setMockSpriteAsleep(sprite: string, wake: (() => void) | null, w
   if (wake) asleep.set(sprite, wake); else asleep.delete(sprite);
   if (wake && wakeMs > 0) wakeDelay.set(sprite, wakeMs); else wakeDelay.delete(sprite);
 }
+// Fountain's wake (managoat/fountain#2551) resumes the sprite before it
+// answers, so it takes as long as an exec that wakes one.
+export async function wakeMockSprite(sprite: string) {
+  const wake = asleep.get(sprite);
+  if (!wake) return;
+  const ms = wakeDelay.get(sprite) ?? 0;
+  wakeDelay.delete(sprite);
+  if (ms) await Bun.sleep(ms);
+  asleep.delete(sprite); wake();
+}
 // Sprites whose exec WebSocket accepts the connection and never answers the
 // upgrade, as a machine that is slow to come up does: the browser harness
 // sets this (`/__browser/pty-silent`) to show a terminal the machine did not
@@ -183,13 +193,7 @@ const server = Bun.serve<SocketData>({ port: Number(process.env.MOCK_SPRITES_POR
     if (!match) return new Response("missing", { status: 404 });
     if (match[2] === "proxy") return server.upgrade(req, { data: { sprite: match[1] } }) ? undefined : new Response("upgrade", { status: 400 });
     if (match[2] === "exec") {
-      const wake = asleep.get(match[1]!);
-      if (wake) {
-        const ms = wakeDelay.get(match[1]!) ?? 0;
-        wakeDelay.delete(match[1]!);
-        if (ms) await Bun.sleep(ms);
-        asleep.delete(match[1]!); wake();
-      }
+      await wakeMockSprite(match[1]!);
       const argv = url.searchParams.getAll("cmd");
       const script = argv[0] === "sh" ? argv.at(-1) ?? "" : "";
       if (/__ravix_git__|git push -u origin HEAD/.test(script)) {

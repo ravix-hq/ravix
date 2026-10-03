@@ -508,6 +508,50 @@ defmodule Ravix.Fountain do
     end
   end
 
+  @doc """
+  `POST /api/conversations/:id/wake`: bring the conversation's machine and
+  server up without opening a turn (managoat/fountain#2551).
+
+  `:awake` is a server that was already running, so nothing was done.
+  `:waking` is one this request started: a suspended machine was resumed, or
+  one that was gone is being replaced, and the `reattach` or `provision`
+  stages follow on the event stream. The conversation stays idle and keeps
+  its session either way.
+
+  Refused as a prompt's wake is: 402 `insufficient_credits`, 404, 409
+  `sandbox_reset_pending`, 410 `conversation_terminated`, 503 while the
+  machine or fleet is unavailable. Any other `status` is not one Fountain
+  documents and is an error rather than an atom made from it: a 502, since
+  it was upstream that answered something Ravix cannot read. A Fountain
+  older than #2551 answers its router's 404, which has no `error` code; a
+  missing conversation's 404 has one.
+  """
+  @spec wake(Client.t(), id()) :: result(:awake | :waking)
+  def wake(client, id) do
+    path = "/api/conversations/#{escape(id)}/wake"
+
+    with {:ok, body} <- data(client, "POST", path) do
+      case body do
+        %{"status" => "awake"} ->
+          {:ok, :awake}
+
+        %{"status" => "waking"} ->
+          {:ok, :waking}
+
+        _ ->
+          Logger.error("ravix: fountain answered an unknown wake status on POST #{path}")
+
+          {:error,
+           %Error{
+             status: 502,
+             code: "wake_status_unknown",
+             message: "Fountain answered a wake with a status Ravix does not know",
+             kind: :api
+           }}
+      end
+    end
+  end
+
   @doc "`POST /api/conversations/:id/terminate`: end the conversation."
   @spec terminate(Client.t(), id()) :: outcome()
   def terminate(client, id) do

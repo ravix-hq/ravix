@@ -125,6 +125,14 @@ defmodule Ravix.Fountain.Error do
 
   def sandbox_suspended?(%__MODULE__{}), do: false
 
+  @doc """
+  A 404 from Fountain's router rather than from a resource: Phoenix's own
+  body carries no `error` code, while every missing record names one.
+  """
+  @spec route_missing?(term()) :: boolean()
+  def route_missing?(%__MODULE__{status: 404, code: nil}), do: true
+  def route_missing?(_), do: false
+
   @doc "The vault endpoints deliberately conflate malformed, foreign and missing IDs."
   def vault_gone?(%__MODULE__{status: status}), do: status in [404, 410]
 
@@ -248,6 +256,20 @@ defmodule Ravix.Fountain.Error do
 
   def public_message("inference_source_changed"),
     do: "The agent connection changed. Wake the agent to continue."
+
+  # The refusals a machine's wake shares with a prompt's (managoat/fountain#2551).
+  def public_message("insufficient_credits"),
+    do: "The machine service is out of credits. Ask the administrator to add more."
+
+  def public_message("conversation_terminated"),
+    do: "This track's agent session has ended, so it cannot be woken."
+
+  def public_message("sandbox_reset_pending"),
+    do: "This track's machine is being torn down or reset. Try again once it finishes."
+
+  def public_message(code)
+      when code in ["sandbox_unavailable", "fleet_full", "provisioning"],
+      do: "The machine is not available right now. Try again in a moment."
 
   def public_message(_),
     do: "The machine service could not complete the request. Try again in a moment."

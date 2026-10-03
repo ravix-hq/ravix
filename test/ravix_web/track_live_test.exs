@@ -2963,6 +2963,24 @@ defmodule RavixWeb.TrackLiveTest do
       assert has_element?(ctx.view, "#panel-wake:not([disabled])", "Wake")
     end
 
+    test "a wake Fountain refuses is said in the words a prompt's refusal uses", ctx do
+      ctx = asleep_page(ctx)
+
+      expect(Tracks, :wake, fn _, _ ->
+        {:error,
+         %Ravix.Fountain.Error{
+           status: 402,
+           code: "insufficient_credits",
+           message: "insufficient_credits"
+         }}
+      end)
+
+      ctx.view |> element("#panel-wake") |> render_click()
+      assert toasted(ctx) =~ "out of credits"
+      refute toasted(ctx) =~ "insufficient_credits"
+      assert has_element?(ctx.view, "#panel-wake:not([disabled])", "Wake")
+    end
+
     test "a revoked session cannot wake the machine", ctx do
       ctx = asleep_page(ctx)
       reject(&Tracks.wake/2)

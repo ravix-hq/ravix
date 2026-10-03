@@ -1467,18 +1467,30 @@ defmodule Ravix.Tracks do
   Wake the track's machine now, rather than with the next message.
 
   Setup parked on a sleeping shared machine is woken the way `retry/3` wakes
-  it. Anything else is asked whether it is running with a probe that runs a
-  command (`Ravix.Terminal.status/3` without `passive`), which is what wakes
-  a suspended machine; its answer clears the asleep mark
-  (`Ravix.Tracks.Sleep`). Write access, like a message: a Read member
-  (ADR 0010) cannot wake a machine they could not prompt.
+  it. A track with a conversation asks Fountain to wake it
+  (`Ravix.Fountain.wake/2`), which resumes the machine without opening a
+  turn and is refused for the reasons a prompt would be. Either answer clears
+  the asleep mark (`Ravix.Tracks.Sleep`): `:awake` is a machine already up,
+  and `:waking` one Fountain has resumed or is replacing, which no stream
+  event will say again. A track with no conversation yet, or a Fountain that
+  predates the route, is asked with a probe that runs a command
+  (`Ravix.Terminal.status/3` without `passive`), which also wakes a
+  suspended machine and clears the mark. Write access, like a message: a
+  Read member (ADR 0010) cannot wake a machine they could not prompt.
   """
   @spec wake(User.t(), String.t()) :: :ok | {:error, reason()}
   def wake(%User{} = user, track_id) do
     with {:ok, %{track: track}} <- Access.track_access(user, track_id, :write) do
-      if track.setup_state == "running" and track.setup_error_code == "sandbox_suspended",
-        do: retry(user, track_id),
-        else: probe_awake(user, track_id)
+      cond do
+        track.setup_state == "running" and track.setup_error_code == "sandbox_suspended" ->
+          retry(user, track_id)
+
+        track.conversation_id in [nil, ""] ->
+          probe_awake(user, track_id)
+
+        true ->
+          wake_conversation(user, track)
+      end
     end
   end
 
@@ -1493,6 +1505,24 @@ defmodule Ravix.Tracks do
 
   def asleep?(%Track{setup_state: "running", setup_error_code: "sandbox_suspended"}), do: true
   def asleep?(%Track{}), do: false
+
+  # The probe is kept only for a Fountain that answers the route itself with
+  # its router's 404; drop it once hosted Fountain serves #2551.
+  defp wake_conversation(user, track) do
+    with {:ok, client} <- fountain() do
+      client |> Fountain.wake(track.conversation_id) |> woken(user, track)
+    end
+  end
+
+  defp woken({:ok, _awake_or_waking}, _user, track) do
+    # ownership: Access.track_access in wake/2 admitted this track with Write.
+    if asleep?(track), do: Sleep.record(track.id, false)
+    :ok
+  end
+
+  defp woken({:error, error} = failure, user, track) do
+    if Fountain.Error.route_missing?(error), do: probe_awake(user, track.id), else: failure
+  end
 
   defp probe_awake(user, track_id) do
     case Ravix.Terminal.status(user, track_id) do

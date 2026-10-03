@@ -501,6 +501,48 @@ defmodule RavixWeb.Live.MachineDockShellTest do
       refute has_element?(view, empty)
     end
 
+    test "a wake Fountain refuses says why in the tab, in a prompt's words, until Wake again",
+         ctx do
+      asleep(ctx, false)
+
+      refusal = %Ravix.Fountain.Error{
+        status: 402,
+        code: "insufficient_credits",
+        message: "insufficient_credits"
+      }
+
+      expect(Tracks, :wake, fn _, _ -> {:error, refusal} end)
+      %{view: view} = open(ctx, ctx.owner)
+      id = new_terminal(view)
+      render_async(view, 5_000)
+
+      empty = "#shell-asleep-#{id}"
+      assert has_element?(view, "#{empty} [role=status]", "Machine is asleep")
+      assert has_element?(view, "#{empty} .dimmer", "out of credits")
+      assert has_element?(view, "#{empty} button", "Wake")
+      refute render(view) =~ "insufficient_credits"
+
+      # A second wake clears the reason while it runs and says its own.
+      test = self()
+
+      expect(Tracks, :wake, fn _, _ ->
+        send(test, {:waking, self()})
+
+        receive do
+          :go -> {:error, %{refusal | status: 410, code: "conversation_terminated"}}
+        after
+          5_000 -> :ok
+        end
+      end)
+
+      view |> element("#{empty} button", "Wake") |> render_click()
+      assert_receive {:waking, wake}, 2_000
+      refute has_element?(view, "#{empty} .dimmer")
+      send(wake, :go)
+      render_async(view, 5_000)
+      assert has_element?(view, "#{empty} .dimmer", "has ended")
+    end
+
     test "an existing tab asks to attach while it sleeps: woken first, never a timeout", ctx do
       {:ok, tab} = Terminal.open_tab(ctx.owner, ctx.track.id)
       asleep(ctx, true, self())
@@ -599,11 +641,22 @@ defmodule RavixWeb.Live.MachineDockShellTest do
   end
 
   test "a signed-out page's Wake is refused before it reaches the machine", ctx do
+    # A track with a conversation, so a wake that got through would ask Fountain.
+    Repo.update!(Ecto.Changeset.change(ctx.track, conversation_id: "conv-signed-out"))
+    test = self()
+
+    stub(Ravix.Fountain, :wake, fn _, _ ->
+      send(test, :fountain_wake)
+      {:error, %Ravix.Fountain.Error{status: 503, code: "sandbox_unavailable"}}
+    end)
+
     asleep(ctx, false)
     %{view: view, hash: hash} = open(ctx, ctx.owner)
     id = new_terminal(view)
     render_async(view, 5_000)
     assert has_element?(view, "#shell-asleep-#{id}", "Machine is asleep")
+    assert has_element?(view, "#shell-asleep-#{id} .dimmer", "not available right now")
+    assert_received :fountain_wake
     SpritesFake.calls()
 
     Accounts.end_session(hash)
@@ -619,6 +672,7 @@ defmodule RavixWeb.Live.MachineDockShellTest do
 
     assert_receive {:EXIT, _pid, {:shutdown, {:redirect, %{to: "/login"}}}}, 2_000
 
+    refute_received :fountain_wake
     refute Enum.any?(SpritesFake.calls(), &(&1.argv == ["true"]))
   end
 

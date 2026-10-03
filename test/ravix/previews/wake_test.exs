@@ -4,8 +4,9 @@ defmodule Ravix.Previews.WakeTest do
   so as it goes, joins a start already under way, and tells whoever follows
   the track about every change --- without telling anybody who may not look.
 
-  The machine is the fixture's scripted Sprites provider: `Ravix.Tracks.wake/2`
-  probes it with `Sprites.exec/4`, which is the provider boundary this stubs.
+  The track has a conversation, so `Ravix.Tracks.wake/2` asks Fountain
+  (`Ravix.Fountain.wake/2`), which is the provider boundary this stubs; the
+  service itself is the fixture's scripted Sprites provider.
   """
   use Ravix.DataCase, async: true, group: :preview_ports
   use Mimic
@@ -69,9 +70,9 @@ defmodule Ravix.Previews.WakeTest do
 
     # Held until the test has seen the page's first answer, so "waking" is
     # observed rather than raced past.
-    stub(Ravix.Sprites, :reachable?, fn _cfg, "s1" ->
+    stub(Ravix.Fountain, :wake, fn _client, "c1" ->
       send(me, {:waking, self()})
-      receive do: (:wake -> true)
+      receive do: (:wake -> {:ok, :waking})
     end)
 
     assert {:ok, %{state: :waking, open_url: url}} =
@@ -101,11 +102,16 @@ defmodule Ravix.Previews.WakeTest do
   test "a machine that will not wake fails the start with that reason", ctx do
     asleep!(ctx.track)
     assert :ok = Previews.subscribe(ctx.owner, ctx.track.id)
-    stub(Ravix.Sprites, :reachable?, fn _cfg, "s1" -> false end)
+
+    stub(Ravix.Fountain, :wake, fn _client, "c1" ->
+      {:error,
+       %Ravix.Fountain.Error{status: 503, code: "sandbox_unavailable", message: "provider text"}}
+    end)
 
     assert {:ok, %{state: :waking}} = Previews.run(ctx.owner, ctx.track.id)
     view = follow_until(ctx.owner, ctx.track.id, :failed)
-    assert view.error =~ "Machine couldn't wake: This track's machine did not wake."
+    assert view.error =~ "Machine couldn't wake: The machine is not available right now."
+    refute view.error =~ "provider text"
     assert Store.get(ctx.track.id).desired == :stopped
     await_background()
     # Nothing was defined on a machine that never answered, and it still
@@ -118,9 +124,11 @@ defmodule Ravix.Previews.WakeTest do
     asleep!(ctx.track)
     me = self()
 
-    stub(Ravix.Sprites, :reachable?, fn _cfg, "s1" ->
+    stub(Ravix.Fountain, :wake, fn _client, "c1" ->
       send(me, {:waking, self()})
-      receive do: (:answer -> false)
+
+      receive do: (:answer ->
+                     {:error, %Ravix.Fountain.Error{status: 402, code: "insufficient_credits"}})
     end)
 
     assert {:ok, %{state: :waking}} = Previews.run(ctx.owner, ctx.track.id)
@@ -135,7 +143,7 @@ defmodule Ravix.Previews.WakeTest do
   test "a wake that raises still settles the start instead of leaving it waking", ctx do
     asleep!(ctx.track)
     assert :ok = Previews.subscribe(ctx.owner, ctx.track.id)
-    stub(Ravix.Sprites, :reachable?, fn _cfg, _sprite -> raise "tunnel closed" end)
+    stub(Ravix.Fountain, :wake, fn _client, _id -> raise "tunnel closed" end)
 
     assert {:ok, %{state: :waking}} = Previews.run(ctx.owner, ctx.track.id)
 
