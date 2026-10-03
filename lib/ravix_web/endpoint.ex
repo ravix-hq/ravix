@@ -1,6 +1,7 @@
 defmodule RavixWeb.Endpoint do
   use Phoenix.Endpoint, otp_app: :ravix
 
+  alias RavixWeb.Plugs.RoutineBody
   alias RavixWeb.Tooling.RPC
 
   # The session is stored in the cookie and signed, so its contents can be
@@ -78,6 +79,10 @@ defmodule RavixWeb.Endpoint do
 
   # Protocol clients need a JSON-RPC parse error, not an HTML error page.
   # Other request bodies keep Phoenix's existing parser/error behavior.
+  defp parse_body(%{path_info: ["api", "routines", _id, "webhook"]} = conn, _opts) do
+    RoutineBody.call(conn)
+  end
+
   defp parse_body(conn, _opts) do
     opts = [
       parsers: [:urlencoded, :multipart, :json],

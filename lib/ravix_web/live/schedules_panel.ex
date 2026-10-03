@@ -292,6 +292,13 @@ defmodule RavixWeb.Live.SchedulesPanel do
             </article>
           </section>
         </div>
+        <.live_component
+          module={RavixWeb.Live.RoutinesPanel}
+          id="webhook-routines"
+          current_user={@current_user}
+          session_hash={@session_hash}
+          projects={@projects}
+        />
       </.stage_page>
     </div>
     """
