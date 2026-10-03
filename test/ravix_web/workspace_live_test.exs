@@ -1738,7 +1738,13 @@ defmodule RavixWeb.WorkspaceLiveTest do
     {:ok, view, _} = live(log_in_user(conn, user), "/home")
     render_async(view)
 
-    for id <- ["top-new-track", "home-new-track", "mobile-new-track"] do
+    assert has_element?(
+             view,
+             "#top-new-track[data-new-track-trigger][aria-keyshortcuts='Control+N Meta+N']",
+             "Create"
+           )
+
+    for id <- ["home-new-track", "mobile-new-track"] do
       assert has_element?(
                view,
                "##{id}[data-new-track-trigger][aria-keyshortcuts='Control+N Meta+N']",

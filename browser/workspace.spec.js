@@ -435,12 +435,12 @@ test('home quick start creates a scratch project and recent navigation survives 
 
 test('workspace titles follow links, reloads and browser history', async ({ page }) => {
   await signIn(page);
-  for (const name of ['Home', 'Inbox', 'Schedules']) {
+  for (const [name, title] of [['Home', 'Home'], ['Inbox', 'Inbox'], ['Routines', 'Schedules']]) {
     await page.getByRole('link', { name, exact: true }).first().click();
-    await expect(page).toHaveTitle(`${name} · Ravix`);
+    await expect(page).toHaveTitle(`${title} · Ravix`);
     await page.reload();
     await expect(page.locator('[data-phx-main]')).toHaveClass(/phx-connected/);
-    await expect(page).toHaveTitle(`${name} · Ravix`);
+    await expect(page).toHaveTitle(`${title} · Ravix`);
   }
   await expect(page.getByRole('button', { name: 'Refresh', exact: true })).toHaveAccessibleDescription(
     'Refresh to see the latest run status and changes made in another tab.');

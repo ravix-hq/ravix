@@ -109,7 +109,7 @@ test('project tree and quick-jump navigate with keyboard and fit desktop and pho
     const nav = page.locator(width === 500 ? '.workspace-mobile-nav' : '.yard-nav');
     await nav.getByRole('link', { name: /^Inbox(?: \d+)?$/ }).click();
     await expect(page).toHaveURL(/\/inbox$/);
-    await nav.getByRole('link', { name: 'Schedules', exact: true }).click();
+    await nav.getByRole('link', { name: 'Routines', exact: true }).click();
     await expect(page).toHaveURL(/\/schedules$/);
   }
 });

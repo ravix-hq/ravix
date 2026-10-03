@@ -10,7 +10,7 @@ test('Add a repository searches, picks with Enter, keeps scratch, and hands work
   await signIn(page, 'addrepository', '/home');
   await connectClaude(page);
   const nav = page.locator('#yard .yard-nav');
-  await expect(nav.getByRole('button', { name: 'New track' })).toBeVisible();
+  await expect(nav.getByRole('button', { name: 'Create', exact: true })).toBeVisible();
   await expect(nav.getByRole('button', { name: 'New project' })).toHaveCount(0);
 
   await nav.getByRole('button', { name: 'Add a repository', exact: true }).click();
@@ -45,7 +45,7 @@ test('Add a repository searches, picks with Enter, keeps scratch, and hands work
   await expect(page.locator('.crumbs')).toContainText('atlas-api');
 
   // Work in it starts from New track, with the new repository preselected.
-  await nav.getByRole('button', { name: 'New track' }).click();
+  await nav.getByRole('button', { name: 'Create', exact: true }).click();
   const newTrack = page.getByRole('dialog', { name: 'New track', exact: true });
   await expect(newTrack.locator('#new-track-repo-trigger')).toContainText('atlas-api');
   await expect(newTrack.getByRole('textbox', { name: 'What do you want to work on?' })).toBeFocused();

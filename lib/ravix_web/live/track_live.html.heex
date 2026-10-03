@@ -111,7 +111,7 @@
         phx-value-name="people"
         aria-label={"Track sharing (#{length(@present)} viewing now)"}
         data-tip={"Track sharing (#{length(@present)} viewing now)"}
-      ><.icon name="add-person" size={15} /><.viewers present={@present} /></button>
+      ><.icon name="add-person" size={15} /><span>Share</span><.viewers present={@present} /></button>
       <div id="track-more" class="chip-menu" phx-hook="ChipMenu">
         <button
           type="button"
@@ -1002,7 +1002,7 @@
           <button
             :for={
               {tab, label} <- [
-                {:files, "Files"},
+                {:files, "All files"},
                 {:changes, "Changes"},
                 {:checks, "Checks"},
                 {:preview, "Preview"}

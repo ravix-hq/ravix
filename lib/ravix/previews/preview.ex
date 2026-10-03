@@ -66,14 +66,6 @@ defmodule Ravix.Previews.Preview do
              desired state generation last_activity lease_until started_at error logs
              cleanup stop_pending unavailable row)a
 
-  @doc "The two words `desired` may be, in the order the reconciler reads them."
-  @spec desired_states() :: [atom()]
-  def desired_states, do: @desired
-
-  @doc "The four words `state` may be."
-  @spec states() :: [atom()]
-  def states, do: @states
-
   @doc "A preview row. A port is only meaningful with a sprite, and the index only guards that case."
   @spec changeset(t(), map()) :: Ecto.Changeset.t()
   def changeset(preview, attrs) do
