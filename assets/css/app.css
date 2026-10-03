@@ -2262,6 +2262,14 @@ section.first-prompt#project-start { align-self: center; padding: 32px 24px; }
 .toast.bad { border-color: var(--danger-line); }
 .toast .ico { flex: none; margin-top: 1px; }
 
+/* A tab that outlived a deploy (RAV-138): first in the toast stack, and never
+   dismissed until the person reloads. */
+.reload-bar {
+  display: flex; align-items: center; gap: 12px; padding: 8px 8px 8px 14px;
+  background: var(--panel); border: 1px solid var(--accent-line); border-radius: var(--radius-lg);
+  box-shadow: 0 8px 24px var(--shadow); font-size: 13px; color: var(--ink);
+}
+
 /* ── the LiveView runtime ──────────────────────────────────────────────── */
 
 /* The runtime toggles `hidden` on elements it shows and hides (`JS.show`,

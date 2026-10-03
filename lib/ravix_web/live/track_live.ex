@@ -3782,7 +3782,14 @@ defmodule RavixWeb.TrackLive do
         aria-hidden="true"
         title={"@" <> viewer.login}
       >
-        <img :if={Map.get(viewer, :avatar_url)} src={viewer.avatar_url} alt="" loading="lazy" />
+        <img
+          :if={Map.get(viewer, :avatar_url)}
+          src={viewer.avatar_url}
+          alt=""
+          loading="lazy"
+          width="20"
+          height="20"
+        />
         <span :if={!Map.get(viewer, :avatar_url)}>{viewer.login |> String.first() |> String.upcase()}</span>
       </span>
       <span :if={@more > 0} class="track-viewer track-viewer-more" aria-hidden="true">+{@more}</span>
