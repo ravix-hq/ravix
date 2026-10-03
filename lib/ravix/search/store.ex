@@ -188,7 +188,7 @@ defmodule Ravix.Search.Store do
       thread_id: th.id,
       conversation_id: e.conversation_id,
       turn_id: e.turn_id,
-      title: th.title,
+      title: fragment("coalesce(?, ?) || ' · ' || ?", t.title, t.slug, th.title),
       excerpt:
         fragment(
           ~S|left(ts_headline('simple', ?, plainto_tsquery('simple', ?), 'StartSel="", StopSel="", MaxWords=40, MinWords=15'), 400)|,
