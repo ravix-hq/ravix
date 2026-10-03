@@ -1101,6 +1101,11 @@
                   diff_filter={@diff_filter}
                   diff_show_large={@diff_show_large}
                 />
+                <ReviewPanel.panel
+                  :if={@panel.tab in [:changes, :checks]}
+                  state={@review}
+                  panel={@panel}
+                />
                 <.empty
                   :if={
                     @panel.tab == :preview && @preview && @preview.state == :stopped &&

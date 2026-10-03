@@ -1458,7 +1458,7 @@ defmodule RavixWeb.WorkspaceLive do
   def handle_info(:project_left_behind, socket),
     do: {:noreply, socket |> reload_async() |> push_patch(to: "/")}
 
-  def handle_info({:hub, %Event{name: name}}, socket) when name in [:here, :queue],
+  def handle_info({:hub, %Event{name: name}}, socket) when name in [:here, :queue, :review],
     do: {:noreply, socket}
 
   def handle_info({:hub, %Event{name: :turn, project_id: id}}, socket),

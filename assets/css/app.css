@@ -3129,3 +3129,14 @@ html[data-yard="closed"] .workspace-gear { display: none; }
    every control's own ring. */
 html[data-input="pointer"] :focus-visible,
 html[data-input="pointer"] .model-option:has(input:focus-visible) { outline: none; }
+
+/* Persistent human diff review discussions. */
+.review-panel { padding: 1rem; border-top: 1px solid var(--line); }
+.review-summary { display: grid; gap: .5rem; overflow-wrap: anywhere; }
+.review-discussion { margin-top: 1rem; padding: .75rem; border: 1px solid var(--line); border-radius: .5rem; overflow-wrap: anywhere; }
+.review-discussion[data-selected="true"] { border-color: var(--accent); }
+.review-panel textarea { display: block; width: 100%; min-height: 5rem; margin: .5rem 0; }
+.review-panel pre { overflow-x: auto; }
+.review-text { white-space: pre-wrap; }
+.review-line-button { cursor: pointer; padding: 0 .25rem; border: 0; background: transparent; color: inherit; }
+.review-line-button:hover { text-decoration: underline; }

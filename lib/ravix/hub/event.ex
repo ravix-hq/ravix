@@ -61,13 +61,26 @@ defmodule Ravix.Hub.Event do
     * `:machine` -- `Ravix.Tracks.Sleep` recorded that `track_id`'s machine
       went to sleep or woke. The fact is on the track's row, so readers
       re-read the database and the memo, not Fountain.
+    * `:review` -- human diff discussions changed; track pages re-read Reviews.
     * `:reply` -- `Ravix.Tracks.Reply` kept the opening of a thread's newest
       reply. Only a rail shows it, and re-reads the database and the memo.
   """
 
-  @names [:people, :tracks, :turn, :queue, :settings, :here, :read, :comment, :machine, :reply]
+  @names [
+    :people,
+    :tracks,
+    :turn,
+    :queue,
+    :settings,
+    :here,
+    :read,
+    :comment,
+    :machine,
+    :reply,
+    :review
+  ]
 
-  @typedoc "Which of the ten things happened."
+  @typedoc "Which of the eleven things happened."
   @type name ::
           :people
           | :tracks
@@ -79,6 +92,7 @@ defmodule Ravix.Hub.Event do
           | :comment
           | :machine
           | :reply
+          | :review
 
   @type t :: %__MODULE__{
           name: name(),
