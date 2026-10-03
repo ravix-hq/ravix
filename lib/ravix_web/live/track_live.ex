@@ -3048,15 +3048,17 @@ defmodule RavixWeb.TrackLive do
   end
 
   # Fountain's diff answered but the sprite was asleep, so files Git is not
-  # tracking yet could not be listed: "No changes" would be a guess.
+  # tracking yet could not be listed: "No changes" would be a guess. From a
+  # snapshot the bar above already says asleep; what is left to say is where
+  # those files are.
   defp panel_body(%{data: %Diff{diff: "", untracked: :asleep}} = assigns) do
     ~H"""
     <.empty
       pane
       id="changes-empty"
-      icon="moon"
+      icon={if @data.snapshot_at, do: "branch", else: "moon"}
       title="No tracked changes"
-      because="The machine is asleep, so new files Git is not tracking yet cannot be listed."
+      because={untracked_asleep(@data)}
     />
     """
   end
@@ -3100,7 +3102,7 @@ defmodule RavixWeb.TrackLive do
       </p>
       <p :if={@data.truncated} class="changes-note">Diff is truncated.</p>
       <p :if={@data.untracked == :asleep} id="changes-untracked-asleep" class="changes-note">
-        The machine is asleep, so new files Git is not tracking yet are not listed.
+        {untracked_asleep(@data)}
       </p>
       <div :if={!@selected}>
         <form id="diff-filter-form" phx-change="filter-diff" phx-submit="filter-diff">
@@ -3263,11 +3265,22 @@ defmodule RavixWeb.TrackLive do
         phx-click="wake"
         disabled={@waking}
       >
-        {if @waking, do: "Waking…", else: "Wake for live files"}
+        {cond do
+          @waking -> "Waking…"
+          @tab == :changes -> "Wake for live changes"
+          true -> "Wake for live files"
+        end}
       </button>
     </p>
     """
   end
+
+  defp untracked_asleep(%Diff{snapshot_at: nil}),
+    do: "The machine is asleep, so new files Git is not tracking yet are not listed."
+
+  defp untracked_asleep(%Diff{}),
+    do:
+      "New files Git is not tracking yet are not in this diff. Files shows them as of the snapshot."
 
   # When what the panel is holding was answered from the parked machine's
   # snapshot rather than by the machine.

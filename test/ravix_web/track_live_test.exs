@@ -376,6 +376,30 @@ defmodule RavixWeb.TrackLiveTest do
       refute has_element?(ctx.view, "#panel-asleep")
     end
 
+    test "Changes says it is the snapshot's diff and where the untracked files are", ctx do
+      stub(Tracks, :diff, fn _, _ ->
+        {:ok,
+         %Ravix.Tracks.Diff{
+           path: ctx.track.workdir,
+           repo_root: ctx.track.workdir,
+           diff: "",
+           truncated: false,
+           changes: [],
+           files: [],
+           untracked: :asleep,
+           snapshot_at: ctx.at
+         }}
+      end)
+
+      render_click(ctx.view, "panel", %{name: "changes"})
+      settle(ctx.view)
+
+      assert has_element?(ctx.view, "#panel-snapshot", "Asleep. Showing changes as of")
+      assert has_element?(ctx.view, "#panel-snapshot-wake", "Wake for live changes")
+      assert has_element?(ctx.view, "#changes-empty", "Files shows them as of the snapshot.")
+      refute has_element?(ctx.view, "#changes-empty", "The machine is asleep")
+    end
+
     test "a turn starting reads the live tab again", ctx do
       assert_receive {:listing_call, _}
 

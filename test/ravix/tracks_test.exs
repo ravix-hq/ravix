@@ -2004,8 +2004,12 @@ defmodule Ravix.TracksTest do
 
       {:ok, snapshot_at, 0} = DateTime.from_iso8601(at)
 
-      assert {:ok, %Files.Listing{snapshot_at: ^snapshot_at, entries: [%{name: "a.txt"}]}} =
+      assert {:ok,
+              %Files.Listing{snapshot_at: ^snapshot_at, entries: [%{name: "a.txt"}]} = listing} =
                Tracks.files(ctx.owner, ctx.track.id, nil)
+
+      # Nor does the listing's metadata: it comes back as the snapshot gave it.
+      assert {:ok, ^listing} = Tracks.file_metadata(ctx.owner, ctx.track.id, listing)
 
       assert {:ok, %Files.Content{content: "two", snapshot_at: ^snapshot_at}} =
                Tracks.file(ctx.owner, ctx.track.id, "a.txt")

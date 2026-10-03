@@ -2774,8 +2774,10 @@ defmodule Ravix.Tracks do
     end
   end
 
+  # A snapshot listing is a parked machine's, so there is nothing to ask.
   defp read_file_metadata(user, track, listing) do
-    with true <- confine(track.workdir, listing.path) == listing.path,
+    with nil <- listing.snapshot_at,
+         true <- confine(track.workdir, listing.path) == listing.path,
          {:ok, %{available: true}} <- Ravix.Terminal.status(user, track.id, passive: true) do
       metadata =
         Ravix.Terminal.exec(user, track.id, %Ravix.Terminal.Request{

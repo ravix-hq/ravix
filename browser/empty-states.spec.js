@@ -75,3 +75,42 @@ test('an asleep track says so once, in the inspector, and Wake wakes it', async 
   await expect(page.locator('#preview-empty h3')).toHaveText('No preview running');
   expect((await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa']).analyze()).violations).toEqual([]);
 });
+
+// A park that kept a snapshot (Fountain's ADR 0063): the tabs show what the
+// machine held then, under a bar that says when, and Wake brings them live.
+test("an asleep track's snapshot keeps Files and Changes on screen until Wake", async ({ page, request }) => {
+  test.setTimeout(120_000);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await signIn(page, 'threadruntime', '/home');
+  await connectClaude(page);
+  await page.getByRole('button', { name: 'Add a repository', exact: true }).first().click();
+  const dialog = page.getByRole('dialog', { name: 'Add a repository', exact: true });
+  await dialog.getByLabel('Project name', { exact: true }).fill('Snapshot');
+  await dialog.getByRole('button', { name: 'Create scratch project', exact: true }).click();
+  await expect(dialog).toHaveCount(0);
+  await page.locator('#yard .workspace-project.current .project-add').click();
+  await page.getByRole('button', { name: 'Create track', exact: true }).click();
+  await expect(page).toHaveURL(url => url.pathname.includes('/t/') && !url.search);
+  await expect(page.locator('#track-machine-scope')).toHaveText('Own machine');
+  await expect(page.locator('#track-setup-status')).toHaveCount(0, { timeout: 45_000 });
+
+  const trackId = new URL(page.url()).pathname.split('/t/')[1];
+  const sandbox = await sandboxOf(request, trackId);
+  expect((await request.post(`${mock}/__browser/sandbox-status`, { data: { id: sandbox, status: 'suspended', snapshot: true } })).ok()).toBe(true);
+  await page.locator('.panel-refresh').click();
+
+  const bar = page.locator('#panel-snapshot');
+  await expect(bar).toContainText('Asleep. Showing files as of');
+  await expect(page.locator('.file-explorer')).toBeVisible();
+  await expect(page.locator('#panel-asleep')).toHaveCount(0);
+  await expect(page.locator('#track-machine-state')).toHaveText('Asleep');
+  expect((await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa']).analyze()).violations).toEqual([]);
+
+  await page.getByRole('button', { name: 'Changes', exact: true }).click();
+  await expect(bar).toContainText('Asleep. Showing changes as of');
+  await expect(page.locator('#changes-untracked-asleep')).toHaveText(/Files shows them as of the snapshot\./);
+
+  await bar.getByRole('button', { name: 'Wake for live changes', exact: true }).click();
+  await expect(bar).toHaveCount(0, { timeout: 20_000 });
+  await expect(page.locator('#track-machine-state')).not.toHaveText('Asleep');
+});
