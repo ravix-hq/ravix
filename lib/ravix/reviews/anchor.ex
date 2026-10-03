@@ -30,15 +30,16 @@ defmodule Ravix.Reviews.Anchor do
   @spec revision(Diff.t(), String.t()) :: String.t() | nil
   def revision(%Diff{} = diff, path), do: Map.get(revisions(diff), path)
 
-  @spec status(map(), map() | nil, Diff.untracked()) :: status()
-  def status(_discussion, nil, _availability), do: :unchecked
+  @spec status(map(), map() | nil, Diff.untracked(), boolean()) :: status()
+  def status(discussion, revisions, availability, truncated \\ false)
+  def status(_discussion, nil, _availability, _truncated), do: :unchecked
 
-  def status(discussion, revisions, availability) do
+  def status(discussion, revisions, availability, truncated) do
     case Map.fetch(revisions, discussion.path) do
       {:ok, revision} when revision == discussion.revision -> :current
       {:ok, nil} -> :unverifiable
       {:ok, _} -> :outdated
-      :error when availability != :listed -> :unverifiable
+      :error when truncated or availability != :listed -> :unverifiable
       :error -> :outdated
     end
   end
