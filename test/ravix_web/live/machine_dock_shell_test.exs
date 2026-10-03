@@ -8,7 +8,7 @@ defmodule RavixWeb.Live.MachineDockShellTest do
   import Mimic
 
   alias Ravix.Accounts
-  alias Ravix.Fountain.FakeTransport
+  alias Ravix.Fountain.{AwakeReads, FakeTransport}
   alias Ravix.People
   alias Ravix.Repo
   alias Ravix.SpritesFake
@@ -53,6 +53,8 @@ defmodule RavixWeb.Live.MachineDockShellTest do
     stub(Tracks, :wake_on_open, fn _, _, _ -> {:ok, :skipped} end)
 
     # `Ravix.Tracks.wake/2` asks Fountain; an awake machine is `awake`.
+    AwakeReads.stub()
+
     stub(Ravix.Fountain, :wake, fn _client, "c1" ->
       send(test, :fountain_wake)
       {:ok, :awake}
@@ -384,6 +386,8 @@ defmodule RavixWeb.Live.MachineDockShellTest do
         SpritesFake.kill_exec(conn, ctx.cfg) || machine_call(conn, call, machine)
       end)
 
+      AwakeReads.stub()
+
       stub(Ravix.Fountain, :wake, fn _client, "c1" ->
         send(test, :fountain_wake)
         fountain_wake(machine)
@@ -617,6 +621,8 @@ defmodule RavixWeb.Live.MachineDockShellTest do
     # Retry wakes the machine (Fountain answers awake, since it is up) and
     # attaches again, at the size the pane last asked for.
     test = self()
+
+    AwakeReads.stub()
 
     stub(Ravix.Fountain, :wake, fn _client, "c1" ->
       send(test, {:waking, self()})
