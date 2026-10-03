@@ -31,6 +31,7 @@ import { WORKSPACE_ROOT, WORK_ROOT, RECEIPT_PATH, parseChannel } from "../shared
 let updateMockPreview = (_workdir: string): void => {};
 let setMockSpriteAsleep = (_sprite: string, _wake: (() => void) | null, _wakeMs?: number): void => {};
 let setMockPtySilent = (_sprite: string, _on: boolean): void => {};
+let wakeMockSprite = async (_sprite: string): Promise<void> => {};
 
 const PORT = Number(process.env.MOCK_PORT || 8793);
 const BASE = `http://localhost:${PORT}`;
@@ -78,7 +79,18 @@ interface Conv {
 interface Disk {
   files: Map<string, string>;
   worktrees: Map<string, { branch: string | null; repoPath: string | null }>;
+  /** What Fountain kept as the sandbox parked (its ADR 0063), when it kept anything. */
+  snapshot?: Snapshot;
 }
+
+interface Snapshot {
+  at: string;
+  files: Map<string, string>;
+  clean: boolean;
+}
+
+/** Fountain keeps no file over this in a park's snapshot. */
+const SNAPSHOT_FILE_LIMIT = 256 * 1024;
 
 interface Box extends Disk {
   user_id: string;
@@ -916,11 +928,31 @@ const cleanBoxes = new Set<string>();
 /** Sandboxes whose file and diff reads the browser harness has slowed, in ms. */
 const readDelays = new Map<string, number>();
 
-/** Provider lifecycle control for deterministic mock contract tests. */
-export function setSandboxStatus(id: string, status: "suspended" | "ready"): void {
+/**
+ * How long a pasted credential takes to be accepted, in ms. Fountain asks the
+ * provider before answering, which is the second or so the connecting state
+ * is on screen; the browser harness sets this to hold that state still long
+ * enough to measure (RAV-135).
+ */
+let credentialDelayMs = 0;
+
+/**
+ * Provider lifecycle control for deterministic mock contract tests. A park
+ * with `snapshot` keeps the worktree's files and diff as Fountain does when
+ * its capture succeeds; without it the park kept nothing, as when the
+ * capture failed, and every disk read is refused.
+ */
+export function setSandboxStatus(id: string, status: "suspended" | "ready", { snapshot = false } = {}): void {
   const box = state.boxes.get(id);
   if (!box) throw new Error("No such mock sandbox");
   box.status = status;
+  box.snapshot = status === "suspended" && snapshot
+    ? {
+      at: new Date().toISOString(),
+      files: new Map([...box.files].filter(([, content]) => content.length <= SNAPSHOT_FILE_LIMIT)),
+      clean: cleanBoxes.has(id),
+    }
+    : undefined;
 }
 
 export async function fountain(req: Request, url: URL): Promise<Response | null> {
@@ -1159,6 +1191,7 @@ export async function fountain(req: Request, url: URL): Promise<Response | null>
     if (method === "PUT") {
       const value = String(body.value ?? "").trim();
       if (!value) return json({ error: "value is required", reason: "empty_value" }, 422);
+      if (credentialDelayMs > 0) await Bun.sleep(credentialDelayMs);
       // Fountain asks the provider whether the value works. Here, anything
       // containing "invalid" does not, so the refusal can be seen in
       // development without a real key to revoke.
@@ -1453,6 +1486,22 @@ export async function fountain(req: Request, url: URL): Promise<Response | null>
     return json({ data: withBox(conv) });
   }
 
+  // managoat/fountain#2551: bring the machine up without opening a turn.
+  // `waking` when this request resumed a suspended one, `awake` otherwise;
+  // refused as a prompt's wake is.
+  const convWake = /^\/api\/conversations\/([^/]+)\/wake$/.exec(p);
+  if (convWake && method === "POST") {
+    const conv = state.conversations.find((c) => c.id === convWake[1]);
+    if (!conv) return json({ error: "not_found" }, 404);
+    if (conv.status === "terminated") return json({ error: "conversation_terminated" }, 410);
+    const box = state.boxes.get(conv.sandbox_id!);
+    if (!box || box.status === "terminated") return json({ error: "sandbox_unavailable", message: "this sandbox cannot take that request right now; send it again shortly" }, 503);
+    if (box.status !== "suspended") return json({ status: "awake" });
+    await wakeMockSprite(box.sprite_name);
+    setSandboxStatus(box.id, "ready");
+    return json({ status: "waking" });
+  }
+
   const convAction = /^\/api\/conversations\/([^/]+)\/(interrupt|terminate)$/.exec(p);
   if (convAction && method === "POST") {
     const conv = state.conversations.find((c) => c.id === convAction[1]);
@@ -1483,8 +1532,13 @@ export async function fountain(req: Request, url: URL): Promise<Response | null>
 
   // ── the box, read-only ───────────────────────────────────────────────
 
-  // Fountain's passive disk reads never wake a parked sandbox.
-  if (disk && /\/api\/sandboxes\/[^/]+\/(files|file|diff)$/.test(p) && disk.status !== "ready") {
+  // Fountain's passive disk reads never wake a parked sandbox. A park that
+  // kept a snapshot answers from it, saying when it was taken; a path it did
+  // not keep is refused as the whole read would have been.
+  const parked = disk && /\/api\/sandboxes\/[^/]+\/(files|file|diff)$/.test(p) && disk.status !== "ready";
+  const snapshot = parked ? disk.snapshot : undefined;
+  const snapshotFile = snapshot && p.endsWith("/file") ? snapshot.files.get(url.searchParams.get("path") ?? "") : "";
+  if (parked && (!snapshot || snapshotFile === undefined)) {
     return json({
       error: "sandbox_not_ready",
       message: `the sandbox is ${disk.status}; files are read from a ready one only`,
@@ -1500,7 +1554,7 @@ export async function fountain(req: Request, url: URL): Promise<Response | null>
   if (sbFiles && disk) {
     const dir = (url.searchParams.get("path") ?? "/").replace(/\/+$/, "");
     const seen = new Map<string, { name: string; type: string; size: number | null }>();
-    for (const [path, content] of disk.files) {
+    for (const [path, content] of snapshot?.files ?? disk.files) {
       if (!path.startsWith(`${dir}/`)) continue;
       const rest = path.slice(dir.length + 1);
       const slash = rest.indexOf("/");
@@ -1510,15 +1564,15 @@ export async function fountain(req: Request, url: URL): Promise<Response | null>
       // every folder as an unopenable file.
       seen.set(name, slash === -1 ? { name, type: "file", size: content.length } : { name, type: "directory", size: null });
     }
-    return json({ data: { path: dir || "/", entries: [...seen.values()], truncated: false } });
+    return json({ data: { path: dir || "/", entries: [...seen.values()], truncated: false, ...snapshotAt(snapshot) } });
   }
 
   const sbFile = /^\/api\/sandboxes\/([^/]+)\/file$/.exec(p);
   if (sbFile && disk) {
     const path = url.searchParams.get("path") ?? "";
-    const content = disk.files.get(path);
+    const content = snapshot ? snapshotFile : disk.files.get(path);
     if (content === undefined) return json({ error: "not_found" }, 404);
-    return json({ data: { path, size: content.length, truncated: false, encoding: "utf8", content } });
+    return json({ data: { path, size: content.length, truncated: false, encoding: "utf8", content, ...snapshotAt(snapshot) } });
   }
 
   const sbDiff = /^\/api\/sandboxes\/([^/]+)\/diff$/.exec(p);
@@ -1534,8 +1588,9 @@ export async function fountain(req: Request, url: URL): Promise<Response | null>
         // Nothing to show until the worktree exists — a track whose opening
         // turn has not landed yet has no changes, and inventing some would
         // make the Changes panel lie during the ten seconds that matter most.
-        diff: worktree && !cleanBoxes.has(sbDiff[1]!) ? fakeDiff() : "",
+        diff: worktree && !(snapshot?.clean ?? cleanBoxes.has(sbDiff[1]!)) ? fakeDiff() : "",
         truncated: false,
+        ...snapshotAt(snapshot),
       },
     });
   }
@@ -1556,8 +1611,12 @@ export async function fountain(req: Request, url: URL): Promise<Response | null>
   return null;
 }
 
+function snapshotAt(snapshot: Snapshot | undefined): { snapshot_at?: string } {
+  return snapshot ? { snapshot_at: snapshot.at } : {};
+}
+
 function publicBox(box: Box) {
-  const { files: _files, worktrees: _worktrees, ...record } = box;
+  const { files: _files, worktrees: _worktrees, snapshot: _snapshot, ...record } = box;
   return record;
 }
 const withBox = (c: Conv) => {
@@ -1623,6 +1682,8 @@ const PEOPLE = [
     { id: 9101, login: "homerecent", name: "Home Recent", avatar_url: `${BASE}/ghweb/avatar.svg` },
     { id: 9237, login: "addrepository", name: "Add Repository", avatar_url: `${BASE}/ghweb/avatar.svg` },
     { id: 9298, login: "tooltipfocus", name: "Tooltip Focus", avatar_url: `${BASE}/ghweb/avatar.svg` },
+    { id: 9137, login: "railselect", name: "Rail Select", avatar_url: `${BASE}/ghweb/avatar.svg` },
+    { id: 9133, login: "connectstep", name: "Connect Step", avatar_url: `${BASE}/ghweb/avatar.svg` },
   ] : []),
   { id: 9001, login: "dana", name: "Dana Okonkwo", avatar_url: `${BASE}/ghweb/avatar.svg?dana` },
   { id: 9002, login: "eli", name: "Eli Fischer", avatar_url: `${BASE}/ghweb/avatar.svg?eli` },
@@ -1980,7 +2041,7 @@ function githubWeb(req: Request, url: URL, webBody: Record<string, unknown> = {}
 // ── the port ───────────────────────────────────────────────────────────
 
 if (import.meta.main) {
-({ updateMockPreview, setMockSpriteAsleep, setMockPtySilent } = await import("./previews"));
+({ updateMockPreview, setMockSpriteAsleep, setMockPtySilent, wakeMockSprite } = await import("./previews"));
 Bun.serve({
   port: PORT,
   // A track's transcript stream stays open as long as its tab is; the default
@@ -2034,13 +2095,14 @@ Bun.serve({
     }
 
     // Put a sandbox to sleep, or wake it, as Fountain would: its disk reads
-    // are refused while it sleeps, and its sprite reads as stopped until a
+    // are refused while it sleeps, or answered from its park's snapshot when
+    // the fixture asks for one, and its sprite reads as stopped until a
     // command runs on it (see `setMockSpriteAsleep`).
     if (p === "/__browser/sandbox-status" && req.method === "POST" && process.env.RAVIX_BROWSER_TEST === "1") {
-      const { id, status, wake_ms = 0 } = await req.json() as { id: string; status: string; wake_ms?: number };
+      const { id, status, wake_ms = 0, snapshot = false } = await req.json() as { id: string; status: string; wake_ms?: number; snapshot?: boolean };
       const box = state.boxes.get(id);
       if (!box || !["suspended", "ready"].includes(status)) return json({ error: "invalid_fixture" }, 400);
-      setSandboxStatus(id, status as "suspended" | "ready");
+      setSandboxStatus(id, status as "suspended" | "ready", { snapshot: snapshot === true });
       setMockSpriteAsleep(box.sprite_name, status === "suspended" ? () => setSandboxStatus(id, "ready") : null, Number(wake_ms) || 0);
       return json({ status: "ok" });
     }
@@ -2059,6 +2121,15 @@ Bun.serve({
       const { id } = await req.json() as { id: string };
       if (!state.boxes.has(id)) return json({ error: "invalid_fixture" }, 400);
       cleanBoxes.add(id);
+      return json({ status: "ok" });
+    }
+
+    // Hold a pasted credential for `ms` before accepting or refusing it, so a
+    // spec can look at the connecting state; 0 answers at once again.
+    if (p === "/__browser/credential-delay" && req.method === "POST" && process.env.RAVIX_BROWSER_TEST === "1") {
+      const { ms } = await req.json() as { ms: number };
+      if (!Number.isInteger(ms) || ms < 0 || ms > 10_000) return json({ error: "invalid_fixture" }, 400);
+      credentialDelayMs = ms;
       return json({ status: "ok" });
     }
 

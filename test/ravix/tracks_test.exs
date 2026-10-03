@@ -1957,6 +1957,70 @@ defmodule Ravix.TracksTest do
       assert is_nil(Repo.get!(Track, ctx.track.id).sandbox_suspended_at)
     end
 
+    test "a dedicated read answered from Fountain's parked snapshot keeps the track asleep",
+         ctx do
+      sandbox_id = "snapshot-#{ctx.track.id}"
+      path = ctx.track.workdir
+      at = "2026-10-02T12:00:00.000000Z"
+
+      Repo.update!(
+        Ecto.Changeset.change(ctx.track, sandbox_layout: :dedicated, sandbox_id: sandbox_id)
+      )
+
+      disk_fountain(
+        :dedicated,
+        ctx.project,
+        [
+          {%{method: "GET", path: "/api/sandboxes/#{sandbox_id}/files"},
+           {200, [],
+            %{
+              data: %{
+                path: path,
+                entries: [%{name: "a.txt", type: "file", size: 3}],
+                snapshot_at: at
+              }
+            }}},
+          {%{method: "GET", path: "/api/sandboxes/#{sandbox_id}/file"},
+           {200, [],
+            %{
+              data: %{
+                path: path <> "/a.txt",
+                size: 3,
+                truncated: false,
+                encoding: "utf-8",
+                content: "two",
+                snapshot_at: at
+              }
+            }}},
+          {%{method: "GET", path: "/api/sandboxes/#{sandbox_id}/diff"},
+           {200, [],
+            %{data: %{path: path, repo_root: path, diff: "", truncated: false, snapshot_at: at}}}}
+        ],
+        sandbox_id
+      )
+
+      # Nothing asks the machine: it is parked, which is why this is a snapshot.
+      reject(Ravix.Terminal, :status, 2)
+
+      {:ok, snapshot_at, 0} = DateTime.from_iso8601(at)
+
+      assert {:ok,
+              %Files.Listing{snapshot_at: ^snapshot_at, entries: [%{name: "a.txt"}]} = listing} =
+               Tracks.files(ctx.owner, ctx.track.id, nil)
+
+      # Nor does the listing's metadata: it comes back as the snapshot gave it.
+      assert {:ok, ^listing} = Tracks.file_metadata(ctx.owner, ctx.track.id, listing)
+
+      assert {:ok, %Files.Content{content: "two", snapshot_at: ^snapshot_at}} =
+               Tracks.file(ctx.owner, ctx.track.id, "a.txt")
+
+      assert {:ok, %Diff{snapshot_at: ^snapshot_at, untracked: :asleep}} =
+               Tracks.diff(ctx.owner, ctx.track.id)
+
+      # The snapshot is Fountain saying the machine is parked: the rail says Asleep.
+      assert %DateTime{} = Repo.get!(Track, ctx.track.id).sandbox_suspended_at
+    end
+
     test "a dedicated read preserves real provider failures", ctx do
       sandbox_id = "failed-#{ctx.track.id}"
 
@@ -2004,7 +2068,7 @@ defmodule Ravix.TracksTest do
       ])
 
       reject(Ravix.Terminal, :exec, 3)
-      reject(Ravix.Terminal, :status, 3)
+      reject(Ravix.Terminal, :status, 2)
 
       assert {:ok,
               %{
@@ -2027,7 +2091,7 @@ defmodule Ravix.TracksTest do
     test "metadata rejects outsiders and escaping paths before contacting the machine", ctx do
       listing = metadata_listing(ctx)
       reject(Ravix.Terminal, :exec, 3)
-      reject(Ravix.Terminal, :status, 3)
+      reject(Ravix.Terminal, :status, 2)
       assert {:error, :not_found} = Tracks.file_metadata(insert_user(), ctx.track.id, listing)
 
       assert {:ok, %{path: "/etc"}} =
@@ -2038,8 +2102,8 @@ defmodule Ravix.TracksTest do
       listing = metadata_listing(ctx)
       reject(Ravix.Terminal, :exec, 3)
 
-      expect(Ravix.Terminal, :status, fn user, id, opts ->
-        assert {user.id, id, opts} == {ctx.owner.id, ctx.track.id, [passive: true]}
+      expect(Ravix.Terminal, :status, fn user, id ->
+        assert {user.id, id} == {ctx.owner.id, ctx.track.id}
         {:ok, %{available: false}}
       end)
 
@@ -2049,7 +2113,7 @@ defmodule Ravix.TracksTest do
     test "running machines enrich the listing with a bounded metadata command", ctx do
       listing = metadata_listing(ctx)
 
-      expect(Ravix.Terminal, :status, fn _, _, [passive: true] ->
+      expect(Ravix.Terminal, :status, fn _, _ ->
         {:ok, %{available: true}}
       end)
 
@@ -2069,7 +2133,7 @@ defmodule Ravix.TracksTest do
     test "metadata times out without losing the listing or leaving its task running", ctx do
       listing = %Files.Listing{path: ctx.track.workdir, entries: [], truncated: false}
       parent = self()
-      expect(Ravix.Terminal, :status, fn _, _, _ -> {:ok, %{available: true}} end)
+      expect(Ravix.Terminal, :status, fn _, _ -> {:ok, %{available: true}} end)
 
       expect(Ravix.Terminal, :exec, fn _, _, _ ->
         send(parent, {:metadata_worker, self()})
@@ -2141,7 +2205,7 @@ defmodule Ravix.TracksTest do
 
     test "untracked files on a running machine join the diff through a bounded exec", ctx do
       machine_fountain(ctx.project, [diff_route(@edit)])
-      expect(Ravix.Terminal, :status, fn _, _, [passive: true] -> {:ok, %{available: true}} end)
+      expect(Ravix.Terminal, :status, fn _, _ -> {:ok, %{available: true}} end)
 
       expect(Ravix.Terminal, :exec, fn user, id, request ->
         assert {user.id, id} == {ctx.owner.id, ctx.track.id}
@@ -2166,7 +2230,7 @@ defmodule Ravix.TracksTest do
 
     test "an outsider's diff is refused before the machine is asked anything", ctx do
       reject(Ravix.Terminal, :exec, 3)
-      reject(Ravix.Terminal, :status, 3)
+      reject(Ravix.Terminal, :status, 2)
       assert {:error, :not_found} = Tracks.diff(insert_user(), ctx.track.id)
     end
 
@@ -2174,7 +2238,7 @@ defmodule Ravix.TracksTest do
       reject(Ravix.Terminal, :exec, 3)
       machine_fountain(ctx.project, [diff_route(@edit)])
 
-      expect(Ravix.Terminal, :status, fn _, _, [passive: true] ->
+      expect(Ravix.Terminal, :status, fn _, _ ->
         {:ok, %{available: false, why: :unreachable}}
       end)
 
@@ -2186,7 +2250,7 @@ defmodule Ravix.TracksTest do
       reject(Ravix.Terminal, :exec, 3)
       machine_fountain(ctx.project, [diff_route(@edit)])
 
-      expect(Ravix.Terminal, :status, fn _, _, _ ->
+      expect(Ravix.Terminal, :status, fn _, _ ->
         {:ok, %{available: false, why: :no_token}}
       end)
 
@@ -2196,7 +2260,7 @@ defmodule Ravix.TracksTest do
     test "a machine that hangs costs the untracked files, not the diff, and no task", ctx do
       machine_fountain(ctx.project, [diff_route(@edit)])
       parent = self()
-      expect(Ravix.Terminal, :status, fn _, _, _ -> {:ok, %{available: true}} end)
+      expect(Ravix.Terminal, :status, fn _, _ -> {:ok, %{available: true}} end)
 
       expect(Ravix.Terminal, :exec, fn _, _, _ ->
         send(parent, {:untracked_worker, self()})

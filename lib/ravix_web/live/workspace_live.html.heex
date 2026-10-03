@@ -1,4 +1,4 @@
-<Layouts.app flash={@flash}>
+<Layouts.app flash={@flash} stale_assets={@static_changed?}>
   <main :if={is_nil(@current_user)} class="centred signin-page">
     <div class="corner-theme"><.theme_picker id="signin-theme" /></div>
     <div class="signin-card">

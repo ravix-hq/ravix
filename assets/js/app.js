@@ -42,6 +42,7 @@
 //   HeaderFit       a track header's status chips: whole words or just their icons
 //   ChipMenu        a chip's popover: aria-expanded, Escape and focus return inside a dialog
 //   SharePopover    the Share popover placed under its button; Share again closes it
+//   CredentialField the agent panel's token field: the paste survives patches, never the server
 //
 // Adding a hook is a product decision, not a convenience. Say why in its
 // file's header, and list it here.
@@ -75,6 +76,7 @@ import {ProjectFormFocus} from "./hooks/project_form_focus"
 import {SectionForm} from "./hooks/section_form"
 import {CopyCode} from "./hooks/copy_code"
 import {SharePopover} from "./hooks/share_popover"
+import {CredentialField} from "./hooks/credential_field"
 import {ShareMention} from "./hooks/share_mention"
 import {TurnTimer} from "./hooks/turn_timer"
 import {RelativeTime} from "./hooks/relative_time"
@@ -85,7 +87,7 @@ import {ChipMenu} from "./hooks/chip_menu"
 
 
 
-const hooks = {ThreadTabs, AgentConfirmation, Theme, PanelResize, PanelToggle, TranscriptTail, Composer, Terminal, Notify, NotifyToggle, UnsavedChanges, SettingsFrame, ProjectTree, QuickJump, QuickJumpQuery, ProjectSections, CopyCode, ProjectFormFocus, SectionForm, ShareMention, TurnTimer, RelativeTime, SubmitOnEnter, Shell, HeaderFit, LocalTime, ChipMenu, SharePopover}
+const hooks = {ThreadTabs, AgentConfirmation, Theme, PanelResize, PanelToggle, TranscriptTail, Composer, Terminal, Notify, NotifyToggle, UnsavedChanges, SettingsFrame, ProjectTree, QuickJump, QuickJumpQuery, ProjectSections, CopyCode, ProjectFormFocus, SectionForm, ShareMention, TurnTimer, RelativeTime, SubmitOnEnter, Shell, HeaderFit, LocalTime, ChipMenu, SharePopover, CredentialField}
 
 const csrfToken = document.querySelector("meta[name='csrf-token']").getAttribute("content")
 clearTransportFallback(window)

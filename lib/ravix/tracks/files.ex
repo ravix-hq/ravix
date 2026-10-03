@@ -33,16 +33,21 @@ defmodule Ravix.Tracks.Files do
   end
 
   defmodule Listing do
-    @moduledoc "A directory, as the Files panel shows it."
+    @moduledoc """
+    A directory, as the Files panel shows it. `snapshot_at` is set when the
+    machine was asleep and Fountain answered from the snapshot it took as it
+    parked (its ADR 0063): the directory as of then, not now.
+    """
 
     @enforce_keys [:path, :entries, :truncated]
-    defstruct @enforce_keys ++ [ignore_available?: false]
+    defstruct @enforce_keys ++ [ignore_available?: false, snapshot_at: nil]
 
     @type t :: %__MODULE__{
             path: String.t(),
             entries: [Entry.t()],
             truncated: boolean(),
-            ignore_available?: boolean()
+            ignore_available?: boolean(),
+            snapshot_at: DateTime.t() | nil
           }
   end
 
@@ -50,17 +55,19 @@ defmodule Ravix.Tracks.Files do
     @moduledoc """
     One file's bytes. `encoding` is `"base64"` for a file that is not text,
     which is the panel's cue to report a size rather than render it.
+    `snapshot_at` is as on `Listing`.
     """
 
     @enforce_keys [:path, :size, :truncated, :encoding, :content]
-    defstruct @enforce_keys
+    defstruct @enforce_keys ++ [snapshot_at: nil]
 
     @type t :: %__MODULE__{
             path: String.t(),
             size: integer(),
             truncated: boolean(),
             encoding: String.t(),
-            content: String.t()
+            content: String.t(),
+            snapshot_at: DateTime.t() | nil
           }
   end
 
@@ -199,9 +206,26 @@ defmodule Ravix.Tracks.Files do
         raw["entries"]
         |> List.wrap()
         |> Enum.filter(&is_map/1)
-        |> Enum.map(&%Entry{name: &1["name"], type: &1["type"] || "other", size: &1["size"]})
+        |> Enum.map(&%Entry{name: &1["name"], type: &1["type"] || "other", size: &1["size"]}),
+      snapshot_at: snapshot_at(raw)
     }
   end
+
+  @doc """
+  When a read was answered from the snapshot Fountain took as the machine
+  parked, rather than by the machine: nil for a live answer, and for a
+  timestamp that does not parse, which is then shown as live rather than
+  dated wrongly.
+  """
+  @spec snapshot_at(map()) :: DateTime.t() | nil
+  def snapshot_at(%{"snapshot_at" => at}) when is_binary(at) do
+    case DateTime.from_iso8601(at) do
+      {:ok, at, _offset} -> at
+      {:error, _} -> nil
+    end
+  end
+
+  def snapshot_at(_raw), do: nil
 
   @external_resource Path.expand("../../../priv/scripts/file_metadata.py", __DIR__)
   @metadata_script @external_resource |> File.read!() |> Base.encode64()
@@ -252,7 +276,8 @@ defmodule Ravix.Tracks.Files do
       size: raw["size"] || 0,
       truncated: raw["truncated"] == true,
       encoding: raw["encoding"] || "utf-8",
-      content: raw["content"] || ""
+      content: raw["content"] || "",
+      snapshot_at: snapshot_at(raw)
     }
   end
 end

@@ -7,6 +7,7 @@ defmodule Ravix.TerminalTest do
   alias Ravix.Fountain.FakeTransport
   alias Ravix.SpritesFake
   alias Ravix.Terminal
+  alias Ravix.Tracks.Sleep
 
   @sprites SpritesFake.config()
 
@@ -154,7 +155,7 @@ defmodule Ravix.TerminalTest do
     end
   end
 
-  test "passive status never execs to wake a parked machine", ctx do
+  test "status never execs to wake a parked machine", ctx do
     stub(Ravix.Config, :sprites, fn -> @sprites end)
     fountain(ctx.project, "sprite-7")
 
@@ -165,15 +166,20 @@ defmodule Ravix.TerminalTest do
         Req.Test.json(conn, %{status: status})
       end)
 
-      assert {:ok, result} = Terminal.status(ctx.owner, ctx.track.id, passive: true)
+      assert {:ok, result} = Terminal.status(ctx.owner, ctx.track.id)
       assert result.available == (status == "running")
     end
   end
 
-  test "a probe that finds a dedicated machine running clears a stale Asleep, once", ctx do
+  # Fountain parks a sprite by marking it suspended; the sprite scales to
+  # zero later, on the platform's schedule, and answers running until then.
+  # A status that believed it would clear the mark every time a snapshot read
+  # set it, and an exec it allowed would keep the sprite from ever parking.
+  test "a dedicated track recorded asleep is unreachable however the sprite answers", ctx do
     stub(Ravix.Config, :sprites, fn -> @sprites end)
     fountain(ctx.project, "sprite-7")
     Ravix.Hub.subscribe(ctx.project.id)
+    slept = DateTime.utc_now()
 
     track =
       ctx.track
@@ -181,21 +187,26 @@ defmodule Ravix.TerminalTest do
         sandbox_layout: :dedicated,
         sandbox_state: :ready,
         sandbox_id: "sb-1",
-        sandbox_suspended_at: DateTime.utc_now()
+        sandbox_suspended_at: slept
       )
       |> Repo.update!()
 
-    track_id = track.id
+    caller = self()
 
-    for {status, asleep?} <- [{"cold", true}, {"running", false}, {"running", false}] do
-      SpritesFake.install(fn conn, _call -> Req.Test.json(conn, %{status: status}) end)
-      assert {:ok, _} = Terminal.status(ctx.owner, track.id, passive: true)
-      assert is_nil(Repo.get!(Ravix.Tracks.Track, track.id).sandbox_suspended_at) == not asleep?
-    end
+    SpritesFake.install(fn conn, _call ->
+      send(caller, :sprite_asked)
+      Req.Test.json(conn, %{status: "running"})
+    end)
 
-    # Woken once: the second running probe found nothing to write.
-    assert_received {:hub, %Ravix.Hub.Event{name: :machine, track_id: ^track_id}}
+    assert {:ok, %{available: false, why: :unreachable}} = Terminal.status(ctx.owner, track.id)
+    refute_received :sprite_asked
+    assert Repo.get!(Ravix.Tracks.Track, track.id).sandbox_suspended_at == slept
     refute_received {:hub, %Ravix.Hub.Event{name: :machine}}
+
+    # Once Fountain's wake has cleared the mark, the sprite's own word counts.
+    Sleep.record(track.id, false)
+    assert {:ok, %{available: true}} = Terminal.status(ctx.owner, track.id)
+    assert_received :sprite_asked
   end
 
   describe "status/2" do
@@ -217,16 +228,12 @@ defmodule Ravix.TerminalTest do
                Terminal.status(ctx.owner, ctx.track.id)
 
       fountain(ctx.project, "sprite-7")
-      SpritesFake.install(fn conn, _call -> send_resp(conn, 404, "asleep") end)
+      SpritesFake.install(fn conn, _call -> Req.Test.json(conn, %{status: "warm"}) end)
 
       assert {:ok, %{available: false, why: :unreachable}} =
                Terminal.status(ctx.owner, ctx.track.id)
 
-      SpritesFake.install(fn conn, call ->
-        assert call.argv == ["true"]
-        SpritesFake.exec_response(conn, "", "", 0)
-      end)
-
+      SpritesFake.install(fn conn, _call -> Req.Test.json(conn, %{status: "running"}) end)
       assert {:ok, %{available: true, why: nil}} = Terminal.status(ctx.owner, ctx.track.id)
     end
   end

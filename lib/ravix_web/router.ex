@@ -110,7 +110,10 @@ defmodule RavixWeb.Router do
     # every one of these paths lands a browser on the only thing it can use.
     # `WorkspaceLive.handle_params/3` decides, because the session is what the
     # answer turns on and it is one LiveView either way.
-    live_session :workspace, on_mount: [{RavixWeb.Live.Hooks, :fetch_current_user}] do
+    # `StaleAssets` first: a tab rejoining after a deploy is offered a reload
+    # rather than left with markup its stylesheet predates (RAV-138).
+    live_session :workspace,
+      on_mount: [RavixWeb.Live.StaleAssets, {RavixWeb.Live.Hooks, :fetch_current_user}] do
       live "/", WorkspaceLive, :home
       live "/login", WorkspaceLive, :login
       live "/home", WorkspaceLive, :projects

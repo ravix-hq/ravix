@@ -34,12 +34,14 @@ defmodule Ravix.Tracks.Diff do
   # "0 changed files" beside a non-empty `diff`, indistinguishable from a
   # real empty one.
   @enforce_keys [:path, :repo_root, :diff, :truncated, :changes, :files]
-  defstruct @enforce_keys ++ [untracked: :unread]
+  defstruct @enforce_keys ++ [untracked: :unread, snapshot_at: nil]
 
   @typedoc """
   A track's working diff. `diff` is the unified text as `git` produced it and
   `changes` is that text summarised; `truncated` says Fountain stopped early,
-  in which case both are short by the same amount.
+  in which case both are short by the same amount. `snapshot_at` is set when
+  the machine was asleep and Fountain answered from the snapshot it took as
+  it parked: the diff as of then.
   """
   @type t :: %__MODULE__{
           path: String.t() | nil,
@@ -48,7 +50,8 @@ defmodule Ravix.Tracks.Diff do
           truncated: boolean(),
           changes: [Change.t()],
           files: [map()],
-          untracked: untracked()
+          untracked: untracked(),
+          snapshot_at: DateTime.t() | nil
         }
 
   @typedoc """

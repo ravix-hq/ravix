@@ -25,6 +25,7 @@ for mod <- [
       Ravix.Tracks.Title,
       Ravix.Trace,
       Ravix.Tracks.Sandbox.Store,
+      Ravix.Tracks.CredentialRecovery,
       Ravix.Projects,
       Ravix.Projects.Deletion,
       Ravix.Plans,

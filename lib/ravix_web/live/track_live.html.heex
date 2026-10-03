@@ -1034,6 +1034,14 @@
                   asleep={match?(%{asleep?: true}, @git) && @turn.machine.state == :asleep}
                 />
                 <p :if={@panel.error} role="alert">{@panel.error}</p>
+                <.snapshot_note
+                  :if={snapshot_at(@panel.data)}
+                  at={snapshot_at(@panel.data)}
+                  zone={@timezone}
+                  tab={@panel.tab}
+                  can_wake={@track.level != :read}
+                  waking={:wake in @pending}
+                />
                 <.panel_body
                   :if={@panel.data}
                   data={@panel.data}

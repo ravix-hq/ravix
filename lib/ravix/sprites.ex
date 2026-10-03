@@ -317,10 +317,6 @@ defmodule Ravix.Sprites do
     ) == true
   end
 
-  @doc "Is this sprite reachable at all? Used to decide between two empty states."
-  @spec reachable?(config(), String.t()) :: boolean()
-  def reachable?(cfg, sprite), do: match?({:ok, %{code: 0}}, exec(cfg, sprite, ["true"], 15))
-
   @doc """
   Where a command is allowed to run.
 

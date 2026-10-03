@@ -11,6 +11,15 @@ defmodule Ravix.Changelog do
       action: nil
     },
     %{
+      id: "2026-10-01-connect-step",
+      date: ~D[2026-10-01],
+      kind: :fixed,
+      title: "A steadier agent connection step",
+      body:
+        "Connecting Claude Code or Codex is now its own card, in Add a repository as everywhere else. An empty token is refused in words beside the field, the button shows its progress without moving, and a token you pasted stays in the field until the answer comes.",
+      action: nil
+    },
+    %{
       id: "2026-09-30-effort-and-fast",
       date: ~D[2026-09-30],
       kind: :new,
@@ -107,11 +116,9 @@ defmodule Ravix.Changelog do
     do: Enum.filter(@entries, &(DateTime.compare(at(&1), seen) == :gt))
 
   def newest([]), do: nil
-  # By calendar date. Without `Date` as the comparer, dates are ordered as
-  # terms, where the day field is read before the month and the year: an
-  # entry on the 1st of a month sat below one on the 30th of the month
-  # before, so the marker written when the panel was opened never reached
-  # it and it stayed "new" (found with RAV-130's entry).
+  # By the calendar, not by term order: a Date struct compared as a map sorts
+  # on the day of the month first, so the 1st of a month would lose to the
+  # 30th before it, leaving that newest entry unseen after an acknowledgement.
   def newest(entries), do: Enum.max_by(entries, & &1.date, Date)
 
   @doc """

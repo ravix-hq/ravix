@@ -850,6 +850,11 @@ defmodule Ravix.Previews.Server do
   def message_of(message) when is_binary(message), do: message
   def message_of(%Sprites.Error{message: message}), do: message
 
+  # A refused wake (`Ravix.Tracks.wake/2`), in the words a prompt's refusal
+  # uses; never Fountain's own message, which is provider text.
+  def message_of(%Ravix.Fountain.Error{} = error),
+    do: Ravix.Fountain.Error.as_http(error, "wake the machine").message
+
   def message_of({:unconfigured, :sprites}),
     do: "Previews unavailable: SPRITES_TOKEN is not configured."
 

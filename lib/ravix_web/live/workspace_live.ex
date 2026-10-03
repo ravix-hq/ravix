@@ -2704,7 +2704,14 @@ defmodule RavixWeb.WorkspaceLive do
       aria-label={"Created by @#{@track.created_by_login}"}
       title={"Created by @#{@track.created_by_login}"}
     >
-      <img :if={@track.creator_avatar_url} src={@track.creator_avatar_url} alt="" loading="lazy" />
+      <img
+        :if={@track.creator_avatar_url}
+        src={@track.creator_avatar_url}
+        alt=""
+        loading="lazy"
+        width="16"
+        height="16"
+      />
       <span :if={!@track.creator_avatar_url} aria-hidden="true">{initials(@track.created_by_login)}</span>
     </span>
     """
