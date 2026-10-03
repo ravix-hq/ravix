@@ -220,14 +220,12 @@ defmodule RavixWeb.Live.ReviewPanel do
     """
   end
 
-  attr :diff, :any, required: true
+  attr :revision, :string, required: true
   attr :path, :string, required: true
   attr :side, :string, required: true
   attr :line, :integer, default: nil
 
   def anchor_button(assigns) do
-    assigns = assign(assigns, revision: Anchor.revision(assigns.diff))
-
     ~H"""
     <button
       type="button"
