@@ -272,7 +272,8 @@ defmodule RavixWeb.Live.ReviewPanel do
   defp statuses(discussions, diff) do
     revisions = if diff, do: Anchor.revisions(diff)
     availability = if diff, do: diff.untracked, else: :unread
-    Map.new(discussions, &{&1.id, Anchor.status(&1, revisions, availability)})
+    truncated = if diff, do: diff.truncated, else: false
+    Map.new(discussions, &{&1.id, Anchor.status(&1, revisions, availability, truncated)})
   end
 
   defp position(%{line: nil}), do: " (file)"

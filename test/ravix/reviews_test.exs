@@ -288,6 +288,8 @@ defmodule Ravix.ReviewsTest do
              Anchor.locate(unknown, anchor(c, path, "file", nil))
 
     assert Anchor.status(discussion, %{}, :unread) == :unverifiable
+    assert Anchor.status(discussion, %{}, :listed, true) == :unverifiable
+    assert Anchor.status(discussion, %{}, :listed, false) == :outdated
     assert Anchor.status(discussion, nil, :unread) == :unchecked
   end
 

@@ -412,6 +412,48 @@ defmodule RavixWeb.ReviewLiveTest do
     assert length(messages) == 2
   end
 
+  test "budget-truncated untracked listings cannot declare an omitted file outdated", c do
+    {:ok, discussion} =
+      Reviews.open(c.user, c.track.id, anchor(c), "Omitted from the next listing")
+
+    other =
+      "diff --git a/other.txt b/other.txt\nnew file mode 100644\n--- /dev/null\n+++ b/other.txt\n@@ -0,0 +1 @@\n+Listed before the budget ran out\n"
+
+    empty = %{c.diff | diff: "", files: [], changes: []}
+
+    cut =
+      Diff.with_untracked(
+        empty,
+        {:ok,
+         %{
+           code: 0,
+           stdout: Jason.encode!(%{available: true, diff: other, large: [], truncated: true})
+         }}
+      )
+
+    assert cut.untracked == :listed && cut.truncated
+    stub(Tracks, :diff, fn _, _ -> {:ok, cut} end)
+    render_click(c.view, "refresh-panel", %{})
+    render_async(c.view, 5000)
+
+    assert has_element?(
+             c.view,
+             "#review-discussion-#{discussion.id}[data-revision-status=unverifiable]"
+           )
+
+    stub(Tracks, :diff, fn _, _ -> {:ok, %{cut | truncated: false}} end)
+    render_click(c.view, "refresh-panel", %{})
+    render_async(c.view, 5000)
+
+    assert has_element?(
+             c.view,
+             "#review-discussion-#{discussion.id}[data-revision-status=outdated]"
+           )
+
+    assert {:ok, [retained]} = Reviews.list(c.user, c.track.id)
+    assert retained.id == discussion.id
+  end
+
   defp anchor(c),
     do: %{
       "revision" => Anchor.revision(c.diff, "added.txt"),
