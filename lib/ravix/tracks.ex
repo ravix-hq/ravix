@@ -71,6 +71,7 @@ defmodule Ravix.Tracks do
   alias Ravix.Tracks.{
     Attribution,
     Billing,
+    CredentialRecovery,
     Diff,
     Files,
     Follower,
@@ -1482,7 +1483,7 @@ defmodule Ravix.Tracks do
   end
 
   defp press_wake(user, track_id) do
-    with {:ok, %{track: track}} <- Access.track_access(user, track_id, :write) do
+    with {:ok, %{track: track, project: project}} <- Access.track_access(user, track_id, :write) do
       cond do
         track.setup_state == "running" and track.setup_error_code == "sandbox_suspended" ->
           retry(user, track_id)
@@ -1493,7 +1494,7 @@ defmodule Ravix.Tracks do
             "This track has no agent session to wake yet. Send a message to start one."}}
 
         true ->
-          wake_conversation(track)
+          wake_conversation(track, project)
       end
     end
   end
@@ -1543,7 +1544,7 @@ defmodule Ravix.Tracks do
   defp open_wake(%{track: track, project: project, thread: thread}) do
     case open_skip(track, thread, project) do
       nil ->
-        wake_machine(track, thread.conversation_id)
+        wake_machine(track, project, thread.id, thread.conversation_id)
 
       why ->
         Trace.annotate(%{"ravix.wake_skipped" => Atom.to_string(why)})
@@ -1576,19 +1577,64 @@ defmodule Ravix.Tracks do
     end
   end
 
-  defp wake_conversation(track) do
-    with {:ok, _awake_or_waking} <- wake_machine(track, track.conversation_id), do: :ok
+  # The track's own conversation is its main thread's, whose id is the track's.
+  defp wake_conversation(track, project) do
+    with {:ok, _awake_or_waking} <-
+           wake_machine(track, project, track.id, track.conversation_id),
+         do: :ok
   end
 
-  defp wake_machine(track, conversation_id) do
+  defp wake_machine(track, project, thread_id, conversation_id) do
     with {:ok, client} <- fountain(),
-         {:ok, state} <- Fountain.wake(client, conversation_id) do
+         {:ok, state} <-
+           recover_refused(
+             Fountain.wake(client, conversation_id),
+             client,
+             track,
+             project,
+             thread_id
+           ) do
       Trace.annotate(%{"ravix.wake_state" => Atom.to_string(state)})
       # ownership: wake/2 and wake_on_open/3 admitted this track with Write.
       if asleep?(track), do: Sleep.record(track.id, false)
       {:ok, state}
     end
   end
+
+  # A conversation started on a revision of its payer's credential set that
+  # has since been written to is refused for good (`inference_source_changed`),
+  # so waking it again can only be refused again. A prompt in that state is
+  # carried onto a successor conversation on the same disk
+  # (`Ravix.Tracks.CredentialRecovery`); a wake starts the same successor, and
+  # the successor starting is the wake. A track that recovery does not cover
+  # keeps the refusal.
+  defp recover_refused(
+         {:error, %Fountain.Error{code: "inference_source_changed"}} = refused,
+         client,
+         track,
+         project,
+         thread_id
+       ) do
+    if CredentialRecovery.enabled?(track, project) do
+      Trace.annotate(%{"ravix.wake_recovery" => "true"})
+      # ownership: wake/2 and wake_on_open/3 admitted this thread with Write.
+      CredentialRecovery.reject(track, project, thread_id)
+
+      case CredentialRecovery.prepare(client, track, project, thread_id) do
+        :rebound ->
+          {:ok, :waking}
+
+        _waiting ->
+          {:error,
+           {:conflict, "agent_reconnecting",
+            "Reconnecting this thread's agent. Send a message, or wake it again in a moment."}}
+      end
+    else
+      refused
+    end
+  end
+
+  defp recover_refused(result, _client, _track, _project, _thread_id), do: result
 
   defp send_opening_turn(_client, %Track{conversation_id: nil}, _project, _origin, _mode), do: :ok
 
