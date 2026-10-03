@@ -118,6 +118,7 @@ defmodule RavixWeb.TrackLiveTest do
       assert has_element?(ctx.view, "#track-setup-status", text)
       assert has_element?(ctx.view, "#track-machine-scope", "Own machine")
       assert has_element?(ctx.view, "#thread-add-trigger[disabled]")
+      assert has_element?(ctx.view, "#thread-new[disabled]")
     end
 
     render_click(ctx.view, "dialog", %{name: "close"})
@@ -1262,13 +1263,15 @@ defmodule RavixWeb.TrackLiveTest do
     assert has_element?(ctx.view, tab.("t-fail") <> " .dot.failed")
     refute has_element?(ctx.view, tab.("t-queue") <> " .dot")
     refute has_element?(ctx.view, tab.(ctx.track.id) <> " .dot")
-    # Agent, model and state are the tab's tooltip and name, not its text.
+    # Agent, model and state are the tab's tooltip and name, and its small
+    # meta line under the title, never the title itself.
     assert has_element?(
              ctx.view,
              tab.("t-queue") <> ~s([title="Queued one · Claude Code · Queued"])
            )
 
-    refute has_element?(ctx.view, "#thread-tablist", "Claude Code")
+    assert has_element?(ctx.view, tab.("t-queue") <> " .thread-tab-meta", "Queued · Claude Code")
+    refute has_element?(ctx.view, "#thread-tablist .thread-tab-title", "Claude Code")
   end
 
   test "Share shows who is here as stacked faces, with the count in words", ctx do
@@ -1282,7 +1285,7 @@ defmodule RavixWeb.TrackLiveTest do
     )
 
     render(ctx.view)
-    share = ".track-crumbs button[aria-label='Track sharing (4 viewing now)']"
+    share = ".track-head-actions button[aria-label='Track sharing (4 viewing now)']"
     assert has_element?(ctx.view, share <> " .track-viewer img[src='https://example.test/1.png']")
     assert ctx.view |> element(share) |> render() |> String.split("<img") |> length() == 4
     assert has_element?(ctx.view, share <> " .track-viewer-more", "+1")
@@ -1369,14 +1372,14 @@ defmodule RavixWeb.TrackLiveTest do
              "#thread-switcher button[title='Review · Codex · GPT-6 Astra · Running'][aria-label='Review · Codex · GPT-6 Astra · Running']"
            )
 
-    # The tab itself reads as its title and nothing else (RAV-82); a running
-    # thread keeps its dot, which an idle one does not draw.
+    # The tab reads as its title over one small line of state and agent; a
+    # running thread keeps its dot, which an idle one does not draw.
     assert has_element?(ctx.view, "#thread-switcher .thread-tab .dot.running")
     tab = element(ctx.view, "#thread-switcher .thread-tab")
-    # Nothing after the title but ✎ and ×, which are icons hidden from
-    # assistive technology (RAV-97).
+    # Nothing after the title and that line but ✎ and ×, which are icons
+    # hidden from assistive technology (RAV-97).
     assert render(tab) =~
-             ~r{<span class="thread-tab-title">Review</span>(<span class="thread-tab-action[^"]*" aria-hidden="true".*?</span>)*\s*</button>}s
+             ~r{<span class="thread-tab-text"><span class="thread-tab-title">Review</span><small class="thread-tab-meta">Running · Codex · GPT-6 Astra</small></span>(<span class="thread-tab-action[^"]*" aria-hidden="true".*?</span>)*\s*</button>}s
   end
 
   test "a draft's refusals name the agent and owner in plain words and keep the draft", ctx do
@@ -1551,7 +1554,7 @@ defmodule RavixWeb.TrackLiveTest do
 
     assert has_element?(
              ctx.view,
-             ".track-conversation > #thread-switcher ~ #transcript-scroll[role=tabpanel][aria-labelledby='thread-tab-#{ctx.track.id}']"
+             ".track-conversation > #thread-switcher ~ .track-thread-body > #transcript-scroll[role=tabpanel][aria-labelledby='thread-tab-#{ctx.track.id}']"
            )
 
     refute has_element?(ctx.view, "#thread-picker option", "Idle")
@@ -1781,12 +1784,22 @@ defmodule RavixWeb.TrackLiveTest do
     )
   end
 
-  test "the thread row is absent with one thread when threads cannot be added" do
+  test "the thread list shows even one thread, and offers Add thread only when threads can be added" do
     one = [%{id: "a", title: "Main", unread: false}]
     two = one ++ [%{id: "b", title: "Side", unread: true}]
     tabs = fn assigns -> render_component(&RavixWeb.TrackLive.thread_tabs/1, assigns) end
 
-    assert tabs.(threads: one, thread_id: "a", enabled: false) |> String.trim() == ""
+    # One thread, with threads switched off: still listed beside its
+    # conversation, as a vertical tab list, but nothing offers another.
+    html = tabs.(threads: one, thread_id: "a", enabled: false)
+    assert html =~ ~s(<nav id="thread-switcher")
+    assert html =~ ~r/id="thread-tablist"[^>]*role="tablist"[^>]*aria-orientation="vertical"/s
+    assert html =~ ~r/id="thread-tab-a"[^>]*aria-selected="true"/s
+    assert html =~ ~s(<span class="thread-tab-title">Main</span>)
+    assert html =~ ~s(<small class="thread-tab-meta">Idle · Agent</small>)
+    refute html =~ "Add thread"
+    refute html =~ ~s(id="thread-add)
+    refute html =~ ~s(id="thread-new")
 
     html = tabs.(threads: two, thread_id: "a", enabled: false)
     assert html =~ ~s(data-thread-id="b")
@@ -1834,6 +1847,12 @@ defmodule RavixWeb.TrackLiveTest do
              )
 
       assert has_element?(ctx.view, "#thread-add-menu kbd[data-shortcut=t]")
+
+      # The list's dashed New thread starts the same draft directly.
+      ctx.view |> element("#thread-new", "New thread") |> render_click()
+      assert has_element?(ctx.view, "#thread-tab-draft")
+      refute has_element?(ctx.view, "#thread-new")
+      render_click(ctx.view, "discard-draft", %{})
       assert has_element?(ctx.view, "#thread-scroll-back[aria-label='Scroll threads left']")
       assert has_element?(ctx.view, "#thread-scroll-forward[aria-label='Scroll threads right']")
 
@@ -2170,10 +2189,15 @@ defmodule RavixWeb.TrackLiveTest do
                "#track-machine-state[role=status][aria-live=polite] .dot.#{String.downcase(label)}"
              )
 
-      assert has_element?(view, "#track-machine-state", label)
-      # Idle and Working are not drawn in the header (RAV-82), but the live
-      # region stays; any other state is a chip in words.
-      assert has_element?(view, "#track-machine-state.sr-only") == label in ["Idle", "Working"]
+      # Every state, Idle and Working included, is a pill on the status line
+      # with its word drawn whole; it is never hidden to a live region alone.
+      assert has_element?(
+               view,
+               ".track-head-status #track-machine-state.machine-chip .chip-label",
+               label
+             )
+
+      refute has_element?(view, "#track-machine-state.sr-only")
 
       if detail do
         assert has_element?(
@@ -3268,12 +3292,12 @@ defmodule RavixWeb.TrackLiveTest do
     end
 
     test "more than six models get a search field over the model rows", ctx do
-      models = for n <- 1..7, do: "anthropic/claude-test-#{n}"
+      [first_model | _] = models = for n <- 1..7, do: "anthropic/claude-test-#{n}"
 
       stub(Tracks, :get, fn _, id, _ ->
         track =
           Tracks.present(Repo.get!(Track, id), role: :owner)
-          |> Map.merge(%{status: :ready, model: hd(models), runtime: "claude"})
+          |> Map.merge(%{status: :ready, model: first_model, runtime: "claude"})
           |> Map.merge(%{session_options: nil, session_config: %{}})
 
         {:ok,
@@ -3934,7 +3958,7 @@ defmodule RavixWeb.TrackLiveTest do
     # The items are a chip in the header, not a panel over the transcript.
     assert has_element?(
              ctx.view,
-             "header.track-crumbs .track-plan-toggle[aria-expanded=false]",
+             "header.track-head .track-head-status .track-plan-toggle[aria-expanded=false]",
              "Plan items · 4 items"
            )
 
@@ -4208,7 +4232,16 @@ defmodule RavixWeb.TrackLiveTest do
                "View on GitHub"
              )
 
+      # No second pull request is offered beside the one it found, in the
+      # Checks tab or the header; the header links to it instead.
       refute has_element?(ctx.view, "button[phx-value-name='pull']")
+      refute has_element?(ctx.view, "#track-open-pull")
+
+      assert has_element?(
+               ctx.view,
+               "#track-view-pull[href='https://github.com/acme/repo/pull/209']",
+               "View pull request"
+             )
     end
   end
 
@@ -5069,7 +5102,7 @@ defmodule RavixWeb.TrackLiveTest do
     refute has_element?(ctx.view, "#inspector.diff-open")
     render_async(ctx.view, 1_000)
 
-    ctx.view |> element("button", "Changes") |> render_click()
+    ctx.view |> element("#track-tab-changes") |> render_click()
     assert has_element?(ctx.view, "#inspector.diff-open")
     render_async(ctx.view, 1_000)
     ctx.view |> element("button", "← All changed files") |> render_click()
@@ -5473,7 +5506,12 @@ defmodule RavixWeb.TrackLiveTest do
     # this page will not make in its own process.
     refute has_element?(ctx.view, "#rename-dialog")
     render_async(ctx.view)
-    assert has_element?(ctx.view, "header button", "A useful title")
+    assert has_element?(ctx.view, "header.track-head h1 .track-title-text", "A useful title")
+
+    assert has_element?(
+             ctx.view,
+             "header.track-head button.track-title-crumb[aria-label='Rename track: A useful title']"
+           )
   end
 
   test "a first prompt's title reaches the header, the thread tab and the rail live", ctx do
@@ -5516,7 +5554,7 @@ defmodule RavixWeb.TrackLiveTest do
              )
 
     settle(view)
-    assert has_element?(view, "header button", "Pull Latest Main")
+    assert has_element?(view, "header.track-head h1 .track-title-text", "Pull Latest Main")
     assert has_element?(view, "#thread-tab-#{ctx.track.id}", "Pull Latest Main")
     # The branch is still shown beside the new name.
     assert render(view) =~ ctx.track.branch
@@ -6781,11 +6819,11 @@ defmodule RavixWeb.TrackLiveTest do
     assert Repo.get!(Track, ctx.track.id).visibility == :private
     settle(ctx.view)
     # A lock after the title rather than a chip (RAV-82), named and tipped (RAV-98).
-    assert has_element?(ctx.view, ".track-crumbs #track-private .sr-only", "Private")
+    assert has_element?(ctx.view, "h1.track-title #track-private .sr-only", "Private")
 
     assert has_element?(
              ctx.view,
-             ".track-crumbs #track-private[role=img][aria-label=Private][data-tip^=Private]"
+             "h1.track-title #track-private[role=img][aria-label=Private][data-tip^=Private]"
            )
 
     token = Plug.Conn.get_session(ctx.conn, :session_token)
@@ -6877,55 +6915,67 @@ defmodule RavixWeb.TrackLiveTest do
     assert path == "/p/#{ctx.project.id}"
   end
 
-  test "the header names the track once and keeps its actions to labelled icons", ctx do
-    header = fn view -> element(view, ".track-crumbs") end
+  test "the header names the track once and keeps its actions to labelled buttons", ctx do
+    header = fn view -> element(view, "header.track-head") end
 
     # A titled track is named by its title alone; the branch is not repeated
-    # beside it (RAV-83), and stays in the ribbon under the header.
-    assert has_element?(ctx.view, ".track-crumbs .track-title-crumb", ctx.track.title)
-    refute render(header.(ctx.view)) =~ ctx.track.branch
+    # beside it (RAV-83), and is a chip on the status line under it.
+    assert has_element?(ctx.view, "h1.track-title .track-title-text", ctx.track.title)
+    refute has_element?(ctx.view, "h1.track-title", ctx.track.branch)
+    assert has_element?(ctx.view, ".track-head-status .track-branch", ctx.track.branch)
 
-    refute has_element?(ctx.view, ".track-crumbs button[aria-label='Project settings']")
+    # The project is the workspace's breadcrumb, not the track header's.
+    refute has_element?(ctx.view, "header.track-head a[href='/p/#{ctx.project.id}']")
+    refute has_element?(ctx.view, "header.track-head button[aria-label='Project settings']")
 
-    # New track lives once, at the end of the tab strip above; the header
-    # does not offer it a second time.
-    refute has_element?(ctx.view, ".track-crumbs button[aria-label='New track']")
-
-    # Buttons whose only text is an icon: nothing visible is left to read.
+    # New track lives once, on the project's page; the header does not
+    # offer it a second time.
+    refute has_element?(ctx.view, "header.track-head button[aria-label='New track']")
     refute render(header.(ctx.view)) =~ ~r/>\s*(New track|Settings)\s*</
 
-    refute has_element?(ctx.view, ".track-crumbs button[title='Project settings']")
-    assert has_element?(ctx.view, ".track-crumbs button[data-tip='Rename track']")
+    refute has_element?(ctx.view, "header.track-head button[title='Project settings']")
+
+    # Rename is a word now, still named for the track it renames and tipped.
+    assert has_element?(
+             ctx.view,
+             ".track-head-actions button.track-title-crumb[data-tip='Rename track'][aria-label='Rename track: #{ctx.track.title}']",
+             "Rename"
+           )
 
     assert has_element?(
              ctx.view,
-             ".track-crumbs button[aria-label^='Track sharing'][data-tip$='viewing now)']"
+             ".track-head-actions button[aria-label^='Track sharing'][data-tip$='viewing now)']"
            )
 
     refute has_element?(ctx.view, "#track-actions-menu")
 
-    # Title and Share, then ⋯ (RAV-82). Whose machine it is and who pays are
+    # Rename, Share, then ⋯ (RAV-82). Whose machine it is and who pays are
     # facts in the ⋯ popover, with Rebuild and Close; none is a chip.
     assert has_element?(ctx.view, "#track-more-panel #track-machine-scope", "Shared machine")
-    refute has_element?(ctx.view, ".track-crumbs .chip#track-machine-scope")
+    refute has_element?(ctx.view, "header.track-head .chip#track-machine-scope")
     refute render(header.(ctx.view)) =~ ~r/Runs on|Private/
     refute has_element?(ctx.view, "#track-private")
     # The machine's state is always said in words, never shrunk to its dot.
-    assert has_element?(ctx.view, ".track-crumbs #track-machine-state[role=status]")
+    assert has_element?(ctx.view, ".track-head-status #track-machine-state[role=status]")
     refute has_element?(ctx.view, "#track-machine-state [data-fit-label]")
 
     top_level =
       ctx.view
-      |> element(".track-crumbs")
+      |> element("header.track-head")
       |> render()
       |> LazyHTML.from_fragment()
-      |> LazyHTML.query(
-        "header > button, .track-header-path > button, .track-header-status > button, #track-more > button"
-      )
+      |> LazyHTML.query(".track-head-actions > button[data-tip], #track-more > button[data-tip]")
       |> LazyHTML.attribute("data-tip")
 
     assert top_level == ["Rename track", "Track sharing (0 viewing now)", "More for this track"]
-    refute has_element?(ctx.view, ".track-crumbs > button[aria-label='Close track']")
+    # The one action without a tip says what it does in words.
+    assert has_element?(
+             ctx.view,
+             ".track-head-actions > button#track-open-pull",
+             "Open pull request"
+           )
+
+    refute has_element?(ctx.view, ".track-head-actions > button[aria-label='Close track']")
 
     ctx.view |> element("#track-more-panel button", "Close track") |> render_click()
 
@@ -6938,13 +6988,14 @@ defmodule RavixWeb.TrackLiveTest do
     view = find_live_child(parent, "track-host")
     settle(view)
 
+    assert has_element?(view, "h1.track-title .track-title-text", "fix-login")
+
     assert has_element?(
              view,
-             ".track-crumbs button.track-title-crumb[aria-label='Rename track: fix-login']",
-             "fix-login"
+             ".track-head-actions button.track-title-crumb[aria-label='Rename track: fix-login']"
            )
 
-    refute render(header.(view)) =~ "ravix/fix-login"
+    refute has_element?(view, "h1.track-title", "ravix/fix-login")
   end
 
   test "a member who neither owns nor opened the track has no close action", ctx do
@@ -6969,8 +7020,8 @@ defmodule RavixWeb.TrackLiveTest do
 
     view = find_live_child(parent, "track-host")
     settle(view)
-    assert has_element?(view, ".track-crumbs button[aria-label^='Track sharing']")
-    refute has_element?(view, ".track-crumbs button[aria-label='Project settings']")
+    assert has_element?(view, ".track-head-actions button[aria-label^='Track sharing']")
+    refute has_element?(view, "header.track-head button[aria-label='Project settings']")
     refute has_element?(view, "#track-actions-toggle")
     refute has_element?(view, "button", "Close track")
   end
@@ -7317,19 +7368,29 @@ defmodule RavixWeb.TrackLiveTest do
     assert has_element?(ctx.view, "[data-narrow-view='conversation']")
   end
 
-  test "narrow views switch without discarding the conversation or dock", ctx do
+  test "the track's tabs switch views without discarding the conversation or dock", ctx do
     assert has_element?(ctx.view, "[data-narrow-view='conversation']")
-    ctx.view |> element("[phx-click='narrow-view'][phx-value-name='files']") |> render_click()
+    assert has_element?(ctx.view, "nav.track-tabs[aria-label='Track views']")
+    assert has_element?(ctx.view, "#track-tab-threads.on[aria-pressed=true]", "Threads")
+    assert has_element?(ctx.view, "#track-tab-threads .count", "1")
+    assert has_element?(ctx.view, "#track-facts.track-facts-aside")
+
+    ctx.view |> element("#track-tab-files") |> render_click()
     assert has_element?(ctx.view, "[data-narrow-view='files']")
-    ctx.view |> element("[phx-click='narrow-view'][phx-value-name='terminal']") |> render_click()
+    assert has_element?(ctx.view, "#track-tab-files.on[aria-pressed=true]")
+    assert has_element?(ctx.view, "#track-tab-threads[aria-pressed=false]")
+    assert has_element?(ctx.view, ".workspace-tabs button.selected[phx-value-name='files']")
+
+    ctx.view |> element("#track-tab-terminal") |> render_click()
     assert has_element?(ctx.view, "[data-narrow-view='terminal']")
+    assert has_element?(ctx.view, "#track-tab-terminal.on[aria-pressed=true]")
+    assert has_element?(ctx.view, "#track-tab-files[aria-pressed=false]")
     assert has_element?(ctx.view, "#machine-dock:not([hidden])")
 
-    ctx.view
-    |> element("[phx-click='narrow-view'][phx-value-name='conversation']")
-    |> render_click()
+    ctx.view |> element("#track-tab-threads") |> render_click()
 
     assert has_element?(ctx.view, "[data-narrow-view='conversation']")
+    assert has_element?(ctx.view, "#track-tab-threads.on[aria-pressed=true]")
     assert has_element?(ctx.view, "#track-terminal")
   end
 
@@ -7358,7 +7419,7 @@ defmodule RavixWeb.TrackLiveTest do
 
     assert has_element?(
              ctx.view,
-             ".track-crumbs button[aria-label='Track sharing (1 viewing now)'][data-tip='Track sharing (1 viewing now)']",
+             ".track-head-actions button[aria-label='Track sharing (1 viewing now)'][data-tip='Track sharing (1 viewing now)']",
              "1"
            )
 
@@ -8960,10 +9021,13 @@ defmodule RavixWeb.TrackLiveTest do
       Transcript.page(events, "claude")
     end
 
+    # The transcript as drawn after the repair read: only its own region,
+    # since the page around it has words of its own (a "secondary" button).
     defp repair(ctx, page) do
       stub(Tracks, :events, fn _, _, _thread_opts -> {:ok, page} end)
       send(ctx.view.pid, {:hub, Event.new(:turn, ctx.project.id, track_id: ctx.track.id)})
       render_async(ctx.view)
+      ctx.view |> element("#transcript-scroll") |> render()
     end
 
     test "earlier turns prepend once while live output and catch-up retain their tail", ctx do

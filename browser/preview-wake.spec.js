@@ -1,6 +1,7 @@
 import { test, expect } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
 import { signIn, connectClaude } from './sign-in.js';
+import { openAddRepository } from './new-track.js';
 
 const mock = `http://localhost:${process.env.MOCK_PORT || 8893}`;
 
@@ -33,12 +34,12 @@ test('RAV-40: a preview on an asleep machine wakes it, says so throughout, and a
   await page.addInitScript(recordStates);
   await signIn(page, 'threadruntime', '/home');
   await connectClaude(page);
-  await page.getByRole('button', { name: 'Add a repository', exact: true }).first().click();
+  await openAddRepository(page);
   const dialog = page.getByRole('dialog', { name: 'Add a repository', exact: true });
   await dialog.getByLabel('Project name', { exact: true }).fill('Preview wake');
   await dialog.getByRole('button', { name: 'Create scratch project', exact: true }).click();
   await expect(dialog).toHaveCount(0);
-  await page.locator('#yard .workspace-project.current .project-add').click();
+  await page.locator('#top-new-track').click();
   await page.getByRole('button', { name: 'Create track', exact: true }).click();
   await expect(page).toHaveURL(url => url.pathname.includes('/t/') && !url.search);
   await expect(page.locator('#track-machine-scope')).toHaveText('Own machine');
@@ -51,7 +52,7 @@ test('RAV-40: a preview on an asleep machine wakes it, says so throughout, and a
 
   // With no run script, a start fails, says why, and offers Retry and Logs
   // in the pane's centre. Nothing spins.
-  await page.getByRole('button', { name: 'Preview', exact: true }).click();
+  await page.locator('#track-tab-preview').click();
   await expect(empty.locator('h3')).toHaveText('No preview running');
   await run.click();
   const failed = page.locator('#preview-failed');
@@ -75,10 +76,10 @@ test('RAV-40: a preview on an asleep machine wakes it, says so throughout, and a
   const trackId = new URL(page.url()).pathname.split('/t/')[1];
   const sandbox = await sandboxOf(request, trackId);
   expect((await request.post(`${mock}/__browser/sandbox-status`, { data: { id: sandbox, status: 'suspended', wake_ms: 4000 } })).ok()).toBe(true);
-  await page.getByRole('button', { name: 'Files', exact: true }).click();
+  await page.locator('#track-tab-files').click();
   await page.locator('.panel-refresh').click();
   await expect(chip).toHaveText('Asleep');
-  await page.getByRole('button', { name: 'Preview', exact: true }).click();
+  await page.locator('#track-tab-preview').click();
   await expect(empty.locator('h3')).toHaveText('No preview running');
   await page.evaluate(() => { window.__seen = []; });
 

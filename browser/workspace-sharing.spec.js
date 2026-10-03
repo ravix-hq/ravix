@@ -3,7 +3,7 @@ import { execFileSync } from 'node:child_process';
 import { test, expect } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
 import { signIn, connectClaude } from './sign-in.js';
-import { chooseSharing } from './new-track.js';
+import { chooseSharing, openAddRepository } from './new-track.js';
 import { spoken } from './track-label.js';
 
 // ADR 0009 phase 5, with RAVIX_WORKSPACE_ACCESS on (`bun run
@@ -27,13 +27,13 @@ const idOf = path => {
 };
 
 async function openTrack(page, visibility, branch) {
-  await page.locator('#yard .workspace-project.current .project-add').click();
+  await page.locator('#top-new-track').click();
   const track = page.getByRole('dialog', { name: 'New track', exact: true });
   await chooseSharing(track, visibility);
   await track.getByRole('button', { name: 'Options', exact: true }).click();
   await track.getByLabel('Branch name', { exact: true }).fill(branch);
   await track.getByRole('button', { name: 'Create track', exact: true }).click();
-  await expect(page.locator('.track-crumbs')).toContainText(spoken(branch));
+  await expect(page.locator('#track-header')).toContainText(spoken(branch));
   return new URL(page.url()).pathname;
 }
 
@@ -45,7 +45,7 @@ test('the Share dialog shares a private track with one member, and nobody else l
 
   await signIn(page, 'sharecreator');
   await connectClaude(page);
-  await page.getByRole('button', { name: 'Add a repository', exact: true }).first().click();
+  await openAddRepository(page);
   const project = page.getByRole('dialog', { name: 'Add a repository', exact: true });
   await project.getByLabel('Project name', { exact: true }).fill('Workspace sharing project');
   await project.getByRole('button', { name: 'Create scratch project', exact: true }).click();
@@ -115,11 +115,11 @@ test('the Share dialog shares a private track with one member, and nobody else l
     await shareButton.click();
     await expect(share).toBeVisible();
     // A click outside closes it, and lands where it was aimed.
-    const inspector = page.getByRole('navigation', { name: 'Inspector panels' });
-    await inspector.getByRole('button', { name: /^Changes/ }).click();
+    const views = page.getByRole('navigation', { name: 'Track views' });
+    await views.getByRole('button', { name: /^Changes/ }).click();
     await expect(share).toHaveCount(0);
-    await expect(inspector.getByRole('button', { name: /^Changes/ })).toHaveClass(/selected/);
-    await inspector.getByRole('button', { name: 'Files', exact: true }).click();
+    await expect(views.getByRole('button', { name: /^Changes/ })).toHaveAttribute('aria-pressed', 'true');
+    await views.getByRole('button', { name: 'Files', exact: true }).click();
     await shareButton.click();
     await expect(share).toBeVisible();
 
@@ -158,20 +158,27 @@ test('the Share dialog shares a private track with one member, and nobody else l
 
     // The colleague it was shared with opens it.
     await colleague.goto(secretPath);
-    await expect(colleague.locator('.track-crumbs')).toContainText('Share secret');
+    await expect(colleague.locator('#track-header')).toContainText('Share secret');
 
     // The bystander, in the same workspace, learns nothing of it.
+    // The project's page (which makes its workspace current) counts no
+    // track, and Home lists the project, once read, with no badge.
     await bystander.goto(projectPath);
-    await expect(bystander.locator('#project-sections[aria-busy="false"]')).toBeAttached();
-    await expect(bystander.locator(`#project-track-tab-${secretId}`)).toHaveCount(0);
+    await expect(bystander.locator('[data-phx-main]')).toHaveClass(/phx-connected/);
+    await expect(bystander.locator('#crumb-workspace-loading')).toHaveCount(0);
+    await expect(bystander.locator('#crumb-tracks .count')).toHaveText('0');
+    await expect(bystander.locator(`#tracks-graph-row-${secretId}, #tracks-row-${secretId}, #home-active-${secretId}, #home-needs-${secretId}`)).toHaveCount(0);
     await expect(bystander.locator('body')).not.toContainText('Share secret');
-    await expect(bystander.locator(`#project-link-${projectId} .badge`)).toHaveCount(0);
+    await bystander.locator('#topbar .topbar-home').click();
+    await expect(bystander.locator(`#home-project-${projectId}`)).toContainText('No open tracks');
+    await expect(bystander.locator(`#home-project-${projectId} .badge`)).toHaveCount(0);
+    await expect(bystander.locator('body')).not.toContainText('Share secret');
     await bystander.locator('#quick-jump-trigger').click();
     await bystander.getByLabel('Search projects, tracks and plans').fill('share-secret');
     await expect(bystander.locator('#search-dialog [data-jump-result]')).toHaveCount(0);
     await bystander.keyboard.press('Escape');
     await bystander.goto('/inbox');
-    await expect(bystander.locator('#project-sections[aria-busy="false"]')).toBeAttached();
+    await expect(bystander.locator('#inbox:not(:has(#inbox-loading))')).toBeAttached();
     await expect(bystander.locator('body')).not.toContainText('Share secret');
     await bystander.goto(secretPath);
     await expect(bystander).toHaveURL(new RegExp(`${projectPath}$`));
@@ -181,7 +188,7 @@ test('the Share dialog shares a private track with one member, and nobody else l
     await expect(share.getByRole('list', { name: 'People with access' })).toContainText('@sharecolleague');
     await share.getByRole('button', { name: 'Remove @sharecolleague', exact: true }).click();
     await expect(share).toContainText('Not shared with anyone yet.');
-    await expect(colleague.locator('.track-crumbs')).toHaveCount(0);
+    await expect(colleague.locator('#track-header')).toHaveCount(0);
     await expect(colleague.locator('body')).not.toContainText('Share secret');
   } finally {
     await colleagueContext.close();
@@ -198,7 +205,7 @@ test("a workspace project's Access page lists every source and gives a different
 
   await signIn(page, 'sharecreator');
   await connectClaude(page);
-  await page.getByRole('button', { name: 'Add a repository', exact: true }).first().click();
+  await openAddRepository(page);
   const dialog = page.getByRole('dialog', { name: 'Add a repository', exact: true });
   await dialog.getByLabel('Project name', { exact: true }).fill('Retired links project');
   await dialog.getByRole('button', { name: 'Create scratch project', exact: true }).click();

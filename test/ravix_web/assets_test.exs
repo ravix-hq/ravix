@@ -15,7 +15,7 @@ defmodule RavixWeb.AssetsTest do
 
   @out Path.expand("../../priv/static/assets/js", __DIR__)
   @source Path.expand("../../assets/css/app.css", __DIR__)
-  @themes ~w(ravix slate one-dark dracula nord tokyo-night catppuccin-mocha night-owl monokai
+  @themes ~w(ravix dark system graphite slate one-dark dracula nord tokyo-night catppuccin-mocha night-owl monokai
              gruvbox-dark solarized-dark daylight github-light one-light solarized-light
              catppuccin-latte mario neon-noir vaporwave matrix hot-dog-stand bubblegum)
   @tokens ~w(bg panel sidebar surface surface-hover surface-active input code-bg line line-strong
@@ -49,7 +49,7 @@ defmodule RavixWeb.AssetsTest do
     for theme <- @themes do
       selector =
         if theme == "ravix",
-          do: ~s(:root, [data-theme="ravix"]),
+          do: ~s(:root, [data-theme="ravix"], [data-theme="light"]),
           else: ~s([data-theme="#{theme}"])
 
       [_, body] =

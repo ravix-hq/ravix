@@ -10,7 +10,7 @@ defmodule RavixWeb.WorkspaceLiveTest do
   alias Ravix.GitHub.{ChecksReport, Shapes}
   alias Ravix.Hub.Event
   alias Ravix.People.Store, as: People
-  alias Ravix.Tracks.{Diff, Files, Follower, Setup, Track}
+  alias Ravix.Tracks.{Diff, Files, Follower, Setup}
   alias Ravix.Tracks.Transcript
   alias RavixWeb.Live.Guard
 
@@ -27,7 +27,7 @@ defmodule RavixWeb.WorkspaceLiveTest do
     :ok
   end
 
-  test "mobile navigation marks only the current destination on every workspace route", %{
+  test "the top bar marks only the current destination on every workspace route", %{
     conn: conn
   } do
     user = insert_user()
@@ -49,7 +49,7 @@ defmodule RavixWeb.WorkspaceLiveTest do
 
       for page <- [direct, view] do
         for href <- ["/home", "/inbox"] do
-          assert has_element?(page, ".workspace-mobile-nav a[href='#{href}'][aria-current=page]") ==
+          assert has_element?(page, "#topbar .topbar-nav a[href='#{href}'][aria-current=page]") ==
                    (href == current)
         end
       end
@@ -124,14 +124,13 @@ defmodule RavixWeb.WorkspaceLiveTest do
 
     card = ~s|.inbox-item[href^="/p/#{project.id}/t/#{titled.id}?"]|
     other_card = ~s|.inbox-item[href^="/p/#{project.id}/t/#{untitled.id}?"]|
-    tab = &"#project-track-tab-#{&1.id}"
     # What the page draws, as against what a tooltip holds.
     shown = fn selector ->
       view |> element(selector) |> render() |> LazyHTML.from_fragment() |> LazyHTML.text()
     end
 
-    # The Inbox and the sidebar say the title, and nothing of the branch,
-    # which is the tooltip's.
+    # The Inbox says the title, and nothing of the branch, which is the
+    # tooltip's.
     assert has_element?(
              view,
              "#{card} strong[title^='Pull Latest Main'][title$='ravix/crewe']",
@@ -140,25 +139,9 @@ defmodule RavixWeb.WorkspaceLiveTest do
 
     refute shown.(card) =~ "crewe"
 
-    assert has_element?(
-             view,
-             "#{tab.(titled)}[title^='Pull Latest Main'][title$='ravix/crewe'] .track-title",
-             "Pull Latest Main"
-           )
-
-    refute shown.(tab.(titled)) =~ "crewe"
-
     # Until it is titled, a track goes by its branch read as words.
     assert has_element?(view, "#{other_card} strong", "Fix login")
     refute shown.(other_card) =~ "ravix/"
-
-    assert has_element?(
-             view,
-             "#{tab.(untitled)}[title^='Fix login'][title$='ravix/fix-login'] .track-title",
-             "Fix login"
-           )
-
-    refute shown.(tab.(untitled)) =~ "ravix/"
 
     # Quick jump reads the same label, and still finds a track by its branch.
     render_click(view, "dialog", %{name: "search"})
@@ -167,12 +150,30 @@ defmodule RavixWeb.WorkspaceLiveTest do
     assert has_element?(view, "#{result} .search-label", "Pull Latest Main")
     refute shown.(result) =~ "crewe"
 
-    # The project's recent tracks, and the page title of an open track.
+    # The project's tracks name each by its title; the branch is its own
+    # column beside the name, never the name. And the page title of an open
+    # track.
     render_patch(view, "/p/#{project.id}")
-    recent = shown.("#project-start")
-    assert recent =~ "Pull Latest Main"
-    assert recent =~ "Fix login"
-    refute recent =~ "ravix/"
+
+    assert has_element?(
+             view,
+             "#tracks-graph-row-#{titled.id} .tracks-title[title^='Pull Latest Main'][title$='ravix/crewe']",
+             "Pull Latest Main"
+           )
+
+    assert has_element?(
+             view,
+             "#tracks-graph-row-#{untitled.id} .tracks-title[title^='Fix login'][title$='ravix/fix-login']",
+             "Fix login"
+           )
+
+    titled_name = shown.("#tracks-graph-row-#{titled.id} .tracks-title")
+    assert titled_name =~ "Pull Latest Main"
+    refute titled_name =~ "crewe"
+    untitled_name = shown.("#tracks-graph-row-#{untitled.id} .tracks-title")
+    assert untitled_name =~ "Fix login"
+    refute untitled_name =~ "ravix/"
+    assert has_element?(view, "#tracks-graph-row-#{titled.id} .mono", "ravix/crewe")
 
     stub_track(titled)
     render_patch(view, "/p/#{project.id}/t/#{titled.id}")
@@ -208,8 +209,16 @@ defmodule RavixWeb.WorkspaceLiveTest do
       Mimic.call_original(Tracks, :mark_read, [user, id, thread])
     end)
 
-    {:ok, view, _} = live(log_in_user(conn, user), "/inbox")
+    {:ok, view, _} = live(log_in_user(conn, user), "/home")
     render_async(view)
+
+    assert has_element?(
+             view,
+             "#home-project-#{project.id} .badge[aria-label='1 track needs you']",
+             "1"
+           )
+
+    render_patch(view, "/inbox")
     path = "/p/#{project.id}/t/#{row.id}?thread=#{other.id}"
     assert has_element?(view, ~s|.inbox-item[href="#{path}"]|)
     assert has_element?(view, ~s|a[href="/inbox"] .badge|, "1")
@@ -220,13 +229,17 @@ defmodule RavixWeb.WorkspaceLiveTest do
     assert has_element?(child, ~s|[data-thread-id="#{other.id}"][aria-selected="true"]|)
     assert Repo.get_by(Tracks.ThreadRead, thread_id: other.id, user_id: user.id)
     refute has_element?(view, ~s|a[href="/inbox"] .badge|)
-    refute has_element?(view, ".track-tab .dot")
     refute has_element?(view, ".dot.unread")
 
     foreign = insert_track()
     render_patch(view, "/p/#{project.id}/t/#{row.id}?thread=#{foreign.id}")
     assert has_element?(child, ~s|[data-thread-id="#{other.id}"][aria-selected="true"]|)
     refute Repo.get_by(Tracks.ThreadRead, thread_id: foreign.id, user_id: user.id)
+
+    # Home's count of tracks that need this person went with it.
+    render_patch(view, "/home")
+    assert has_element?(view, "#home-project-#{project.id}")
+    refute has_element?(view, "#home-project-#{project.id} .badge")
   end
 
   test "the shell and deep-linked child render while the initial rail is blocked", %{conn: conn} do
@@ -267,7 +280,7 @@ defmodule RavixWeb.WorkspaceLiveTest do
 
     conn = log_in_user(conn, user)
     dead = get(conn, "/p/#{project.id}/t/#{track.id}")
-    assert html_response(dead, 200) =~ "rail-loading"
+    assert html_response(dead, 200) =~ ~s(id="topbar")
     refute_received {:rail_started, _}
     assert_receive {:mount_finished, false, dead_duration}
 
@@ -279,7 +292,7 @@ defmodule RavixWeb.WorkspaceLiveTest do
       "WorkspaceLive.mount with rail blocked: dead=#{System.convert_time_unit(dead_duration, :native, :microsecond)}µs connected=#{System.convert_time_unit(connected_duration, :native, :microsecond)}µs"
     )
 
-    assert has_element?(view, "#rail-loading")
+    assert has_element?(view, "#topbar")
     render_click(view, "dialog", %{name: "search"})
     assert has_element?(view, "#search-dialog [role=status]", "Loading projects")
     refute has_element?(view, "#search-dialog", "No tracks match")
@@ -287,6 +300,9 @@ defmodule RavixWeb.WorkspaceLiveTest do
     child = find_live_child(view, "track-host")
     assert render_async(child) =~ "Deep-linked work"
     refute_patched(view)
+    # Home is where the projects are listed, and says it is still reading them.
+    render_patch(view, "/home")
+    assert has_element?(view, "#rail-loading")
     send(worker, :release_rail)
     render_async(view)
     refute has_element?(view, "#rail-loading")
@@ -317,25 +333,25 @@ defmodule RavixWeb.WorkspaceLiveTest do
     {:ok, view, _} = live(log_in_user(conn, user), "/p/missing")
     render_async(view, 5_000)
     render_async(view, 5_000)
-    assert has_element?(view, "#rail-error", "Projects could not be loaded.")
-    refute has_element?(view, "#rail-loading")
-    assert has_element?(view, "#project-sections[aria-busy=false]")
+    assert has_element?(view, "#inbox-error", "The inbox could not be loaded.")
+    refute has_element?(view, "#inbox-loading")
     refute_patched(view)
 
     stub(Projects, :list, fn user, opts ->
       Mimic.call_original(Projects, :list, [user, opts])
     end)
 
-    view |> element("#rail-error button", "Retry") |> render_click()
+    view |> element("#inbox-error button", "Retry") |> render_click()
     assert render_async(view) =~ "Invalid project link."
     assert_patch(view, "/home")
     refute has_element?(view, "#rail-error")
+    refute has_element?(view, "#inbox-error")
   end
 
   test "retry after an initial rail crash still sends a new user to onboarding", %{conn: conn} do
     user = insert_user(onboarded_at: nil)
     expect(Projects, :list, 2, fn _, _ -> raise "initial rail failed" end)
-    {:ok, view, _} = live(log_in_user(conn, user), "/")
+    {:ok, view, _} = live(log_in_user(conn, user), "/home")
     render_async(view, 5_000)
     render_async(view, 5_000)
     assert has_element?(view, "#rail-error")
@@ -446,7 +462,7 @@ defmodule RavixWeb.WorkspaceLiveTest do
     People.remove_project_member(project.id, user.id)
     send(worker, :release_rail)
     render_async(view)
-    refute has_element?(view, ".workspace-project-name[href='/p/#{project.id}']")
+    refute has_element?(view, "a[href='/p/#{project.id}']")
     assert_patch(view, "/")
   end
 
@@ -611,7 +627,8 @@ defmodule RavixWeb.WorkspaceLiveTest do
   test "project labels distinguish owners for project and track guests", %{conn: conn} do
     owner = insert_user(login: "project-owner")
     project = insert_project(user: owner, name: "ravix")
-    track = insert_track(project: project, title: "Visible track")
+    # Still setting up, so Home's Running now lists it with its project.
+    track = insert_track(project: project, title: "Visible track", setup_state: "pending")
     hidden_track = insert_track(project: project, title: "Private sibling")
     member = insert_user()
     guest = insert_user()
@@ -626,28 +643,26 @@ defmodule RavixWeb.WorkspaceLiveTest do
         ] do
       {:ok, view, _} = live(log_in_user(conn, user), "/home")
       render_async(view)
-      selector = ".workspace-project-name[href='/p/#{project.id}'] .project-label"
+      selector = "#project-link-#{project.id}[href='/p/#{project.id}'] .project-label"
       assert has_element?(view, selector, label)
-      assert has_element?(view, ".home-recent .project-label", label)
+      assert has_element?(view, "#home-active-#{track.id} .project-label", label)
       assert has_element?(view, selector <> " .dim") == (user != owner)
+      # A track guest cannot start a track in somebody else's project.
+      assert has_element?(view, "#new-track-#{project.id}") == (user != guest)
       refute render(view) =~ hidden.name
       refute render(view) =~ "hidden-owner"
       render_patch(view, "/p/#{project.id}")
       assert page_title(view) == label <> " · Ravix"
-
-      assert has_element?(
-               view,
-               "#project-link-#{project.id}[aria-current=page]"
-             )
-
-      assert has_element?(view, "#yard .project-tree-tracks #project-track-tab-#{track.id}")
+      assert has_element?(view, "header.repo-head .project-label", label)
+      assert has_element?(view, "#crumb-tracks[aria-current=page]")
+      assert has_element?(view, "#project-tracks #tracks-graph-row-#{track.id}")
 
       if user == guest do
         refute render(view) =~ hidden_track.title
-        refute has_element?(view, "#yard #project-track-tab-#{hidden_track.id}")
-        refute has_element?(view, "#yard [data-project-id='#{project.id}'] .project-add")
+        refute has_element?(view, "#tracks-graph-row-#{hidden_track.id}")
+        refute has_element?(view, "#project-tracks-new")
       else
-        assert has_element?(view, "#yard #project-track-tab-#{hidden_track.id}")
+        assert has_element?(view, "#project-tracks #tracks-graph-row-#{hidden_track.id}")
       end
 
       render_click(view, "dialog", %{name: "search"})
@@ -781,27 +796,43 @@ defmodule RavixWeb.WorkspaceLiveTest do
     assert {:error, {:live_redirect, %{to: "/"}}} = live(log_in_user(conn, user), "/login")
   end
 
-  test "Add a repository opens a fresh form and Home's recent tracks stay scoped", %{conn: conn} do
+  test "New project opens a fresh form and Home's running tracks stay scoped", %{conn: conn} do
     user = insert_user()
     own = insert_project(user: user, name: "Recent work")
-    track = insert_track(project: own, created_by_login: user.login, title: "Tidy the router")
+
+    track =
+      insert_track(
+        project: own,
+        created_by_login: user.login,
+        title: "Tidy the router",
+        setup_state: "pending"
+      )
+
     hidden = insert_project(user: insert_user(), name: "Private work")
-    insert_track(project: hidden, title: "Somebody else's work")
+    insert_track(project: hidden, title: "Somebody else's work", setup_state: "pending")
     {:ok, view, _} = live(log_in_user(conn, user), "/home")
     render_async(view)
 
     assert has_element?(
              view,
-             "#home-track-#{track.id}[href='/p/#{own.id}/t/#{track.id}']",
+             "#home-active-#{track.id}[href='/p/#{own.id}/t/#{track.id}']",
              "Recent work"
            )
 
     refute render(view) =~ hidden.name
     refute render(view) =~ "Somebody else"
-    # The sidebar's "Add a repository" is the one way in; Home's one action is New track.
-    refute has_element?(view, "#home button", "repository")
-    assert has_element?(view, "#home #home-new-track[data-new-track-trigger]", "New track")
-    add = element(view, "#yard button.yard-item", "Add a repository")
+    # Home's projects list holds the one way to add a repository, "New
+    # project"; the top bar's create action is New track.
+    assert [_] =
+             view
+             |> render()
+             |> LazyHTML.from_document()
+             |> LazyHTML.query("#home button[phx-value-name=new-project]")
+             |> Enum.to_list()
+
+    assert has_element?(view, "#topbar #top-new-track[data-new-track-trigger]", "New track")
+    refute has_element?(view, "#topbar [phx-value-name=new-project]")
+    add = element(view, "#home-projects #home-add-repository.primary", "New project")
     render_click(add)
     view |> form("#new-project-form", new_project: [name: "Abandoned name"]) |> render_change()
     render_click(view, "dismiss")
@@ -1021,17 +1052,20 @@ defmodule RavixWeb.WorkspaceLiveTest do
   test "the rail and inbox are scoped to the signed-in user", %{conn: conn} do
     user = insert_user()
     own = insert_project(user: user, name: "My project")
-    insert_project(name: "Someone else's project", user: insert_user())
-    track = insert_track(project: own, title: "My work")
-    {:ok, view, _} = live(log_in_user(conn, user), "/")
+    theirs = insert_project(name: "Someone else's project", user: insert_user())
+    # Both still setting up, so each would be in Running now if it were seen.
+    track = insert_track(project: own, title: "My work", setup_state: "pending")
+    insert_track(project: theirs, title: "Someone else's work", setup_state: "pending")
+    {:ok, view, _} = live(log_in_user(conn, user), "/home")
     render_async(view)
-    assert has_element?(view, "#project-tree a", "My project")
-    assert has_element?(view, "#yard a", "My work")
+    assert has_element?(view, "#home-projects a", "My project")
+    assert has_element?(view, "#home-active-#{track.id}", "My work")
+    assert has_element?(view, "#home-active-#{track.id}", "My project")
     refute render(view) =~ "Someone else"
-    view |> element("#project-tree a.workspace-project-name") |> render_click()
+    view |> element("#home-projects a.home-project-name") |> render_click()
     assert_patch(view, "/p/#{own.id}")
-    assert has_element?(view, "a.project-add")
-    assert has_element?(view, "a[href='/p/#{own.id}/t/#{track.id}']")
+    assert has_element?(view, "#project-tracks-new[href='/p/#{own.id}?new=track']")
+    assert has_element?(view, "#project-tracks a[href='/p/#{own.id}/t/#{track.id}']")
   end
 
   for dedicated <- [false, true] do
@@ -1053,16 +1087,16 @@ defmodule RavixWeb.WorkspaceLiveTest do
   test "project disclosure and inline creation follow scoped navigation", %{conn: conn} do
     user = insert_user()
     project = insert_project(user: user)
-    insert_track(project: project)
+    track = insert_track(project: project)
     {:ok, view, _} = live(log_in_user(conn, user), "/home")
     render_async(view)
-    assert has_element?(view, "#yard .project-tree-tracks .workspace-track")
-    assert has_element?(view, ".project-tree-tracks")
+    assert has_element?(view, "#home-project-#{project.id}", "1 open track")
     render_patch(view, "/p/#{project.id}")
-    view |> element("a.project-add") |> render_click()
+    assert has_element?(view, "#project-tracks #tracks-graph-row-#{track.id}")
+    view |> element("#project-tracks-new") |> render_click()
     assert_patch(view, "/p/#{project.id}?new=track")
     assert has_element?(view, "#new-track-form")
-    assert has_element?(view, ".project-tree-tracks .workspace-track")
+    assert has_element?(view, "#project-tracks #tracks-graph-row-#{track.id}")
     view |> form("#new-track-form", new_track: [title: "Keep this name"]) |> render_change()
     view |> element("#new-track-options[aria-expanded=false]", "Options") |> render_click()
     refute has_element?(view, "#track-advanced[hidden]")
@@ -1076,33 +1110,51 @@ defmodule RavixWeb.WorkspaceLiveTest do
     refute has_element?(view, "#new-track-form")
   end
 
-  test "track tabs follow the selected project and mark the current track", %{conn: conn} do
+  test "a project's tracks follow the selected project, and a track leads back to its own",
+       %{conn: conn} do
     user = insert_user()
     project = insert_project(user: user)
     track = insert_track(project: project)
     other = insert_project(user: user)
     other_track = insert_track(project: other)
+    stub_track(track)
     {:ok, view, _} = live(log_in_user(conn, user), "/p/#{project.id}/t/#{track.id}")
     # Await the rail tasks; 100ms is too short under coverage and browser load.
     render_async(view, 1_000)
+    child = find_live_child(view, "track-host")
+    render_async(child)
+    assert has_element?(child, "#track-header")
+    # The top bar's breadcrumb leads back to the track's own project.
+    assert has_element?(view, "#topbar .topbar-crumbs a[href='/p/#{project.id}']")
+    refute has_element?(view, "#topbar .topbar-crumbs a[href='/p/#{other.id}']")
+
+    render_patch(view, "/home")
+    # Home counts each project's own open track under it.
+    assert has_element?(view, "#home-project-#{project.id}", "1 open track")
+    assert has_element?(view, "#home-project-#{other.id}", "1 open track")
+
+    view |> element("#project-link-#{other.id}") |> render_click()
+    assert_patch(view, "/p/#{other.id}")
 
     assert has_element?(
              view,
-             ".project-tree-tracks a[aria-current='page'][href='/p/#{project.id}/t/#{track.id}']"
+             "#tracks-graph-row-#{other_track.id} a[href='/p/#{other.id}/t/#{other_track.id}']"
            )
 
-    assert has_element?(view, "#yard .project-tree-tracks .workspace-track")
-    assert has_element?(view, ".project-tree-tracks a[href='/p/#{other.id}/t/#{other_track.id}']")
+    refute has_element?(view, "#tracks-graph-row-#{track.id}")
 
-    view
-    |> element("#project-tree .workspace-project-name[href='/p/#{other.id}']")
-    |> render_click()
+    render_patch(view, "/p/#{project.id}")
 
-    assert has_element?(view, ".project-tree-tracks a[href='/p/#{other.id}/t/#{other_track.id}']")
-    assert has_element?(view, ".project-tree-tracks a[href='/p/#{project.id}/t/#{track.id}']")
+    assert has_element?(
+             view,
+             "#tracks-graph-row-#{track.id} a[href='/p/#{project.id}/t/#{track.id}']"
+           )
+
+    refute has_element?(view, "#tracks-graph-row-#{other_track.id}")
   end
 
-  test "track tabs omit ordinals across mixed states and show each track's state", %{conn: conn} do
+  test "the project's track list omits ordinals across mixed states and shows each track's state",
+       %{conn: conn} do
     user = insert_user()
     project = insert_project(user: user)
 
@@ -1140,14 +1192,14 @@ defmodule RavixWeb.WorkspaceLiveTest do
         struct!(track, origin: struct!(track.origin, kind: :plan, title: "Login"))
       end)
 
-    # Everything the tabs say comes from the rail's one list.
+    # Everything the list says comes from the rail's one list.
     stub(Tracks, :list, fn _user, _project_id, _opts -> {:ok, tracks} end)
     {:ok, view, _} = live(log_in_user(conn, user), "/p/#{project.id}")
     render_async(view)
+    view |> element("#project-tracks-list[aria-pressed=false]") |> render_click()
+    assert has_element?(view, "#project-tracks-list[aria-pressed=true]")
 
-    tab = fn track ->
-      "#yard .project-tree-tracks a[href='/p/#{project.id}/t/#{track.id}']"
-    end
+    tab = fn track -> "#tracks-row-#{track.id}" end
 
     [
       idle,
@@ -1163,101 +1215,105 @@ defmodule RavixWeb.WorkspaceLiveTest do
       closing
     ] = tracks
 
-    # The namespace every default title shares is left off the tab and its
-    # accessible name alike (`Track.label/1`); the name, its creator and its
-    # machine state are the accessible name, and the tooltip adds the raw
-    # branch. The age the `RelativeTime` hook keeps current ends it.
-    assert has_element?(
-             view,
-             "#{tab.(idle)}[data-label='idle, created by @user, Idle'][title^='idle'][title$='#{idle.branch}']"
-           )
+    title = fn track ->
+      "#{tab.(track)} a.tracks-title[href='/p/#{project.id}/t/#{track.id}']"
+    end
 
-    assert has_element?(
-             view,
-             "#{tab.(idle)}[aria-label^='idle, created by @user, Idle, active ']"
-           )
-
-    assert render(element(view, "#{tab.(idle)} .track-title")) =~ ~r{>idle</span>}
+    # The namespace every default title shares is left off the row and its
+    # accessible name alike (`Track.label/1`); the name and its machine state
+    # are the link's accessible name, and the tooltip adds the raw branch.
+    # The branch and the creator are the row's own line beneath it.
+    assert has_element?(view, "#{title.(idle)}[title^='idle'][title$='#{idle.branch}']")
+    assert render(element(view, title.(idle))) =~ ~r{>\s*idle<span class="sr-only">, Idle</span>}
+    assert has_element?(view, "#{tab.(idle)} .tracks-row-meta .mono", idle.branch)
+    assert has_element?(view, "#{tab.(idle)} .tracks-row-meta", "by @user")
     # A title outside the namespace is shown whole, and a plan's track says so.
-    assert has_element?(view, "#{tab.(feature)} .track-title", "feature/login")
+    assert has_element?(view, title.(feature), "feature/login")
+    assert has_element?(view, "#{tab.(feature)} .chip", "Plan item")
+    refute has_element?(view, "#{tab.(idle)} .chip")
 
-    assert has_element?(
-             view,
-             "#{tab.(feature)}[data-label='feature/login, created by @user, from a project plan, Idle']"
-           )
-
-    # One `MachineState` per row: the dot's class, its label and tooltip, and
-    # the row's accessible name all say the same word.
-    for {track, class, label, name, tooltip} <- [
-          {booting, "starting", "Starting", "Starting", "Starting: Setting up…"},
-          {answered, "unread", "Unread reply", "Idle, Unread reply", "Unread reply · Idle"},
-          {setup_broken, "error", "Error", "Error", "Error: The opening turn failed."},
-          {asleep, "asleep", "Asleep", "Asleep", "Asleep: Your next message wakes it."},
-          {asleep_unread, "unread", "Unread reply", "Asleep, Unread reply",
-           "Unread reply · Asleep"},
-          {rebuilding, "restarting", "Restarting", "Restarting",
-           "Restarting: Creating this track's machine…"},
-          {closing, "closing", "Closing", "Closing",
-           "Closing: Closing… cleaning up this track's machine"}
+    # One `MachineState` per row: the dot's class, its label, the row's
+    # state column and the link's accessible name all say the same word.
+    for {track, class, dot, label} <- [
+          {idle, "idle", "Idle", "Idle"},
+          {busy, "working", "Working", "Working"},
+          {booting, "starting", "Starting", "Starting"},
+          {setup_broken, "error", "Error", "Error"},
+          {asleep, "asleep", "Asleep", "Asleep"},
+          {rebuilding, "restarting", "Restarting", "Restarting"},
+          {closing, "closing", "Closing", "Closing"},
+          # An unread reply outranks a machine with nothing to report, and
+          # the dot says both; the state column still names the machine's.
+          {answered, "unread", "Unread reply · Idle", "Idle"},
+          {asleep_unread, "unread", "Unread reply · Asleep", "Asleep"},
+          # A failed turn is recoverable, so it is no alarm: the machine is
+          # Idle, and the next message carries on.
+          {broken, "idle", "Idle", "Idle"}
         ] do
       assert has_element?(
                view,
-               "#{tab.(track)} .dot.#{class}[role=img][aria-label='#{label}'][data-tip=\"#{tooltip}\"]"
+               "#{tab.(track)} > .dot.#{class}[role=img][aria-label='#{dot}'][data-tip^='#{dot}']"
              )
+
+      assert has_element?(view, "#{tab.(track)} > .tracks-row-state", label)
+      assert has_element?(view, "#{title.(track)} .sr-only", ", #{label}")
+    end
+
+    refute has_element?(view, "#{tab.(broken)} .dot.error")
+
+    # Every row leads with its dot and ends with its icons, so the columns line
+    # up, and none is numbered.
+    for track <- tracks do
+      assert has_element?(view, "#{tab.(track)} > .dot:first-child + .tracks-row-main")
+      # Then the state, and at the row's right edge whose it is and how it
+      # is shared.
+      assert has_element?(view, "#{tab.(track)} > .tracks-row-age + .tracks-row-state")
 
       assert has_element?(
                view,
-               "#{tab.(track)}[data-label=\"#{Track.label(track)}, created by @user, #{name}\"]"
+               "#{tab.(track)} > .tracks-row-state + .track-who:last-child > .track-owner + .track-sharing"
              )
     end
 
-    # A failed turn is recoverable, so it is no alarm: the machine is Idle,
-    # and the next message carries on.
-    refute has_element?(view, "#{tab.(broken)} .dot[role=img]")
+    refute has_element?(view, "#project-tracks .track-num")
+  end
 
-    assert has_element?(
-             view,
-             "#{tab.(broken)}[data-label='broken, created by @user, Idle']"
-           )
+  # The sidebar marked a track with an unread reply (RAV-96); the project's
+  # page does, in both of its views.
+  test "the project's track list marks an unread reply", %{conn: conn} do
+    user = insert_user()
+    project = insert_project(user: user)
 
-    # Idle and active tracks alike omit decorative numbering.
-    refute has_element?(view, "#{tab.(idle)} .dot[role=img]")
-    assert has_element?(view, "#{tab.(idle)} [role=img]", "US")
+    [answered, asleep_unread] =
+      for {title, extra} <- [
+            {"ravix/answered", []},
+            {"ravix/asleep-unread",
+             [sandbox_layout: :dedicated, sandbox_suspended_at: DateTime.utc_now()]}
+          ] do
+        insert_track(project: project, title: title)
+        |> Tracks.present(project: project)
+        |> struct!([status: :ready, unread: true] ++ extra)
+      end
 
-    # Every row, dot or none, leads with the same status slot before its
-    # avatar, so the avatars line up. An empty slot says nothing to a reader.
-    for track <- tracks do
+    stub(Tracks, :list, fn _user, _project_id, _opts -> {:ok, [answered, asleep_unread]} end)
+    {:ok, view, _} = live(log_in_user(conn, user), "/p/#{project.id}")
+    render_async(view)
+
+    for track <- [answered, asleep_unread] do
       assert has_element?(
                view,
-               "#{tab.(track)} > .track-status:first-child + .track-creator + .track-title"
+               "#tracks-graph-row-#{track.id} .dot.unread[role=img][aria-label='Unread reply']"
              )
     end
 
-    assert has_element?(view, "#{tab.(idle)} > .track-status[aria-hidden=true]")
-    refute has_element?(view, "#{tab.(idle)} > .track-status > *")
+    view |> element("#project-tracks-list") |> render_click()
 
-    # A working track spins in its age slot, which every row ends with, and
-    # draws no dot as well (RAV-96). The row's name still says Working.
-    for track <- tracks do
-      assert has_element?(view, "#{tab.(track)} > .track-meta:last-child")
+    for {track, state} <- [{answered, "Idle"}, {asleep_unread, "Asleep"}] do
+      assert has_element?(
+               view,
+               "#tracks-row-#{track.id} > .dot.unread[role=img][aria-label='Unread reply · #{state}']"
+             )
     end
-
-    assert has_element?(
-             view,
-             "#{tab.(busy)} > .track-meta > .track-spinner[role=img][aria-label=Working][data-tip=\"Working: The agent is taking a turn.\"]"
-           )
-
-    refute has_element?(view, "#{tab.(busy)} .dot")
-    refute has_element?(view, "#{tab.(busy)} .track-age")
-
-    assert has_element?(
-             view,
-             "#{tab.(busy)}[data-label=\"#{Track.label(busy)}, created by @user, Working\"]"
-           )
-
-    refute has_element?(view, "#{tab.(idle)} .track-spinner")
-    assert has_element?(view, "#{tab.(idle)} > .track-meta > time.track-age")
-    refute has_element?(view, ".project-tree-tracks .track-num")
   end
 
   test "a machine's sleep or wake re-reads the rail from the memo, not Fountain", %{conn: conn} do
@@ -1283,33 +1339,46 @@ defmodule RavixWeb.WorkspaceLiveTest do
     refute_received {:list, true}
   end
 
-  test "project tree marks navigation and closes the mobile drawer", %{conn: conn} do
+  test "the project page marks navigation and opens a track from its list", %{conn: conn} do
     user = insert_user()
     project = insert_project(user: user)
     track = insert_track(project: project)
+    stub_track(track)
     {:ok, view, _} = live(log_in_user(conn, user), "/p/#{project.id}")
     render_async(view)
-    assert has_element?(view, "#project-link-#{project.id}[aria-current=page]")
+    assert has_element?(view, "header.repo-head #crumb-tracks[aria-current=page]")
+    # Inside a project the top bar is a breadcrumb, with the project current.
+    refute has_element?(view, "#topbar .topbar-nav")
 
     assert has_element?(
              view,
-             "#project-tracks-#{project.id} a[href='/p/#{project.id}/t/#{track.id}']"
+             "#topbar .topbar-crumbs a[href='/p/#{project.id}'][aria-current=page]"
            )
 
     assert has_element?(
              view,
-             "#project-tabpanel[role=region][aria-labelledby=project-link-#{project.id}]"
+             "#project-tracks a[href='/p/#{project.id}/t/#{track.id}']"
            )
 
-    assert has_element?(view, "a.project-add")
-    render_click(view, "yard")
-    assert has_element?(view, "#yard.forced")
-    view |> element("#project-track-tab-#{track.id}") |> render_click()
+    assert has_element?(
+             view,
+             "#project-tabpanel[role=region][aria-label='#{project.name}']"
+           )
+
+    assert has_element?(view, "#project-tracks-new[href='/p/#{project.id}?new=track']")
+    view |> element("#tracks-graph-row-#{track.id} a.tracks-title") |> render_click()
+    assert_patch(view, "/p/#{project.id}/t/#{track.id}")
     render_async(view)
-    refute has_element?(view, "#yard.forced")
-    assert has_element?(view, "#project-track-tab-#{track.id}[aria-current=page]")
-    refute has_element?(view, "#project-link-#{project.id}[aria-current]")
-    assert has_element?(view, "#project-tabpanel[aria-labelledby=project-track-tab-#{track.id}]")
+    # The top bar's breadcrumb leads back to the project, which no longer
+    # claims to be the current page.
+    refute has_element?(view, "#crumb-tracks")
+    child = find_live_child(view, "track-host")
+    render_async(child)
+    assert has_element?(child, "#track-header")
+    assert has_element?(view, "#topbar .topbar-crumbs a[href='/p/#{project.id}']")
+    refute has_element?(view, "#topbar .topbar-crumbs a[aria-current]")
+    assert has_element?(view, "#topbar .topbar-crumbs", "Tracks")
+    assert has_element?(view, "#project-tabpanel[role=region][aria-label='#{project.name}']")
   end
 
   test "hiding advanced options drops the origin they carried", %{conn: conn} do
@@ -1347,21 +1416,28 @@ defmodule RavixWeb.WorkspaceLiveTest do
     refute has_element?(view, "#inbox-loading")
 
     assert render(view) =~ "You&#39;re all caught up"
-    refute has_element?(view, "a.yard-item .badge")
+    assert has_element?(view, "#topbar .topbar-nav a[href='/inbox']")
+    refute has_element?(view, "#topbar .topbar-nav a[href='/inbox'] .badge")
   end
 
   test "shared project labels identify the owner for project and track members", %{conn: conn} do
     owner = insert_user()
     member = insert_user()
     project = insert_project(user: owner, name: "Shared work")
-    track = insert_track(project: project)
+    # Still setting up, so Home's Running now lists it with its project.
+    track = insert_track(project: project, setup_state: "pending")
     label = "#{owner.login} / #{project.name}"
 
     People.add_member(track.id, member.id, owner.id)
     {:ok, shared, _} = live(log_in_user(conn, member), "/p/#{project.id}")
     render_async(shared)
-    assert has_element?(shared, ".workspace-project-name", label)
-    assert has_element?(shared, "strong", label)
+    assert has_element?(shared, "header.repo-head .project-label", label)
+
+    assert has_element?(
+             shared,
+             "#topbar .topbar-crumbs a[aria-current=page] .project-label",
+             label
+           )
 
     People.add_project_member(project.id, member.id, owner.id)
     {:ok, project_member, _} = live(log_in_user(conn, member), "/home")
@@ -1369,14 +1445,14 @@ defmodule RavixWeb.WorkspaceLiveTest do
 
     assert has_element?(
              project_member,
-             ".home-recent a[href='/p/#{project.id}/t/#{track.id}'] .recent-meta",
+             "#home-active-#{track.id}[href='/p/#{project.id}/t/#{track.id}'] .project-label",
              label
            )
 
     {:ok, own, _} = live(log_in_user(conn, owner), "/p/#{project.id}")
     render_async(own)
-    assert has_element?(own, ".workspace-project-name", project.name)
-    refute has_element?(own, ".workspace-project-name", label)
+    assert has_element?(own, "header.repo-head .project-label", project.name)
+    refute has_element?(own, "header.repo-head .project-label", label)
   end
 
   test "track-only members cannot open project creation through a URL", %{conn: conn} do
@@ -1388,12 +1464,17 @@ defmodule RavixWeb.WorkspaceLiveTest do
     {:ok, view, _} = live(log_in_user(conn, member), "/p/#{project.id}?new=track")
     render_async(view, 5_000)
     refute has_element?(view, "#new-track-form")
-    refute has_element?(view, "a.project-add")
-    refute has_element?(view, ".workspace-project.current .project-add")
-    refute has_element?(view, "#yard button.project-action")
+    assert has_element?(view, "#project-tracks #tracks-graph-row-#{track.id}")
+    refute has_element?(view, "#project-tracks-new")
+    refute has_element?(view, "#project-tracks-closed")
+    refute has_element?(view, "#crumb-plans")
+    refute has_element?(view, "#crumb-settings")
+    render_patch(view, "/home")
+    assert has_element?(view, "#home-project-#{project.id}")
+    refute has_element?(view, "#new-track-#{project.id}")
   end
 
-  test "the open project's people and settings are actions on its own row", %{conn: conn} do
+  test "the open project's people and settings are tabs on its own page", %{conn: conn} do
     user = insert_user()
     mine = insert_project(user: user, name: "Mine")
     other = insert_project(user: user, name: "Other one")
@@ -1402,19 +1483,20 @@ defmodule RavixWeb.WorkspaceLiveTest do
     {:ok, view, _} = live(log_in_user(conn, user), "/p/#{mine.id}")
     render_async(view)
 
-    row = "#yard [data-project-id='#{mine.id}'].current"
-    # The owner's People and Settings are pages (RAV-74), linked from the header.
-    assert has_element?(view, ~s(.crumbs #crumb-people[href="/p/#{mine.id}/settings/access"]))
-    assert has_element?(view, ~s(.crumbs #crumb-settings[href="/p/#{mine.id}/settings/general"]))
+    tabs = "header.repo-head nav.repo-tabs"
+    # The owner's People and Settings are pages (RAV-74), tabs in the header.
+    assert has_element?(view, ~s(#{tabs} #crumb-people[href="/p/#{mine.id}/settings/access"]))
+    assert has_element?(view, ~s(#{tabs} #crumb-settings[href="/p/#{mine.id}/settings/general"]))
     refute has_element?(view, ".crumbs button[phx-value-name=people]")
-    assert has_element?(view, "#{row} a.project-add[aria-label='New track in Mine']")
-    # Every owned project exposes its settings directly on its own row.
-    closed = "#yard [data-project-id='#{other.id}']"
-    refute has_element?(view, "#{closed}.current")
-    assert has_element?(view, "#{closed} a.project-add")
-    assert has_element?(view, "#{closed} button[data-tip='Project settings']")
-    # The nested links under the open project are gone.
-    refute has_element?(view, ".project-links")
+    # Only the open project's: another project's are on its own page.
+    refute has_element?(view, ~s(a[href="/p/#{other.id}/settings/general"]))
+    # Home lists every project with its own New track.
+    render_patch(view, "/home")
+    assert has_element?(view, "#new-track-#{mine.id}[aria-label='New track in Mine']")
+    assert has_element?(view, "#new-track-#{other.id}[href='/p/#{other.id}?new=track']")
+    render_patch(view, "/p/#{other.id}")
+    assert has_element?(view, ~s(#{tabs} #crumb-settings[href="/p/#{other.id}/settings/general"]))
+    render_patch(view, "/p/#{mine.id}")
 
     view |> element("#crumb-people") |> render_click()
     assert_patch(view, "/p/#{mine.id}/settings/access")
@@ -1437,7 +1519,7 @@ defmodule RavixWeb.WorkspaceLiveTest do
        }}
     end)
 
-    view |> element("#{row} button[data-tip='Project settings']") |> render_click()
+    view |> element("#crumb-settings") |> render_click()
     assert_patch(view, "/p/#{mine.id}/settings/general")
     render_async(view)
     assert has_element?(view, "#settings-page")
@@ -1447,9 +1529,13 @@ defmodule RavixWeb.WorkspaceLiveTest do
     # A member who does not own the project has its people but not its settings.
     {:ok, view, _} = live(log_in_user(conn, user), "/p/#{shared.id}")
     render_async(view)
-    row = "#yard [data-project-id='#{shared.id}'].current"
-    assert has_element?(view, "#{row} button[aria-label='People in sharer / Shared']")
-    refute has_element?(view, "#{row} button[aria-label^='Project settings']")
+    assert has_element?(view, "header.repo-head .project-label", "sharer / Shared")
+    assert has_element?(view, "#{tabs} button[phx-value-name=people]", "People")
+    refute has_element?(view, "#crumb-people")
+    refute has_element?(view, "#crumb-settings")
+    view |> element("#{tabs} button[phx-value-name=people]") |> render_click()
+    assert has_element?(view, "#people-dialog")
+    render_click(view, "dismiss")
     render_hook(view, "project-settings", %{project: shared.id})
     refute has_element?(view, "#settings-page")
     render_patch(view, "/p/#{shared.id}?settings=true")
@@ -1483,7 +1569,9 @@ defmodule RavixWeb.WorkspaceLiveTest do
     render_async(view)
     assert has_element?(view, "#new-track-project option[value='#{second.id}'][selected]")
     assert has_element?(view, "#track-title[value='keep-my-draft']")
-    assert has_element?(view, "#yard [data-project-id='#{first.id}'].current")
+    # Choosing a destination does not move the page: First is still open.
+    assert has_element?(view, "#project-tabpanel[aria-label='First']")
+    assert has_element?(view, "#crumb-tracks[href='/p/#{first.id}'][aria-current=page]")
     refute_patched(view)
     render_hook(view, "new-track-project", %{project: foreign.id})
     assert has_element?(view, "#new-track-project option[value='#{second.id}'][selected]")
@@ -1501,7 +1589,8 @@ defmodule RavixWeb.WorkspaceLiveTest do
     render_async(view)
     view |> element("#new-track-dialog button[aria-label=Close]") |> render_click()
     assert_patch(view, "/p/#{first.id}")
-    assert has_element?(view, "#yard [data-project-id='#{first.id}'].current")
+    assert has_element?(view, "#project-tabpanel[aria-label='First']")
+    assert has_element?(view, "#crumb-tracks[href='/p/#{first.id}'][aria-current=page]")
 
     stub(Projects, :settings, fn _, _ ->
       {:ok,
@@ -1541,7 +1630,9 @@ defmodule RavixWeb.WorkspaceLiveTest do
       view |> element("#top-new-track") |> render_click()
       render_async(view)
       refute_patched(view)
-      assert has_element?(view, "#yard [data-project-id='#{shared.id}'].current")
+      # The track stays open in the project it was opened in.
+      assert has_element?(view, "#project-tabpanel[aria-label$='#{shared.name}']")
+      assert find_live_child(view, "track-host")
 
       if writable do
         assert has_element?(view, "#new-track-project option[value='#{writable.id}'][selected]")
@@ -1593,7 +1684,9 @@ defmodule RavixWeb.WorkspaceLiveTest do
     send(view.pid, {:hub, Event.new(:people, destination.id)})
     render_async(view)
     refute has_element?(view, "#new-track-dialog")
-    assert has_element?(view, "#yard [data-project-id='#{home.id}'].current")
+    refute_patched(view)
+    assert has_element?(view, "#project-tabpanel[aria-label='#{home.name}']")
+    assert has_element?(view, "#crumb-tracks[href='/p/#{home.id}'][aria-current=page]")
   end
 
   test "top New track with no projects starts at Home's first prompt", %{conn: conn} do
@@ -1616,33 +1709,17 @@ defmodule RavixWeb.WorkspaceLiveTest do
     {:ok, view, _} = live(log_in_user(conn, user), "/home")
     render_async(view)
 
-    # One row at the top opens it; nothing of it is left at the foot.
+    # One button in the top bar opens it.
     assert has_element?(
              view,
-             "#yard button#account-trigger[popovertarget='account-menu']",
+             "#topbar button#account-trigger[popovertarget='account-menu'][aria-label='You']",
              "@menuuser"
            )
 
-    # It hides the whole sidebar, and says so with its shortcut (RAV-96).
-    assert has_element?(
-             view,
-             ~s|#yard-toggle[phx-hook=PanelToggle][aria-controls=yard][aria-expanded=true][data-shortcut=b][aria-keyshortcuts="Control+B"][data-tip="Hide sidebar"][data-tip-kbd="Mod+B"][data-show-label="Show sidebar"]|,
-             "Hide sidebar"
-           )
-
-    assert has_element?(view, "#yard-toggle .label-show", "Show sidebar")
-
     refute has_element?(view, ".workspace-account")
-
-    assert has_element?(
-             view,
-             "#yard .yard-footer #account-trigger[aria-label='You']",
-             "You"
-           )
-
     assert has_element?(view, "#account-menu[aria-label='You']")
 
-    menu = "#yard #account-menu[popover]"
+    menu = "#topbar #account-menu[popover]"
 
     # Quick toggles, then a short menu (RAV-77): Account and Repository
     # access are Settings' pages now.
@@ -1706,6 +1783,8 @@ defmodule RavixWeb.WorkspaceLiveTest do
 
   test "project creation calls the context and navigates to the new project", %{conn: conn} do
     user = insert_user()
+    # Home lists projects, and New project with them, once there is one.
+    insert_project(user: user, name: "Already here")
 
     expect(Projects, :create, fn actual_user, attrs ->
       assert actual_user.id == user.id
@@ -1715,9 +1794,9 @@ defmodule RavixWeb.WorkspaceLiveTest do
       {:ok, %{id: project.id}}
     end)
 
-    {:ok, view, _} = live(log_in_user(conn, user), "/")
+    {:ok, view, _} = live(log_in_user(conn, user), "/home")
     render_async(view)
-    view |> element(".workspace-actions button", "Add a repository") |> render_click()
+    view |> element("#home-add-repository", "New project") |> render_click()
 
     render_click(view, "choose-project-agent", %{"agent" => "codex"})
 
@@ -1726,40 +1805,80 @@ defmodule RavixWeb.WorkspaceLiveTest do
     |> render_submit()
 
     render_async(view)
-    assert has_element?(view, "a.workspace-project-name", "New project")
-    # Plans are behind the project row now, not on the project's home.
+    path = assert_patch(view)
+    [_, id] = Regex.run(~r{^/p/([^/?]+)$}, path)
+    assert has_element?(view, "header.repo-head .project-label", "New project")
+    # Plans are a tab of the project's page, not on the project's home.
     refute has_element?(view, "#plans-panel")
-    assert has_element?(view, "a.project-action[aria-label='Plans in New project']")
+    assert has_element?(view, "nav.repo-tabs #crumb-plans[href='/p/#{id}/plans']", "Plans")
+    render_patch(view, "/home")
+    assert has_element?(view, "#project-link-#{id}", "New project")
   end
 
-  test "New track is the one create action: sidebar, Home and phone, one label and shortcut",
+  # Home's first prompt offers Add another repository beside the
+  # repositories it lists, so somebody with no projects yet can connect one
+  # without starting a track.
+  test "somebody with no projects can add a repository without starting a track", %{conn: conn} do
+    user = insert_user()
+    {:ok, view, _} = live(log_in_user(conn, user), "/home")
+    render_async(view)
+    refute has_element?(view, "#topbar [phx-value-name=new-project]")
+
+    view
+    |> element("#home-start #home-quick-start-add-repository", "Add another repository")
+    |> render_click()
+
+    assert has_element?(view, "#new-project-dialog")
+    refute has_element?(view, "#new-track-dialog")
+  end
+
+  test "New track is the one create action: once, in the top bar, with its shortcut",
        %{conn: conn} do
     user = insert_user()
     {:ok, view, _} = live(log_in_user(conn, user), "/home")
     render_async(view)
 
-    for id <- ["top-new-track", "home-new-track", "mobile-new-track"] do
-      assert has_element?(
-               view,
-               "##{id}[data-new-track-trigger][aria-keyshortcuts='Control+N Meta+N']",
-               "New track"
-             )
-    end
+    assert has_element?(
+             view,
+             "#top-new-track[data-new-track-trigger][aria-keyshortcuts='Control+N Meta+N']",
+             "New track"
+           )
 
-    refute has_element?(view, ".workspace-mobile-nav button", "New project")
-    refute has_element?(view, ".workspace-mobile-nav button", "repository")
+    # Home does not repeat it under the bar.
+    refute has_element?(view, "#home [data-new-track-trigger]")
+
+    refute has_element?(view, "#topbar button", "New project")
+    # Connecting a repository is Home's, not the top bar's, and it is not
+    # another way to start a track.
+    refute has_element?(view, "#topbar [phx-value-name=new-project]")
+
+    assert has_element?(
+             view,
+             "#home-quick-start-add-repository[phx-value-name=new-project]:not([data-new-track-trigger])"
+           )
 
     # Nothing to start a track in yet: New track goes to Home's first
     # prompt, not to Add a repository.
-    html = view |> element("#home-new-track") |> render()
+    html = view |> element("#top-new-track") |> render()
     assert html =~ "home-quick-start-prompt"
-    refute html =~ "top-new-track"
+    refute html =~ "&quot;event&quot;:&quot;top-new-track&quot;"
 
     insert_project(user: user, name: "Now there is one")
     {:ok, view, _} = live(log_in_user(conn, user), "/home")
     render_async(view)
-    assert view |> element("#home-new-track") |> render() =~ "top-new-track"
-    view |> element("#home-new-track") |> render_click()
+
+    assert has_element?(
+             view,
+             "#home-add-repository[phx-value-name=new-project]:not([data-new-track-trigger])",
+             "New project"
+           )
+
+    refute has_element?(view, "#home [data-new-track-trigger]")
+
+    assert view |> element("#top-new-track") |> render() =~
+             "&quot;event&quot;:&quot;top-new-track&quot;"
+
+    view |> element("#top-new-track") |> render_click()
     assert has_element?(view, "#new-track-dialog")
 
     assert has_element?(
@@ -1798,8 +1917,10 @@ defmodule RavixWeb.WorkspaceLiveTest do
     assert has_element?(view, "#new-track-dialog")
     assert has_element?(view, "#new-track-project option[value='#{id}'][selected]")
 
-    # Opened from the sidebar instead, it goes to the project itself.
-    view |> element(".workspace-actions button", "Add a repository") |> render_click()
+    # Opened from Home instead, it goes to the project itself.
+    render_patch(view, "/home")
+    assert_patch(view, "/home")
+    view |> element("#home-add-repository", "New project") |> render_click()
     render_async(view)
 
     expect(Projects, :create, fn _, attrs ->
@@ -1914,7 +2035,8 @@ defmodule RavixWeb.WorkspaceLiveTest do
     People.add_project_member(project.id, user.id, owner.id)
     {:ok, view, _} = live(log_in_user(conn, user), "/p/#{project.id}")
     render_async(view)
-    refute has_element?(view, "#yard button[data-tip='Project settings']")
+    assert has_element?(view, "#crumb-tracks[href='/p/#{project.id}']")
+    refute has_element?(view, "#crumb-settings")
     People.remove_project_member(project.id, user.id)
     Hub.publish(project.id, :people)
     # `:people` is one of the three that can change which projects exist at
@@ -1989,16 +2111,18 @@ defmodule RavixWeb.WorkspaceLiveTest do
     html = render_async(view)
 
     assert html =~ "Alpha two"
+    assert has_element?(view, "#tracks-graph-row-#{on_a.id} .tracks-title", "Alpha two")
 
-    view
-    |> element("#project-tree .workspace-project-name[href='/p/#{b.id}']")
-    |> render_click()
+    render_patch(view, "/home")
+    view |> element("#project-link-#{b.id}") |> render_click()
+    assert_patch(view, "/p/#{b.id}")
 
-    assert render(view) =~ "Beta one"
+    assert has_element?(view, "#tracks-graph-row-#{on_b.id} .tracks-title", "Beta one")
+    refute render(view) =~ "Beta two"
     refute html =~ "Beta two"
   end
 
-  test "a read mark clears the reader's own dot in every tab and re-reads nothing", %{
+  test "a read mark clears the reader's own counts in every tab and re-reads nothing", %{
     conn: conn
   } do
     owner = insert_user()
@@ -2016,16 +2140,25 @@ defmodule RavixWeb.WorkspaceLiveTest do
       {:ok, [track |> Tracks.present(project: project) |> struct!(status: :ready, unread: true)]}
     end)
 
-    {:ok, tab_a, _} = live(log_in_user(conn, owner), "/p/#{project.id}")
+    {:ok, tab_a, _} = live(log_in_user(conn, owner), "/home")
     render_async(tab_a)
-    {:ok, tab_b, _} = live(log_in_user(conn, owner), "/p/#{project.id}")
+    {:ok, tab_b, _} = live(log_in_user(conn, owner), "/home")
     render_async(tab_b)
-    {:ok, theirs, _} = live(log_in_user(conn, member), "/p/#{project.id}")
+    {:ok, theirs, _} = live(log_in_user(conn, member), "/home")
     render_async(theirs)
 
+    # The track's row in Home's Needs you, with its dot and why, Home's count
+    # for the project, and the Inbox's in the top bar.
+    needs = "#home-needs-#{track.id}"
+    dot = needs <> " .dot.unread[role=img][aria-label='Unread reply · Idle']"
+    need = "#home-project-#{project.id} .badge[aria-label='1 track needs you']"
+    inbox = "#topbar .topbar-nav a[href='/inbox'] .badge"
+
     for view <- [tab_a, tab_b, theirs] do
-      assert has_element?(view, ".track-tab [role=img][aria-label='Unread reply']")
-      assert has_element?(view, ".badge", "1")
+      assert has_element?(view, dot)
+      assert has_element?(view, needs, "has a reply you have not read")
+      assert has_element?(view, need, "1")
+      assert has_element?(view, inbox, "1")
     end
 
     # The mounts' reads (a page is rendered once over HTTP and once on its
@@ -2041,15 +2174,20 @@ defmodule RavixWeb.WorkspaceLiveTest do
     # message is an absent read rather than a slow one.
     for view <- [tab_a, tab_b, theirs], do: render_async(view)
 
-    # Both of the reader's tabs cleared the dot from the event alone...
-    refute has_element?(tab_a, ".track-tab [role=img][aria-label='Unread reply']")
-    refute has_element?(tab_b, ".track-tab [role=img][aria-label='Unread reply']")
-    refute has_element?(tab_a, ".yard-nav .badge")
-    refute has_element?(tab_a, ".workspace-project-name .badge")
+    # Both of the reader's tabs cleared their counts from the event alone...
+    for view <- [tab_a, tab_b] do
+      refute has_element?(view, needs)
+      assert has_element?(view, "#home-needs-empty")
+      assert has_element?(view, "#home-project-#{project.id}", "1 open track")
+      refute has_element?(view, "#home-project-#{project.id} .badge")
+      refute has_element?(view, inbox)
+    end
 
     # ...somebody else's rail kept its own mark, which the event says nothing
     # about...
-    assert has_element?(theirs, ".track-tab [role=img][aria-label='Unread reply']")
+    assert has_element?(theirs, dot)
+    assert has_element?(theirs, need, "1")
+    assert has_element?(theirs, inbox, "1")
 
     # ...and nobody went back to Fountain. This used to be a `:tracks` event
     # that re-read every rail on the project, live, whenever anybody opened
@@ -2269,10 +2407,8 @@ defmodule RavixWeb.WorkspaceLiveTest do
     {:ok, view, _} = live(log_in_user(conn, user), "/p/#{project.id}")
     render_async(view)
 
-    view
-    |> element("#yard .workspace-project.current button[data-tip='Project settings']")
-    |> render_click()
-
+    view |> element("header.repo-head #crumb-settings") |> render_click()
+    assert_patch(view, "/p/#{project.id}/settings/general")
     render_patch(view, "/p/#{project.id}/settings/machine")
     render_async(view)
     view |> form("#machine-form", settings: [apt: "git curl"]) |> render_submit()
@@ -2363,16 +2499,15 @@ defmodule RavixWeb.WorkspaceLiveTest do
     render_async(child, 5_000)
     child |> element("button", "app.ex") |> render_click()
     assert render_async(child, 5_000) =~ "hello file"
-    child |> element("button", "Changes") |> render_click()
+    # The track header's tabs; the inspector carries the same ones.
+    child |> element("#track-tab-changes", "Changes") |> render_click()
     render_async(child, 5_000)
     child |> element(".change-file", "app.ex") |> render_click()
     assert has_element?(child, ".diff-line.diff-add code", "hello change")
-    child |> element("button", "Checks") |> render_click()
+    child |> element("#track-tab-checks", "Checks") |> render_click()
     assert render_async(child, 5_000) =~ "CI passed"
 
-    child
-    |> element("button[phx-click=panel][phx-value-name=preview]", "Preview")
-    |> render_click()
+    child |> element("#track-tab-preview", "Preview") |> render_click()
 
     render_async(child, 5_000)
     assert has_element?(child, "#preview-empty h3", "No preview running")
@@ -2572,78 +2707,6 @@ defmodule RavixWeb.WorkspaceLiveTest do
       # A nested page's redirect surfaces on the page that hosts it.
       assert_redirect(ctx.parent, "/", 1_000)
       refute_receive {:read_attempted, _}, 200
-    end
-  end
-
-  describe "the yard on a phone" do
-    setup %{conn: conn} do
-      user = insert_user()
-      project = insert_project(user: user, name: "Pocket work")
-      {:ok, view, _} = live(log_in_user(conn, user), "/p/#{project.id}")
-      render_async(view)
-      %{view: view, project: project}
-    end
-
-    test "the menu opens it over the page and says so to assistive technology", ctx do
-      menu = "nav.workspace-mobile-nav button[aria-controls=yard]"
-      refute has_element?(ctx.view, "aside#yard.forced")
-      assert has_element?(ctx.view, "#{menu}[aria-expanded=false]")
-      refute has_element?(ctx.view, ".yard-scrim")
-
-      ctx.view |> element(menu) |> render_click()
-      assert has_element?(ctx.view, "aside#yard.forced")
-      assert has_element?(ctx.view, "#{menu}[aria-expanded=true]")
-      # Everything the yard holds is now reachable on a phone, which it was
-      # not: the rail was `display: none` under the breakpoint and nothing
-      # set the class that shows it.
-      assert has_element?(
-               ctx.view,
-               "#yard.forced #account-menu a[href='/auth/signout']",
-               "Sign out"
-             )
-
-      assert has_element?(
-               ctx.view,
-               "#yard.forced button[aria-label='Project settings for Pocket work']"
-             )
-
-      assert has_element?(ctx.view, "#yard.forced button.yard-close[aria-label='Close menu']")
-
-      # And the same button closes it again.
-      ctx.view |> element(menu) |> render_click()
-      refute has_element?(ctx.view, "aside#yard.forced")
-    end
-
-    test "the x, Escape and the scrim each close it", ctx do
-      for close <- [
-            fn v -> v |> element("#yard button.yard-close") |> render_click() end,
-            fn v -> v |> element(".yard-scrim") |> render_keydown(%{"key" => "Escape"}) end,
-            fn v -> v |> element(".yard-scrim") |> render_click() end
-          ] do
-        render_click(ctx.view, "yard")
-        assert has_element?(ctx.view, "aside#yard.forced")
-        close.(ctx.view)
-        refute has_element?(ctx.view, "aside#yard.forced")
-        # Escape is only listened for while the yard is open; the listener
-        # is on the scrim, and the scrim only exists then.
-        refute has_element?(ctx.view, "[phx-window-keydown=yard-close]")
-      end
-    end
-
-    test "an Escape that closed a dialog over it leaves it open", ctx do
-      render_click(ctx.view, "yard")
-      ctx.view |> element(".yard-scrim") |> render_keydown(%{"key" => "Escape", "dialog" => true})
-      assert has_element?(ctx.view, "aside#yard.forced")
-      ctx.view |> element(".yard-scrim") |> render_keydown(%{"key" => "Escape"})
-      refute has_element?(ctx.view, "aside#yard.forced")
-    end
-
-    test "following a link in it closes it, because every link is a patch", ctx do
-      render_click(ctx.view, "yard")
-      assert has_element?(ctx.view, "aside#yard.forced")
-      render_patch(ctx.view, "/inbox")
-      refute has_element?(ctx.view, "aside#yard.forced")
-      assert has_element?(ctx.view, "button[aria-controls=yard][aria-expanded=false]")
     end
   end
 

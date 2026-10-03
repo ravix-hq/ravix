@@ -4,14 +4,15 @@ import { readFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { signIn, connectClaude } from './sign-in.js';
 import { expectHeaderUnobstructed } from './header-layout.js';
+import { openAddRepository } from './new-track.js';
 
 test('assigned plan items stay compact across widths and themes', async ({ page }) => {
   await signIn(page, 'eli', '/home');
   await connectClaude(page);
-  await page.getByRole('button', { name: 'Add a repository', exact: true }).first().click();
+  await openAddRepository(page);
   await page.getByLabel('Project name', { exact: true }).fill('Assigned items');
   await page.getByRole('button', { name: 'Create scratch project', exact: true }).click();
-  await page.locator('#yard .workspace-project.current .project-add').click();
+  await page.locator('#top-new-track').click();
   await page.getByRole('button', { name: 'Create track', exact: true }).click();
   await expect(page.getByRole('textbox', { name: 'Message', exact: true })).toBeEnabled();
   const track = new URL(page.url()).pathname.split('/t/')[1];
@@ -28,7 +29,7 @@ test('assigned plan items stay compact across widths and themes', async ({ page 
   `]);
   await page.reload();
   // The items are one chip in the track header, not a panel over the transcript.
-  const chip = page.locator('header.track-crumbs .track-plan-toggle');
+  const chip = page.locator('header#track-header .track-plan-toggle');
   const popover = page.locator('.track-plan-popover');
   await expect(chip).toHaveCount(1);
   await expect(chip).toHaveAttribute('aria-expanded', 'false');
@@ -43,7 +44,10 @@ test('assigned plan items stay compact across widths and themes', async ({ page 
     for (const width of [1280, 500]) {
       await page.setViewportSize({ width, height: 900 });
       await expect(chip).toBeVisible();
-      expect(await page.locator('header.track-crumbs').evaluate(el => el.getBoundingClientRect().height)).toBeLessThan(60);
+      // One chip on the header's status line, one line tall: the items
+      // never open as a panel inside the header.
+      await expect(page.locator('#track-header .track-head-status .track-plan-toggle')).toHaveCount(1);
+      expect(await chip.evaluate(el => el.getBoundingClientRect().height)).toBeLessThan(36);
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
       await expectHeaderUnobstructed(page);
       await page.screenshot({ path: `tmp/assigned-after-${theme}-${width}.png` });
@@ -64,7 +68,7 @@ test('assigned plan items stay compact across widths and themes', async ({ page 
       await page.getByRole('button', { name: 'Add note', exact: true }).click();
       await expect(page.locator('.track-plan-detail')).toContainText(`Verified ${theme} at ${width}px`);
       await page.screenshot({ path: `tmp/assigned-expanded-${theme}-${width}.png` });
-      const result = await new AxeBuilder({ page }).include('.track-crumbs').include('.track-conversation').withTags(['wcag2a', 'wcag2aa']).analyze();
+      const result = await new AxeBuilder({ page }).include('#track-header').include('.track-conversation').withTags(['wcag2a', 'wcag2aa']).analyze();
       expect(result.violations).toEqual([]);
       await page.locator('.track-plan-item-title').first().click();
       await page.keyboard.press('Escape');

@@ -144,7 +144,7 @@ defmodule RavixWeb.ProjectMoveLiveTest do
     beta_member = insert_user(login: "betaone")
     :ok = Store.add_member(ctx.beta.id, beta_member.id, :member, ctx.boss.id)
     # Beta's member has something open on Beta already, which is how their
-    # rail hears about Beta.
+    # rail hears about Beta; they then look at Home, which lists its projects.
     other = insert_project(user: ctx.boss, repo_full_name: "boss/other")
     1 = Store.move_project(other.id, ctx.beta.id)
 
@@ -152,6 +152,10 @@ defmodule RavixWeb.ProjectMoveLiveTest do
     render_async(leaving)
     {:ok, joining, _} = live(log_in_user(build_conn(), beta_member), "/p/#{other.id}")
     render_async(joining)
+    render_patch(joining, "/home")
+    render_async(joining)
+    assert has_element?(joining, "#home-project-#{other.id}")
+    refute has_element?(joining, "#home-project-#{ctx.project.id}")
     refute render(joining) =~ ~s|/p/#{ctx.project.id}"|
 
     view = open_settings(ctx)
@@ -161,7 +165,7 @@ defmodule RavixWeb.ProjectMoveLiveTest do
 
     assert_patch(leaving, "/")
     render_async(joining)
-    assert render(joining) =~ ~s|/p/#{ctx.project.id}"|
+    assert has_element?(joining, "#project-link-#{ctx.project.id}[href='/p/#{ctx.project.id}']")
   end
 
   test "with workspaces switched off there is no Workspace section", ctx do

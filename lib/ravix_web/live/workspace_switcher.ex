@@ -1,11 +1,11 @@
 defmodule RavixWeb.Live.WorkspaceSwitcher do
   @moduledoc """
-  The workspace switcher at the top of the sidebar (ADR 0009, phase 4a).
+  The workspace switcher in the top bar (ADR 0009, phase 4a).
 
   Lists the viewer's personal workspace, then their team workspaces, and
   "New workspace…", which opens `new_workspace_dialog/1`. Picking one makes
   it the viewer's *current* workspace
-  (`Ravix.Accounts.put_current_workspace/2`), which is what the sidebar,
+  (`Ravix.Accounts.put_current_workspace/2`), which is what Home,
   quick-jump, badges, the Inbox and New track then show: an event, not a
   navigation. The gear beside the trigger, and "Workspace settings" first
   in the menu, open the current workspace's settings

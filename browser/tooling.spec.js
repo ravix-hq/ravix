@@ -120,7 +120,7 @@ test('same-name connections show activity in a wide workspace with collapsed per
   await page.setViewportSize({ width: 1480, height: 1000 });
   await page.goto('/settings/connected-apps');
   await expect(page.locator('[data-phx-main]')).toHaveClass(/phx-connected/);
-  await expect(page.getByRole('complementary', { name: 'Projects', exact: true })).toBeVisible();
+  await expect(page.locator('#topbar').getByRole('navigation', { name: 'Workspace', exact: true })).toBeVisible();
   await expect(page).toHaveTitle('Connected apps · You · Ravix');
   const heading = page.getByRole('heading', { name: 'Connected apps', exact: true });
   expect((await heading.boundingBox()).height).toBeLessThan(40);

@@ -99,14 +99,22 @@ defmodule RavixWeb.WorkspaceVisibilityLiveTest do
     test "a workspace member's rail, search and badge leave out a private sibling", ctx do
       view = open_page(ctx.colleague, "/p/#{ctx.project.id}")
 
-      assert has_element?(view, "#project-track-tab-#{ctx.open.id}")
-      refute has_element?(view, "#project-track-tab-#{ctx.secret.id}")
+      assert has_element?(view, "#tracks-graph-row-#{ctx.open.id}")
+      refute has_element?(view, "#tracks-graph-row-#{ctx.secret.id}")
+      assert has_element?(view, "#crumb-tracks .count", "1")
       refute render(view) =~ "Private investigation"
+
+      view |> element("#topbar .topbar-crumbs a[href='/home']") |> render_click()
 
       assert has_element?(
                view,
-               "#project-link-#{ctx.project.id} .badge[aria-label='1 track needs you'][title='1 track needs you']"
+               "#home-project-#{ctx.project.id} .badge[aria-label='1 track needs you'][title='1 track needs you']"
              )
+
+      assert has_element?(view, "#home-needs-#{ctx.open.id}", "could not be set up")
+      refute has_element?(view, "#home-needs-#{ctx.secret.id}")
+
+      refute render(view) =~ "Private investigation"
 
       search(view, "investigation")
       refute has_element?(view, "#search-track-link-#{ctx.secret.id}")
@@ -118,12 +126,18 @@ defmodule RavixWeb.WorkspaceVisibilityLiveTest do
     test "its creator sees and counts it, in the same places", ctx do
       view = open_page(ctx.creator, "/p/#{ctx.project.id}")
 
-      assert has_element?(view, "#project-track-tab-#{ctx.secret.id}")
+      assert has_element?(view, "#tracks-graph-row-#{ctx.secret.id}")
+      assert has_element?(view, "#crumb-tracks .count", "2")
+
+      view |> element("#topbar .topbar-crumbs a[href='/home']") |> render_click()
 
       assert has_element?(
                view,
-               "#project-link-#{ctx.project.id} .badge[aria-label='2 tracks need you'][title='2 tracks need you']"
+               "#home-project-#{ctx.project.id} .badge[aria-label='2 tracks need you'][title='2 tracks need you']"
              )
+
+      assert has_element?(view, "#home-needs-#{ctx.open.id}")
+      assert has_element?(view, "#home-needs-#{ctx.secret.id}", "Private investigation")
 
       search(view, "investigation")
       assert has_element?(view, "#search-track-link-#{ctx.secret.id}")

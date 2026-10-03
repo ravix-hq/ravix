@@ -299,7 +299,7 @@ defmodule RavixWeb.CoreComponents do
   (pass `options`), `type="textarea"` a textarea, `type="checkbox"` a boolean
   checkbox with its hidden false. `hint` is the grey line under the control.
 
-      <.input field={@form[:name]} label="Name" hint="Shown in the rail." />
+      <.input field={@form[:name]} label="Name" hint="Shown on Home." />
       <.input name="q" value="" placeholder="Search" />
   """
   attr :id, :any, default: nil
@@ -595,28 +595,22 @@ defmodule RavixWeb.CoreComponents do
         <span class="theme-swatch" data-theme-swatch></span><span class="col"><small>Theme</small><span
           class="truncate"
           data-theme-name
-        >Ravix</span></span>
+        >Light</span></span>
         <.icon name="chevron" size={12} />
       </button>
       <div id={"#{@id}-menu"} class="theme-menu" role="menu" aria-label="Theme" hidden>
         <button
           :for={
             theme <-
-              ~w(ravix slate one-dark dracula nord tokyo-night catppuccin-mocha night-owl monokai gruvbox-dark solarized-dark daylight github-light one-light solarized-light catppuccin-latte mario neon-noir vaporwave matrix hot-dog-stand bubblegum)
+              ~w(ravix dark system graphite slate one-dark dracula nord tokyo-night catppuccin-mocha night-owl monokai gruvbox-dark solarized-dark daylight github-light one-light solarized-light catppuccin-latte mario neon-noir vaporwave matrix hot-dog-stand bubblegum)
           }
           class="theme-option"
           role="menuitemradio"
           aria-checked="false"
           data-theme-choice={theme}
-          data-theme-name={
-            String.replace(theme, "-", " ")
-            |> String.split()
-            |> Enum.map_join(" ", &String.capitalize/1)
-          }
+          data-theme-name={theme_name(theme)}
         >
-          <span class="theme-swatch" data-theme={theme}></span><span>{String.replace(theme, "-", " ")
-          |> String.split()
-          |> Enum.map_join(" ", &String.capitalize/1)}</span><span
+          <span class="theme-swatch" data-theme={theme}></span><span>{theme_name(theme)}</span><span
             class="check"
             data-theme-check
             aria-hidden="true"
@@ -627,6 +621,16 @@ defmodule RavixWeb.CoreComponents do
     </div>
     """
   end
+
+  # The default palette is the light one; "System" follows the OS.
+  defp theme_name("ravix"), do: "Light"
+
+  defp theme_name(theme),
+    do:
+      theme
+      |> String.replace("-", " ")
+      |> String.split()
+      |> Enum.map_join(" ", &String.capitalize/1)
 
   @doc """
   The owner's half of an invite dialog: mint a link, revoke it, show it once.

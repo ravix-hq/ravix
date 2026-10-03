@@ -38,7 +38,7 @@ defmodule RavixWeb.WorkspaceMemoTest do
 
       for {project, track} <- rows do
         render_patch(view, "/p/#{project.id}")
-        assert has_element?(view, ".track-tab", track.title)
+        assert has_element?(view, "#tracks-graph-row-#{track.id} .tracks-title", track.title)
       end
     end
 
@@ -73,21 +73,32 @@ defmodule RavixWeb.WorkspaceMemoTest do
     {:ok, view, _} = live(log_in_user(conn, user), "/p/#{project.id}")
     # Synchronize with the actual async reads; CI scheduling can exceed 100ms.
     render_async(view, 5_000)
-    refute has_element?(view, ".track-tab [aria-label='Working']")
+    view |> element("#project-tracks-list") |> render_click()
+    dot = "#tracks-row-#{track.id} .dot"
+    # The memo's reply is unread, so the dot carries that mark beside the state.
+    assert has_element?(view, "#{dot}[aria-label$='Idle']")
+    assert has_element?(view, "#tracks-row-#{track.id} .tracks-row-state", "Idle")
+    refute has_element?(view, "#{dot}[aria-label='Working']")
     assert length(FakeTransport.calls(client)) == 1
 
     Agent.update(clock, &(&1 + 1))
     render_click(view, "refresh")
     render_async(view, 5_000)
-    assert has_element?(view, ".track-tab [aria-label='Working']")
+    assert has_element?(view, "#{dot}[aria-label='Working']")
+    assert has_element?(view, "#tracks-row-#{track.id} .tracks-row-state", "Working")
     assert length(FakeTransport.calls(client)) == 2
 
     Agent.update(clock, &(&1 + 1))
     send(view.pid, {:hub, Event.new(:turn, project.id, track_id: track.id)})
     render_async(view, 5_000)
-    refute has_element?(view, ".track-tab [aria-label='Working']")
-    assert has_element?(view, ".track-tab [aria-label='Unread reply']")
+    refute has_element?(view, "#{dot}[aria-label='Working']")
+    # The finished turn's reply is unread: the row marks it and the Inbox
+    # counts it (the count is in the top bar off the project page).
+    assert has_element?(view, "#{dot}[aria-label='Unread reply · Idle']")
     assert length(FakeTransport.calls(client)) == 3
+    render_patch(view, "/home")
+    assert has_element?(view, "nav.topbar-nav a[href='/inbox'] .badge", "1")
+    assert has_element?(view, "#home-needs-#{track.id}", "has a reply you have not read")
   end
 
   test "read PubSub clears both tabs immediately and cached reloads do not restore unread", %{
@@ -103,14 +114,18 @@ defmodule RavixWeb.WorkspaceMemoTest do
         opened_at: DateTime.utc_now()
       )
 
+    # Its reply's excerpt is kept, so the Inbox reads no transcript: the
+    # count below is the rail's alone.
+    keep_reply(track)
     client = FakeTransport.client([{request(project), conversations(track)}])
     stub(Fountain, :client, fn -> client end)
 
     tabs =
       for _ <- 1..2 do
-        {:ok, view, _} = live(log_in_user(conn, user), "/p/#{project.id}")
+        {:ok, view, _} = live(log_in_user(conn, user), "/inbox")
         render_async(view, 5_000)
-        assert has_element?(view, ".track-tab [aria-label='Unread reply']")
+        assert has_element?(view, ".inbox-item", "Unread reply")
+        assert has_element?(view, "nav.topbar-nav a[href='/inbox'] .badge", "1")
         view
       end
 
@@ -118,9 +133,11 @@ defmodule RavixWeb.WorkspaceMemoTest do
 
     for view <- tabs do
       refute render_async(view, 5_000) =~ "Unread reply"
+      refute has_element?(view, "nav.topbar-nav a[href='/inbox'] .badge")
       # A non-turn rail reload still reads the user's markers from the DB.
       send(view.pid, {:hub, Event.new(:settings, project.id)})
       refute render_async(view, 5_000) =~ "Unread reply"
+      refute has_element?(view, "nav.topbar-nav a[href='/inbox'] .badge")
     end
 
     assert {:ok, threads} = Tracks.threads(user, track.id)

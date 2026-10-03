@@ -1,10 +1,11 @@
 import { test, expect } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
 import { signIn, connectClaude } from './sign-in.js';
+import { openAddRepository } from './new-track.js';
 
 // RAV-89: the inspector's Files and Changes tabs, in a real browser. What the
-// LiveView tests cannot show is layout (a long diff line wrapping inside a
-// pane that widened for it) and time (a tab switch that does not wait on the
+// LiveView tests cannot show is layout (a long diff line wrapping inside the
+// pane, which is the page's width now) and time (a tab switch that does not wait on the
 // machine), so this is where both are asserted.
 
 const mock = `http://localhost:${process.env.MOCK_PORT || 8893}`;
@@ -25,18 +26,20 @@ async function slowReads(request, ms) {
 async function openTrack(page, login, name) {
   await signIn(page, login);
   await connectClaude(page);
-  await page.getByRole('button', { name: 'Add a repository', exact: true }).first().click();
+  await openAddRepository(page);
   const dialog = page.getByRole('dialog', { name: 'Add a repository', exact: true });
   await dialog.getByLabel('Project name', { exact: true }).fill(name);
   await expect(page.locator('#project-repositories input[type=radio]')).not.toHaveCount(0);
   await dialog.getByRole('radio', { name: 'mockuser/atlas-api', exact: true }).check();
   await dialog.getByRole('button', { name: 'Add repository', exact: true }).click();
   await expect(dialog).toHaveCount(0);
-  await page.locator('#yard .workspace-project.current .project-add').click();
+  await page.locator('#top-new-track').click();
   await page.getByRole('button', { name: 'Create track', exact: true }).click();
   await expect(page.getByRole('textbox', { name: 'Message', exact: true })).toBeEnabled({ timeout: 30_000 });
   await expect(page.locator('#transcript-status')).toHaveText('Agent replied', { timeout: 30_000 });
-  // The opening turn made the worktree after Files first read the directory.
+  // The inspector is the Files tab's page. The opening turn made the
+  // worktree after Files first read the directory.
+  await page.locator('#track-tab-files').click();
   await page.locator('.panel-refresh').click();
   await expect(page.locator('.file-explorer').getByRole('button', { name: 'src', exact: true })).toBeVisible();
 }
@@ -45,7 +48,7 @@ async function openTrack(page, login, name) {
 // the document. Timed in the page so Playwright's own polling is not counted.
 async function switchTab(page, tab, selector) {
   return page.evaluate(({ tab, selector }) => {
-    const button = [...document.querySelectorAll('nav[aria-label="Inspector panels"] button')]
+    const button = [...document.querySelectorAll('nav[aria-label="Track views"] button')]
       .find(b => b.textContent.trim().startsWith(tab));
     return new Promise((resolve, reject) => {
       const start = performance.now();
@@ -127,15 +130,14 @@ test('a diff opens wide and wraps a line longer than the pane', async ({ page })
   await openTrack(page, 'inspectordiff', 'Inspector diff');
   await page.getByRole('button', { name: /^Changes/ }).click();
   const inspector = page.locator('#inspector');
-  const narrow = (await inspector.boundingBox()).width;
+  // The inspector is the page's whole width now, not a pane that widens for
+  // a diff: it is that wide before the diff opens and while it is open.
+  const stage = await page.locator('.stage').boundingBox();
+  expect((await inspector.boundingBox()).width).toBeGreaterThanOrEqual(stage.width - 1);
   await page.locator('.change-file', { hasText: 'window.ts' }).click();
   const diff = page.getByRole('region', { name: 'Diff for src/lib/window.ts' });
   await expect(diff).toBeVisible();
-
-  // About half the stage while a diff is open, and back when it closes.
-  const stage = await page.locator('.stage').boundingBox();
-  await expect.poll(async () => (await inspector.boundingBox()).width).toBeGreaterThanOrEqual(stage.width * 0.49);
-  expect((await inspector.boundingBox()).width).toBeGreaterThan(narrow);
+  expect((await inspector.boundingBox()).width).toBeGreaterThanOrEqual(stage.width - 1);
 
   // Nothing scrolls sideways, and the long line's last words are inside the pane.
   const long = diff.locator('.diff-line code', { hasText: 'A line longer than any inspector' });
@@ -164,7 +166,9 @@ test('a diff opens wide and wraps a line longer than the pane', async ({ page })
   expect((await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa']).analyze()).violations).toEqual([]);
 
   await page.getByRole('button', { name: '← All changed files' }).click();
-  await expect.poll(async () => (await inspector.boundingBox()).width).toBeLessThan(stage.width * 0.45);
+  await expect(diff).toHaveCount(0);
+  await expect(page.locator('.change-file', { hasText: 'window.ts' })).toBeVisible();
+  expect((await inspector.boundingBox()).width).toBeGreaterThanOrEqual(stage.width - 1);
 });
 
 // Opt-in: the PR's before/after pictures. `RAV89_SHOTS=<dir> RAV89_PHASE=before|after`.

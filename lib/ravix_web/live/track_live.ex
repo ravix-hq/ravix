@@ -2181,16 +2181,38 @@ defmodule RavixWeb.TrackLive do
 
   defp payer_label(%{owner_login: login}), do: "Paid by @#{login}"
 
+  # The pull request the header links to: one opened from this page, else
+  # one the Checks report found for the branch, whatever its state.
+  defp known_pull(%{url: _} = pull, _panel), do: pull
+  defp known_pull(_pull, %{data: %Ravix.GitHub.ChecksReport{pull: %{url: _} = pull}}), do: pull
+  defp known_pull(_pull, _panel), do: nil
+
+  # The title's note on where the track came from: "Issue #48", "PR #212".
+  defp origin_note(%{origin: %{kind: :pr, number: n}}) when is_integer(n), do: "PR ##{n}"
+  defp origin_note(%{origin: %{kind: :issue, number: n}}) when is_integer(n), do: "Issue ##{n}"
+  defp origin_note(%{origin: %{kind: :plan}}), do: "Plan item"
+  defp origin_note(_track), do: nil
+
+  # What the branch was cut from: the origin's base, else the project's
+  # default branch.
+  defp base_branch(%{origin: %{base: base}}, _project) when is_binary(base) and base != "",
+    do: base
+
+  defp base_branch(_track, %{default_branch: branch}) when is_binary(branch), do: branch
+  defp base_branch(_track, _project), do: nil
+
+  # The facts column's line on the preview, in the words the header's chip
+  # uses (`preview_look/2`).
+  defp preview_fact(preview), do: preview_look(preview, false).label
+
+  defp threads_note([_]), do: "1 thread in this checkout"
+  defp threads_note(threads), do: "#{length(threads)} threads share this branch and checkout"
+
   defp machine_scope(%{sandbox_layout: :dedicated}), do: "Own machine"
   defp machine_scope(_track), do: "Shared machine"
 
   defp machine_scope_title(%{sandbox_layout: :dedicated}), do: "This track's own machine"
   defp machine_scope_title(_track), do: "Used by all of this project's tracks"
-
-  # Whether a header crumb is short enough to show whole. A longer one may
-  # shrink, but only to its floor in app.css; a shorter one never shrinks,
-  # which a floor alone would get wrong by padding it out to the floor.
-  defp fits?(text, chars), do: String.length(text) <= chars
 
   # Whoever pays for this track's agent, as refusals name them: the creator
   # of a creator-billed track, else the project's owner, as before.
@@ -2601,7 +2623,6 @@ defmodule RavixWeb.TrackLive do
 
     ~H"""
     <nav
-      :if={length(@threads) > 1 or @enabled}
       id="thread-switcher"
       class="thread-tabs"
       phx-hook="ThreadTabs"
@@ -2630,7 +2651,13 @@ defmodule RavixWeb.TrackLive do
       >
         <.icon name="chevron" size={12} class="flip-x" />
       </button>
-      <div id="thread-tablist" class="thread-tablist" role="tablist" aria-label="Threads">
+      <div
+        id="thread-tablist"
+        class="thread-tablist"
+        role="tablist"
+        aria-label="Threads"
+        aria-orientation="vertical"
+      >
         <button
           :for={thread <- @threads}
           type="button"
@@ -2651,7 +2678,13 @@ defmodule RavixWeb.TrackLive do
             :if={tab_status(thread, @states) in ["Running", "Failed"]}
             status={String.downcase(tab_status(thread, @states))}
           />
-          <span class="thread-tab-title">{thread.title}</span><span
+          <span class="thread-tab-text">
+            <span class="thread-tab-title">{thread.title}</span>
+            <small class="thread-tab-meta">{tab_status(thread, @states)} · {agent_model(
+              Map.get(thread, :runtime),
+              Map.get(thread, :model)
+            )}</small>
+          </span><span
             :if={thread.unread && thread.id != @shown}
             class="thread-unread"
           ><span class="sr-only">(unread)</span></span><span
@@ -2728,6 +2761,16 @@ defmodule RavixWeb.TrackLive do
         phx-click="discard-draft"
       >
         <.icon name="x" size={12} />
+      </button>
+      <button
+        :if={@enabled && !@draft}
+        type="button"
+        id="thread-new"
+        class="thread-new"
+        phx-click="draft-thread"
+        disabled={@adding}
+      >
+        <.icon name="plus" size={14} />New thread
       </button>
       <div :if={@enabled} id="thread-add" class="chip-menu thread-add" phx-hook="ChipMenu">
         <button
@@ -2815,12 +2858,12 @@ defmodule RavixWeb.TrackLive do
           </button>
         </div>
       </div>
+      <p :if={@working != []} id="threads-working" class="threads-working" role="status">
+        {Enum.map_join(@working, "; ", fn thread ->
+          "#{thread.title} (#{Ravix.AgentName.label(Map.get(thread, :runtime)) || "Agent"}) is working in this checkout"
+        end)}.
+      </p>
     </nav>
-    <p :if={@working != []} id="threads-working" class="threads-working" role="status">
-      {Enum.map_join(@working, "; ", fn thread ->
-        "#{thread.title} (#{Ravix.AgentName.label(Map.get(thread, :runtime)) || "Agent"}) is working in this checkout"
-      end)}.
-    </p>
     """
   end
 
@@ -3526,18 +3569,14 @@ defmodule RavixWeb.TrackLive do
 
   # The header's state chip, and the page's one live region for the machine's
   # state. Only the word is announced: the detail can tick (a retry
-  # countdown), so it describes the chip rather than announcing. Idle and
-  # Working are the normal states, and the header does not draw them
-  # (RAV-82): the chip is then visually hidden, not removed, so the live
-  # region stays put and still announces the change. Its word is always
+  # countdown), so it describes the chip rather than announcing. It is the
+  # status line's pill, Idle and Working included, and its word is always
   # drawn whole; it never shrinks to its dot.
   defp machine_chip(assigns) do
-    assigns = assign(assigns, normal?: assigns.machine.state in [:idle, :working])
-
     ~H"""
     <span
       id="track-machine-state"
-      class={["chip machine-chip machine-#{@machine.state}", @normal? && "sr-only"]}
+      class={"chip machine-chip machine-#{@machine.state}"}
       role="status"
       aria-live="polite"
       aria-describedby={@machine.detail && "track-machine-detail"}
@@ -4710,6 +4749,9 @@ defmodule RavixWeb.TrackLive do
 
     ~H"""
     <div class="said">
+      <span class="said-avatar" aria-hidden="true">
+        {@speaker |> String.trim_leading("@") |> String.slice(0, 2) |> String.upcase()}
+      </span>
       <span class="speaker">{@speaker}</span>
       <span :if={@restored?} class="chip">Context restored</span>
       <div :if={@body != ""} class="workspace-prompt md">{prompt_html(@body)}</div>

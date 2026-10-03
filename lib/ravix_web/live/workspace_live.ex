@@ -4,11 +4,11 @@ defmodule RavixWeb.WorkspaceLive do
 
   alias RavixWeb.Live.NewProject
 
-  alias Ravix.{Accounts, Hub, People, Projects, Schedules, Tracks, Workspaces}
+  alias Ravix.{Accounts, Hub, People, Previews, Projects, Schedules, Tracks, Workspaces}
   alias Ravix.Accounts.Access
   alias Ravix.Hub.Event
   alias Ravix.Projects.Sections
-  alias Ravix.Tracks.{MachineState, Track}
+  alias Ravix.Tracks.Track
   alias Ravix.Workspaces.{Picker, Repositories}
   alias RavixWeb.Live.Form
   alias RavixWeb.Live.Guard
@@ -32,6 +32,9 @@ defmodule RavixWeb.WorkspaceLive do
   @form_origins Map.new(@origin_kinds, &{to_string(&1), &1})
   @origin_labels %{blank: "Blank", branch: "Branch", pr: "Pull request", issue: "Issue"}
   @origin_refs %{branch: :branches, pr: :pulls, issue: :issues}
+  # How many tracks Home's Active tracks and Needs you list.
+  @home_active 10
+  @home_list 8
 
   # The workspace dialogs, as the buttons spell them and as this module does.
   @dialogs %{
@@ -107,6 +110,22 @@ defmodule RavixWeb.WorkspaceLive do
         # How many pages of closed tracks each shown project lists; see
         # `closed_limits/3`. Held per page view, not persisted.
         closed_pages: %{},
+        # The project page's tracks, as a branch graph or a list; see
+        # `RavixWeb.Live.ProjectTracks`. Held per page view.
+        tracks_view: :graph,
+        tracks_filter: "",
+        # Previews up or coming up, by project (`Previews.for_projects/2`),
+        # read with the rail; Home counts them and a project page lists them.
+        previews: %{},
+        # The open project's people, for its page's People column: the
+        # project they were read for, and the list once it arrives.
+        people_for: nil,
+        project_people: [],
+        # Home's project list, narrowed to one section's projects or nil for
+        # all of them. Held per page view.
+        home_section: nil,
+        # Home's project order: recent activity or name. Held per page view.
+        home_sort: :recent,
         reopen: nil,
         track_errors: MapSet.new(),
         track_loading: MapSet.new(),
@@ -135,12 +154,6 @@ defmodule RavixWeb.WorkspaceLive do
         # The nested `RavixWeb.TrackLive`, once it has said where it is. See
         # the `:track_host` clause of `handle_info/2`, and `hand_over/4`.
         track_host: nil,
-        # Whether the yard is open over the page. Only the phone layout asks:
-        # under `--bp-narrow` the rail is gone and the "Menu" button in the
-        # mobile nav is what brings it back. Held here rather than in the
-        # browser so a patch --- which is what every link in the yard does
-        # --- finds it and closes it; see `handle_params/3`.
-        yard_open: false,
         dialog: nil,
         changes: [],
         changes_unseen: 0,
@@ -189,16 +202,19 @@ defmodule RavixWeb.WorkspaceLive do
 
   @impl true
   def handle_params(params, uri, socket) do
-    # Every link in the yard patches, so arriving anywhere is leaving it.
     socket =
       socket
       |> validate_session()
       |> navigation_notice(URI.parse(uri).path)
-      |> assign(yard_open: false, pending_url: nil, settings: nil)
+      |> assign(pending_url: nil, settings: nil)
 
     case wrong_page(socket) do
-      nil -> {:noreply, socket |> open_url(params) |> open_settings(params) |> quick_repos()}
-      to -> {:noreply, push_navigate(socket, to: to)}
+      nil ->
+        {:noreply,
+         socket |> open_url(params) |> open_settings(params) |> quick_repos() |> load_people()}
+
+      to ->
+        {:noreply, push_navigate(socket, to: to)}
     end
   end
 
@@ -552,14 +568,6 @@ defmodule RavixWeb.WorkspaceLive do
 
   def handle_event("dismiss-switcher", _, socket), do: {:noreply, assign(socket, dialog: nil)}
 
-  def handle_event("yard", _, socket),
-    do: {:noreply, assign(socket, yard_open: !socket.assigns.yard_open)}
-
-  # An Escape that closed a dialog over the yard closes only the dialog
-  # (`assets/js/dialog_escape.js`).
-  def handle_event("yard-close", %{"dialog" => true}, socket), do: {:noreply, socket}
-  def handle_event("yard-close", _, socket), do: {:noreply, assign(socket, yard_open: false)}
-
   def handle_event("create-section", %{"section" => attrs}, socket) do
     section_result(socket, Sections.create(socket.assigns.current_user, attrs))
   end
@@ -584,15 +592,17 @@ defmodule RavixWeb.WorkspaceLive do
     )
   end
 
-  def handle_event("rail-scope", %{"scope" => scope}, socket) do
-    case Accounts.put_rail_scope(socket.assigns.current_user, scope) do
-      {:ok, user} ->
-        {:noreply, assign(socket, current_user: user)}
+  def handle_event("tracks-view", %{"view" => view}, socket) when view in ~w(graph list),
+    do: {:noreply, assign(socket, tracks_view: String.to_existing_atom(view))}
 
-      {:error, reason} ->
-        {:noreply, put_flash(socket, :error, RavixWeb.Error.from(reason).message)}
-    end
-  end
+  def handle_event("tracks-filter", %{"q" => q}, socket),
+    do: {:noreply, assign(socket, tracks_filter: String.slice(to_string(q), 0, 200))}
+
+  def handle_event("home-sort", %{"sort" => sort}, socket) when sort in ~w(recent name),
+    do: {:noreply, assign(socket, home_sort: String.to_existing_atom(sort))}
+
+  def handle_event("home-section", %{"section" => section}, socket),
+    do: {:noreply, assign(socket, home_section: if(section == "", do: nil, else: section))}
 
   def handle_event("show-closed", %{"project" => id, "show" => show}, socket) do
     show? = show == "true"
@@ -1000,6 +1010,14 @@ defmodule RavixWeb.WorkspaceLive do
      |> update_picker_adding()
      |> put_flash(:error, "The repository could not be added. Try again.")}
   end
+
+  def handle_async({:project_people, id}, {:ok, {:ok, people}}, socket) do
+    if socket.assigns.people_for == id,
+      do: {:noreply, assign(socket, project_people: people)},
+      else: {:noreply, socket}
+  end
+
+  def handle_async({:project_people, _id}, _result, socket), do: {:noreply, socket}
 
   def handle_async(:project_agents, {:ok, response}, socket),
     do: {:noreply, NewProject.availability(socket, response)}
@@ -1564,6 +1582,38 @@ defmodule RavixWeb.WorkspaceLive do
   #
   # Legacy projects somebody shared with this person sit last, in "Shared
   # with you", while their personal workspace is current (`scope_rail/2`).
+  # Home's project list is grouped the way the sidebar is, so a section
+  # narrows both to the same projects. Empty groups offer nothing to pick.
+  defp home_groups(assigns) do
+    for {section, projects} <-
+          section_groups(
+            assigns.projects,
+            assigns.sections,
+            assigns.section_placements,
+            assigns.scratch_group,
+            assigns.shared_ids
+          ),
+        projects != [],
+        do: {section_key(section), section_name(section, assigns.sections), projects}
+  end
+
+  # The section Home is narrowed to, while it still has projects to show: a
+  # section deleted or emptied since it was chosen leaves Home on all of them
+  # rather than on an empty list with nothing marked chosen.
+  defp home_selected(%{home_section: nil}), do: nil
+
+  defp home_selected(%{home_section: key} = assigns) do
+    if Enum.any?(home_groups(assigns), &(elem(&1, 0) == key)), do: key
+  end
+
+  # Home's side says whose projects these are: the current workspace's, or
+  # the person's own before workspaces are in play.
+  defp workspace_name(%{workspace: %{name: name}}, _user) when is_binary(name), do: name
+  defp workspace_name(_workspace, user), do: "@#{user.login}"
+
+  defp section_name(%{id: nil, name: "Other projects"}, []), do: "Projects"
+  defp section_name(section, _sections), do: section.name
+
   defp section_groups(projects, sections, placements, scratch_group, shared_ids) do
     {shared, projects} = Enum.split_with(projects, &MapSet.member?(shared_ids, &1.id))
 
@@ -1587,18 +1637,6 @@ defmodule RavixWeb.WorkspaceLive do
       do: groups,
       else: groups ++ [{%{id: nil, name: "Scratch", collapsed: false, scratch: true}, scratch}]
   end
-
-  # The scratch and shared groups are maps standing in for a section; real
-  # sections are `Ravix.Projects.Section` structs, which do not answer
-  # `section[:key]`. Neither takes a dragged project.
-  defp scratch_section?(section),
-    do: Map.get(section, :scratch) == true or Map.get(section, :shared) == true
-
-  # A group has a header, and its projects sit a step in under it, once the
-  # person has sections of their own or the group is scratch or shared.
-  # Unsectioned projects with nothing else beside them need no label.
-  defp section_labelled?(section, sections),
-    do: not is_nil(section.id) or sections != [] or scratch_section?(section)
 
   defp section_key(%{scratch: true}), do: "scratch"
   defp section_key(%{shared: true}), do: "shared"
@@ -1628,24 +1666,6 @@ defmodule RavixWeb.WorkspaceLive do
       String.contains?(String.downcase(project.display_name), String.downcase(String.trim(query)))
 
   defp project_attention(tracks, id), do: Enum.count(Map.get(tracks, id, []), &attention?/1)
-
-  # What a project's badge counts, for its tooltip and name (RAV-96): the
-  # tracks the Inbox would list, not how many tracks there are.
-  defp need_you(1), do: "1 track needs you"
-  defp need_you(count), do: "#{count} tracks need you"
-
-  # Whether every track the rail shows has one creator (RAV-96). Then an
-  # avatar on each row says nothing, as under Mine, and the rail leaves it
-  # out; each row's name still says who created it.
-  defp one_creator?(tracks, user, selected) do
-    tracks
-    |> Map.values()
-    |> Enum.filter(&is_list/1)
-    |> Enum.flat_map(&rail_rows(&1, user, selected))
-    |> Enum.uniq_by(& &1.created_by_login)
-    |> length()
-    |> Kernel.<=(1)
-  end
 
   # start_async does not run on the disconnected render. The connected mount
   # starts the same traced read as subsequent refreshes, leaving the shell free
@@ -1812,14 +1832,35 @@ defmodule RavixWeb.WorkspaceLive do
       all_notices: People.notices(socket.assigns.current_user),
       closed_tracks: closed_tracks,
       closed_projects: closed_projects,
-      track_errors: track_errors
+      track_errors: track_errors,
+      previews: Previews.for_projects(socket.assigns.current_user, Enum.map(projects, & &1.id))
     )
     |> scope_rail(socket.assigns.url_project)
     |> assign(url_project: nil)
     |> refresh_picker()
     |> assign_page_title()
+    |> load_people()
     |> announce(tracks)
   end
+
+  # The project page's People column, read once a project's own page is
+  # open, off the LiveView process. Who may see the list is
+  # `People.list_project/2`'s question; a refusal shows nobody.
+  defp load_people(
+         %{assigns: %{project: %{id: id}, track_id: nil, live_action: :project}} = socket
+       ) do
+    if connected?(socket) and socket.assigns.people_for != id do
+      user = socket.assigns.current_user
+
+      socket
+      |> assign(people_for: id, project_people: [])
+      |> traced_async({:project_people, id}, fn -> People.list_project(user, id) end)
+    else
+      socket
+    end
+  end
+
+  defp load_people(socket), do: socket
 
   # Cut the page's scope from everything the viewer reaches (ADR 0009): the
   # current workspace's projects, and in the personal workspace the legacy
@@ -2226,16 +2267,50 @@ defmodule RavixWeb.WorkspaceLive do
   defp quick_repos(socket), do: socket
 
   # Home's Recent (RAV-100): the rail's open tracks across every project,
-  # newest activity first, so two tracks of one repository read as the two
-  # pieces of work they are. The sidebar's Everyone / Mine applies here too.
-  defp recent_tracks(projects, tracks, user) do
+  # Every open track this person may see, newest activity first, so two
+  # tracks of one repository read as the two pieces of work they are. Each
+  # row says whose it is, so nothing is filtered by who made it.
+  defp open_tracks(%{projects: projects, tracks: tracks}) do
     for(
       project <- projects,
-      track <- rail_rows(tracks[project.id] || [], user, nil),
+      rows = tracks[project.id],
+      is_list(rows),
+      track <- rows,
+      is_nil(track.closed_at),
       do: {project, track}
     )
     |> Enum.sort_by(fn {_project, track} -> activity_key(track.activity_at) end, :desc)
-    |> Enum.take(8)
+  end
+
+  # Home's Active tracks: the open tracks, newest activity first.
+  defp home_active(assigns), do: assigns |> open_tracks() |> Enum.take(@home_active)
+
+  # Home's Needs you: what the Inbox lists, each with why, in a few words.
+  defp home_needs(assigns) do
+    for {project, track} <- open_tracks(assigns), attention?(track) do
+      {project, track, need_reason(track)}
+    end
+    |> Enum.take(@home_list)
+  end
+
+  defp need_reason(track) do
+    cond do
+      billing_attention?(track) -> "is paused until its agent is reconnected"
+      track.status == :setup_failed -> "could not be set up"
+      track.status == :failed -> "stopped on an error"
+      Map.get(track, :mention) != nil -> "mentions you in a comment"
+      true -> "has a reply you have not read"
+    end
+  end
+
+  # Home's heading names the section shown, as its filter says.
+  defp home_heading(assigns) do
+    key = home_selected(assigns)
+
+    Enum.find_value(home_groups(assigns), "All projects", fn
+      {^key, name, _projects} when not is_nil(key) -> name
+      _group -> nil
+    end)
   end
 
   defp activity_key(nil), do: 0
@@ -2486,152 +2561,10 @@ defmodule RavixWeb.WorkspaceLive do
     end
   end
 
-  # A tab's dot, from what the rail already read: nothing new is asked of
-  # Fountain to draw it. `MachineState` is the one place the state is decided,
-  # so the dot, the header chip and the dock say the same word.
-  defp tab_machine(track), do: MachineState.of(track)
-
-  # An unread row says whether a reply or only a comment is waiting.
-  defp tab_status(track) do
-    case MachineState.marker(tab_machine(track), track.unread) do
-      :unread -> if(reply_unread?(track), do: :unread, else: :commented)
-      marker -> marker
-    end
-  end
-
-  defp tab_status_label(:unread), do: "Unread reply"
-  defp tab_status_label(:commented), do: "New comment"
-  defp tab_status_label(state), do: MachineState.label(state)
-
-  # The dot's tooltip: the state, and what it means when there is more to say.
-  defp tab_status_title(track) do
-    machine = tab_machine(track)
-
-    case tab_status(track) do
-      marker when marker in [:unread, :commented] ->
-        "#{tab_status_label(marker)} · #{MachineState.label(machine.state)}"
-
-      state when is_nil(machine.detail) ->
-        tab_status_label(state)
-
-      state ->
-        "#{tab_status_label(state)}: #{machine.detail}"
-    end
-  end
-
-  # The link's accessible name: what the tab draws, less the abbreviation.
-  defp tab_name(track) do
-    [
-      Track.label(track),
-      "created by @#{track.created_by_login}",
-      Map.get(track, :visibility) == :private && "private",
-      track.origin.kind == :plan && "from a project plan",
-      MachineState.label(tab_machine(track).state),
-      (marker = tab_status(track)) in [:unread, :commented] && tab_status_label(marker)
-    ]
-    |> Enum.filter(& &1)
-    |> Enum.join(", ")
-  end
-
-  # The sidebar's Mine filter. The selected track stays, so choosing Mine
-  # never takes away the page somebody is looking at.
-  defp rail_rows(rows, %Accounts.User{rail_scope: :mine} = user, selected),
-    do: Enum.filter(rows, &(&1.id == selected or Access.created_by?(user, &1)))
-
-  defp rail_rows(rows, _user, _selected), do: rows
-
   # Quick-jump searches everything unless the query says `mine:`.
   defp jump_query(query) do
     words = String.split(query)
     {"mine:" in words, words |> Enum.reject(&(&1 == "mine:")) |> Enum.join(" ")}
-  end
-
-  # A row's dot sits in a slot of its own width whether or not there is one,
-  # so every row's avatar and title start at the same x. A working track's
-  # spinner is in its age slot instead (`meta_slot/1`), so it has no dot.
-  attr :track, :map, required: true
-
-  defp status_slot(assigns) do
-    assigns =
-      assign(assigns, :status, with(:working <- tab_status(assigns.track), do: nil))
-
-    ~H"""
-    <span class="track-status" aria-hidden={if is_nil(@status), do: "true"}>
-      <.status_dot
-        :if={@status}
-        status={to_string(@status)}
-        label={tab_status_label(@status)}
-        title={tab_status_title(@track)}
-      />
-    </span>
-    """
-  end
-
-  attr :track, :map, required: true
-
-  defp creator(assigns) do
-    ~H"""
-    <span
-      class="track-creator"
-      role="img"
-      aria-label={"Created by @#{@track.created_by_login}"}
-      title={"Created by @#{@track.created_by_login}"}
-    >
-      <img :if={@track.creator_avatar_url} src={@track.creator_avatar_url} alt="" loading="lazy" />
-      <span :if={!@track.creator_avatar_url} aria-hidden="true">{initials(@track.created_by_login)}</span>
-    </span>
-    """
-  end
-
-  # A row's last-activity age. The server writes it once, relative to the
-  # render; the `RelativeTime` hook keeps it current and puts the time in the
-  # viewer's own zone in the tooltip.
-  attr :id, :string, required: true
-  attr :at, DateTime, default: nil
-
-  defp age(assigns) do
-    ~H"""
-    <time
-      :if={@at}
-      id={@id}
-      class="track-age"
-      phx-hook="RelativeTime"
-      datetime={DateTime.to_iso8601(@at)}
-      title={"Last active " <> RavixWeb.LocalTime.full(@at, nil)}
-    >{elem(ago(@at), 0)}</time>
-    """
-  end
-
-  # A private track's lock: an icon beside the title rather than a word that
-  # takes the title's room. The row's accessible name says "private".
-  defp private_mark(assigns) do
-    ~H"""
-    <span class="track-private" data-tip="Private: only its creator and the people they invite">
-      <.icon name="lock" size={12} /><span class="sr-only">Private</span>
-    </span>
-    """
-  end
-
-  # A row's end (RAV-96): its age, or a spinner while the agent is taking a
-  # turn. The slot has one width either way, so titles end at the same x.
-  attr :track, :map, required: true
-
-  defp meta_slot(assigns) do
-    assigns = assign(assigns, :working, tab_status(assigns.track) == :working)
-
-    ~H"""
-    <span class="track-meta">
-      <span
-        :if={@working}
-        id={"track-working-#{@track.id}"}
-        class="loading-spinner track-spinner"
-        role="img"
-        aria-label="Working"
-        data-tip={tab_status_title(@track)}
-      ></span>
-      <.age :if={!@working} id={"track-age-#{@track.id}"} at={@track.activity_at} />
-    </span>
-    """
   end
 
   # An Inbox card's age, in words ("2h ago"), kept current by the same hook
@@ -2655,25 +2588,6 @@ defmodule RavixWeb.WorkspaceLive do
   end
 
   defp ago_words(at), do: RavixWeb.LocalTime.ago_words(at)
-
-  # The link's accessible name, with the age the hook keeps current in words.
-  defp row_label(track, label) do
-    case track.activity_at do
-      nil -> label
-      at -> "#{label}, active #{elem(ago(at), 1)}"
-    end
-  end
-
-  defp ago(at), do: RavixWeb.LocalTime.ago(at)
-
-  defp initials(login) do
-    case String.split(login || "", ~r/[-_.]+/, trim: true) do
-      [first, second | _] -> String.first(first) <> String.first(second)
-      [only] -> String.slice(only, 0, 2)
-      [] -> "?"
-    end
-    |> String.upcase()
-  end
 
   defp jump_tracks(tracks, project, user, mine?, query),
     do:

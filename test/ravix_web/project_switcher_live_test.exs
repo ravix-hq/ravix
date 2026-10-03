@@ -66,7 +66,7 @@ defmodule RavixWeb.ProjectTreeLiveTest do
     stub(Fountain, :client, fn -> client end)
     {:ok, view, _} = live(log_in_user(conn, user), "/inbox")
     render_async(view, 5_000)
-    assert has_element?(view, "#yard .workspace-project")
+    assert has_element?(view, "#topbar .topbar-nav a[href='/inbox'][aria-current=page]")
     view |> element("#quick-jump-trigger") |> render_click()
 
     view |> form("#search-form", q: hidden.title) |> render_change()
@@ -83,21 +83,40 @@ defmodule RavixWeb.ProjectTreeLiveTest do
     refute render(view) =~ "Private omitted"
     refute render(view) =~ foreign.name
     refute render(view) =~ hidden.title
-    assert has_element?(view, ".yard-nav a[href='/inbox'] .badge", "3")
+    assert has_element?(view, ".topbar-nav a[href='/inbox'] .badge", "3")
     view |> element("#search-dialog a[href='/p/#{shared.id}']") |> render_click()
     assert_patch(view, "/p/#{shared.id}")
     refute has_element?(view, "#search-dialog")
-    assert has_element?(view, ".track-tab", visible.title)
+    assert has_element?(view, "#tracks-graph-row-#{visible.id}", visible.title)
     refute render(view) =~ hidden.title
-    refute has_element?(view, ".project-actions button")
-    refute has_element?(view, "[data-project-id='#{shared.id}'] a.project-add")
-    assert has_element?(view, "[data-project-id='#{member.id}'] a.project-add")
-    assert has_element?(view, "[data-project-id='#{owned.id}'] a.project-add")
-    assert has_element?(view, ".yard-nav a[href='/inbox'] .badge", "3")
+    # A track-only share offers no project actions: no new track, plans,
+    # people or settings.
+    refute has_element?(view, "#project-tracks-new")
+    refute has_element?(view, "#crumb-plans")
+    refute has_element?(view, "#crumb-settings")
+    # A project page's top bar is its breadcrumb, without the Inbox link.
+    refute has_element?(view, "#topbar .topbar-nav")
+
+    # Home lists each visible project with its own count, and New track only
+    # where the person may start one. The breadcrumb's workspace goes there.
+    view |> element("#topbar .topbar-crumbs a[href='/home']") |> render_click()
+    assert_patch(view, "/home")
+    assert has_element?(view, ".topbar-nav a[href='/home'][aria-current=page]", "Projects")
+    assert has_element?(view, ".topbar-nav a[href='/inbox'] .badge", "3")
+
+    for project <- [owned, member, shared] do
+      assert has_element?(view, "#home-project-#{project.id} a#project-link-#{project.id}")
+      assert has_element?(view, "#home-project-#{project.id} .badge", "1")
+    end
+
+    refute has_element?(view, "#new-track-#{shared.id}")
+    assert has_element?(view, "a#new-track-#{member.id}[href='/p/#{member.id}?new=track']")
+    assert has_element?(view, "a#new-track-#{owned.id}[href='/p/#{owned.id}?new=track']")
+    refute render(view) =~ foreign.name
     render_patch(view, "/schedules")
-    view |> element("#mobile-quick-jump-trigger") |> render_click()
+    view |> element("#quick-jump-trigger") |> render_click()
     assert has_element?(view, "#search-dialog a[href='/p/#{shared.id}'] .badge", "1")
-    assert has_element?(view, ".workspace-mobile-nav a[href='/schedules']")
+    assert has_element?(view, ".topbar-nav a[href='/schedules'][aria-current=page]")
     render_patch(view, "/p/#{foreign.id}")
     assert_patch(view, "/home")
     refute render(view) =~ "Private omitted"
@@ -107,9 +126,10 @@ defmodule RavixWeb.ProjectTreeLiveTest do
     refute render(view) =~ hidden.title
   end
 
-  test "private tracks appear only for their creator and invitees in tree, counts and search", %{
-    conn: conn
-  } do
+  test "private tracks appear only for their creator and invitees on Home, in counts and search",
+       %{
+         conn: conn
+       } do
     owner = insert_user()
     creator = insert_user()
     invitee = insert_user()
@@ -139,9 +159,10 @@ defmodule RavixWeb.ProjectTreeLiveTest do
     for {viewer, visible?} <- [{owner, false}, {member, false}, {creator, true}, {invitee, true}] do
       {:ok, view, _} = live(log_in_user(conn, viewer), "/home")
       render_async(view, 5_000)
-      assert has_element?(view, "#project-track-tab-#{track.id}") == visible?
-      assert has_element?(view, "#project-link-#{project.id} .badge", "1") == visible?
-      assert has_element?(view, ".yard-nav a[href='/inbox'] .badge", "1") == visible?
+      # Its unread reply puts it in Home's Needs you, for those who see it.
+      assert has_element?(view, "#home-needs-#{track.id}") == visible?
+      assert has_element?(view, "#home-project-#{project.id} .badge", "1") == visible?
+      assert has_element?(view, ".topbar-nav a[href='/inbox'] .badge", "1") == visible?
       render_click(view, "dialog", %{name: "search"})
       view |> form("#search-form", q: "Secret work") |> render_change()
 
@@ -196,8 +217,8 @@ defmodule RavixWeb.ProjectTreeLiveTest do
     stub(Fountain, :client, fn -> client end)
     {:ok, view, _} = live(log_in_user(conn, creator), "/home")
     render_async(view, 5_000)
-    assert has_element?(view, "#project-track-tab-#{track.id}")
-    assert has_element?(view, "#project-link-#{project.id} .badge", "1")
+    assert has_element?(view, "#home-needs-#{track.id}", "has a reply you have not read")
+    assert has_element?(view, "#home-project-#{project.id} .badge", "1")
     render_click(view, "dialog", %{name: "search"})
     assert has_element?(view, "#search-track-link-#{track.id}")
 
@@ -206,16 +227,17 @@ defmodule RavixWeb.ProjectTreeLiveTest do
     assert Ravix.Repo.get!(Ravix.Tracks.Track, track.id).creator_revoked_at
     refute has_element?(view, "#project-link-#{project.id}")
     refute render(view) =~ track.title
-    refute has_element?(view, ".yard-nav a[href='/inbox'] .badge")
+    refute has_element?(view, ".topbar-nav a[href='/inbox'] .badge")
 
     # Returning to the project does not silently restore revoked creator rights.
     insert_project_member(project, creator)
     render_click(view, "refresh")
     render_async(view, 5_000)
     assert has_element?(view, "#project-link-#{project.id}")
-    refute has_element?(view, "#project-track-tab-#{track.id}")
-    refute has_element?(view, "#project-link-#{project.id} .badge")
-    refute has_element?(view, ".yard-nav a[href='/inbox'] .badge")
+    refute has_element?(view, "#home-needs-#{track.id}")
+    refute render(view) =~ track.title
+    refute has_element?(view, "#home-project-#{project.id} .badge")
+    refute has_element?(view, ".topbar-nav a[href='/inbox'] .badge")
     render_click(view, "dialog", %{name: "search"})
     view |> form("#search-form", q: track.title) |> render_change()
     refute has_element?(view, "#search-track-link-#{track.id}")
@@ -238,10 +260,10 @@ defmodule RavixWeb.ProjectTreeLiveTest do
 
     {:ok, view, _} = live(log_in_user(conn, user), "/home")
     render_async(view, 5_000)
-    panel = "#project-tracks-#{project.id}"
+    panel = "#home-project-#{project.id}"
     assert has_element?(view, panel, "Couldn't load tracks")
     refute has_element?(view, panel, "No open tracks")
-    assert has_element?(view, "#project-tracks-#{other.id}", "No open tracks")
+    assert has_element?(view, "#home-project-#{other.id}", "No open tracks")
     render_click(view, "dialog", %{name: "search"})
     render_click(view, "dismiss")
     assert has_element?(view, panel, "Couldn't load tracks")
@@ -271,7 +293,8 @@ defmodule RavixWeb.ProjectTreeLiveTest do
 
     view |> element(panel <> " button", "Retry") |> render_click()
     render_async(view, 5_000)
-    assert has_element?(view, "#project-track-tab-#{track.id}")
+    assert has_element?(view, panel <> " .lane-strip .lane-pill")
+    assert has_element?(view, panel, "1 open track")
     refute has_element?(view, panel, "Couldn't load tracks")
     render_click(view, "retry-tracks", %{id: insert_project().id})
   end
@@ -284,8 +307,16 @@ defmodule RavixWeb.ProjectTreeLiveTest do
     {:ok, view, _} = live(log_in_user(conn, user), path)
     render_async(view)
     child = find_live_child(view, "track-host")
-    view |> element("#new-track-#{project.id}") |> render_click()
-    assert_patch(view, path <> "?new=track")
+    # The top bar's New track opens the dialog over the track, in place.
+    view |> element("#top-new-track") |> render_click()
+    assert has_element?(view, "#new-track-dialog")
+    assert find_live_child(view, "track-host").pid == child.pid
+    view |> element("#new-track-dialog button[aria-label=Close]") |> render_click()
+    refute has_element?(view, "#new-track-dialog")
+    assert find_live_child(view, "track-host").pid == child.pid
+
+    # A `?new=track` link on the track's own address does the same.
+    render_patch(view, path <> "?new=track")
     assert has_element?(view, "#new-track-dialog")
     assert find_live_child(view, "track-host").pid == child.pid
     view |> element("#new-track-dialog button[aria-label=Close]") |> render_click()
@@ -330,7 +361,7 @@ defmodule RavixWeb.ProjectTreeLiveTest do
     refute has_element?(view, "#search-dialog a[href='/p/#{project.id}']")
     render_patch(view, "/p/#{project.id}")
     assert_patch(view, "/home")
-    refute has_element?(view, ".workspace-project")
+    refute has_element?(view, "#home-project-#{project.id}")
   end
 
   test "a late turn result cannot restore revoked tracks or unread counts", %{conn: conn} do

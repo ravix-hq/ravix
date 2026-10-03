@@ -1,17 +1,18 @@
 import { test, expect } from '@playwright/test';
 import { signIn, connectClaude } from './sign-in.js';
+import { openAddRepository } from './new-track.js';
 
 test('tool calls stream in as one labelled line each, with the thoughts in one toggle', async ({ page, request }) => {
   test.setTimeout(120_000);
   await signIn(page, 'dana');
   await connectClaude(page);
-  await page.getByRole('button', { name: 'Add a repository', exact: true }).first().click();
+  await openAddRepository(page);
   const project = page.getByRole('dialog', { name: 'Add a repository', exact: true });
   await project.getByLabel('Project name', { exact: true }).fill('Tool rows');
   await project.getByRole('button', { name: 'Create scratch project', exact: true }).click();
   await expect(project).toHaveCount(0);
   const projectId = new URL(page.url()).pathname.split("/")[2];
-  await page.locator('#yard .workspace-project.current .project-add').click();
+  await page.locator('#top-new-track').click();
   await page.getByRole('dialog', { name: 'New track', exact: true })
     .getByRole('button', { name: 'Create track', exact: true }).click();
   await expect(page.getByRole('textbox', { name: 'Message', exact: true })).toBeEnabled({ timeout: 30_000 });

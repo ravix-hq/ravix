@@ -1,6 +1,7 @@
 import { test, expect } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
 import { signIn, connectClaude } from './sign-in.js';
+import { openAddRepository } from './new-track.js';
 
 // RAV-101: Changes lists files Git is not tracking yet. The Sprites mock
 // answers the untracked read only for a worktree named for it
@@ -16,7 +17,7 @@ test('Changes lists an untracked file as new beside the tracked diff', async ({ 
   test.setTimeout(150_000);
   await signIn(page, 'untracked');
   await connectClaude(page);
-  await page.getByRole('button', { name: 'Add a repository', exact: true }).first().click();
+  await openAddRepository(page);
   const project = page.getByRole('dialog', { name: 'Add a repository' });
   await project.getByLabel('Project name', { exact: true }).fill('Atlas API');
   await expect(project.locator('#project-repositories input[type=radio]')).not.toHaveCount(0);
@@ -24,14 +25,14 @@ test('Changes lists an untracked file as new beside the tracked diff', async ({ 
   await project.getByRole('button', { name: 'Add repository' }).click();
   await expect(project).not.toBeVisible();
 
-  await page.locator('#yard .workspace-project.current .project-add').click();
+  await page.locator('#top-new-track').click();
   const dialog = page.getByRole('dialog', { name: 'New track', exact: true });
   await dialog.getByRole('button', { name: 'Options', exact: true }).click();
   await dialog.getByLabel('Branch name').fill('notes-untracked');
   await dialog.getByRole('button', { name: 'Create track', exact: true }).click();
   await expect(dialog).not.toBeVisible();
   await expect(page.getByRole('textbox', { name: 'Message', exact: true })).toBeEnabled({ timeout: 30_000 });
-  await page.getByRole('navigation', { name: 'Inspector panels' }).getByRole('button', { name: 'Changes', exact: true }).click();
+  await page.getByRole('navigation', { name: 'Track views' }).getByRole('button', { name: 'Changes', exact: true }).click();
 
   const panel = page.locator('.changes-panel');
   await expect(panel.locator('.change-file', { hasText: 'window.ts' })).toBeVisible({ timeout: 15_000 });

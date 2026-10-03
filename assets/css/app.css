@@ -8,8 +8,8 @@
 @font-face { font-family: "IBM Plex Mono"; font-style: normal; font-weight: 500; font-display: swap; src: url("/fonts/IBMPlexMono-Medium.woff2") format("woff2"); }
 @font-face { font-family: "IBM Plex Mono"; font-style: italic; font-weight: 400; font-display: swap; src: url("/fonts/IBMPlexMono-Italic.woff2") format("woff2"); }
 
-/* Ravix's shell is a desktop editor: yard on the left, the track you are
-   working in the middle, the inspector on the right, and a dock underneath it.
+/* Ravix's shell is a desktop editor: a bar across the top, the track you are
+   working in below it, the inspector on the right, and a dock underneath it.
    Every colour is a token, so the whole app re-themes from the blocks at the
    top and nothing hard-codes a hex value below the palettes. */
 
@@ -26,7 +26,7 @@
      so their hairlines meet in one line (RAV-97). */
   --pane-head: 44px;
   /* Every tab's active underline: the palette's accent (RAV-97). */
-  --tab: var(--accent);
+  --tab: var(--tab-mark, var(--accent));
 }
 
 /* ── the palettes ──────────────────────────────────────────────────────────
@@ -44,9 +44,167 @@
    The Theme hook validates ids against the shared picker; browser tests
    exercise palette changes across public and signed-in pages. */
 
-:root, [data-theme="ravix"] {
-  /* Near-black rather than blue-black: the transcript is the brightest thing
-     on screen and a tinted ground makes long reading sessions tiring. */
+:root, [data-theme="ravix"], [data-theme="light"] {
+  /* The default: white pages, grey bars and hairlines, blue links, green
+     primary actions and an orange mark under the open tab. "Dark" is its
+     night counterpart, and "System" follows the operating system's choice
+     between the two. */
+  --bg: #ffffff;
+  --panel: #f6f8fa;
+  --sidebar: #f6f8fa;
+  --surface: #eff2f5;
+  --surface-hover: #eef1f4;
+  --surface-active: #e7ebf0;
+  --input: #ffffff;
+  --code-bg: #f6f8fa;
+  --line: #d0d7de;
+  --line-strong: #afb8c1;
+  --ink: #1c2128;
+  --dim: #57606a;
+  --dimmer: #57606a;
+  --accent: #3451d1;
+  --accent-ink: #22389a;
+  --accent-soft: #e8edfb;
+  --accent-line: #9fb0ee;
+  --notice: #e8edfb;
+  --ok: #1f7a3d;
+  --ok-soft: #dff1e4;
+  --warn: #946200;
+  --warn-soft: #fff4d6;
+  --bad: #cf222e;
+  --bad-soft: #ffebe9;
+  --danger-bg: #ffebe9;
+  --danger-line: #ffcecb;
+  --shadow: rgba(31, 35, 40, 0.12);
+  --scrim: rgba(31, 35, 40, 0.32);
+  /* Primary actions are solid green; the open tab is underlined in orange. */
+  --primary-bg: #1f7a3d;
+  --primary-line: #1a6634;
+  --primary-hover: #1a6634;
+  --primary-ink: #ffffff;
+  --tab-mark: #d4632a;
+  color-scheme: light;
+}
+
+[data-theme="dark"] {
+  --bg: #0d1117;
+  --panel: #151b23;
+  --sidebar: #010409;
+  --surface: #212830;
+  --surface-hover: #262c36;
+  --surface-active: #2f3742;
+  --input: #0d1117;
+  --code-bg: #010409;
+  --line: #30363d;
+  --line-strong: #484f58;
+  --ink: #f0f6fc;
+  --dim: #9198a1;
+  --dimmer: #8b949e;
+  --accent: #4493f8;
+  --accent-ink: #cae8ff;
+  --accent-soft: #121d2f;
+  --accent-line: #1f6feb;
+  --notice: #0d1d31;
+  --ok: #3fb950;
+  --ok-soft: #12261e;
+  --warn: #d29922;
+  --warn-soft: #272115;
+  --bad: #f85149;
+  --bad-soft: #25171c;
+  --danger-bg: #25171c;
+  --danger-line: #8e1519;
+  --shadow: rgba(1, 4, 9, 0.6);
+  --scrim: rgba(1, 4, 9, 0.6);
+  /* Primary actions are solid green, the code host's way. */
+  --primary-bg: #238636;
+  --primary-line: #2ea043;
+  --primary-hover: #29903b;
+  --primary-ink: #ffffff;
+  color-scheme: dark;
+  --tab-mark: #e8743b;
+}
+
+[data-theme="system"] {
+  --bg: #ffffff;
+  --panel: #f6f8fa;
+  --sidebar: #f6f8fa;
+  --surface: #eff2f5;
+  --surface-hover: #eef1f4;
+  --surface-active: #e7ebf0;
+  --input: #ffffff;
+  --code-bg: #f6f8fa;
+  --line: #d0d7de;
+  --line-strong: #afb8c1;
+  --ink: #1c2128;
+  --dim: #57606a;
+  --dimmer: #57606a;
+  --accent: #3451d1;
+  --accent-ink: #22389a;
+  --accent-soft: #e8edfb;
+  --accent-line: #9fb0ee;
+  --notice: #e8edfb;
+  --ok: #1f7a3d;
+  --ok-soft: #dff1e4;
+  --warn: #946200;
+  --warn-soft: #fff4d6;
+  --bad: #cf222e;
+  --bad-soft: #ffebe9;
+  --danger-bg: #ffebe9;
+  --danger-line: #ffcecb;
+  --shadow: rgba(31, 35, 40, 0.12);
+  --scrim: rgba(31, 35, 40, 0.32);
+  /* Primary actions are solid green; the open tab is underlined in orange. */
+  --primary-bg: #1f7a3d;
+  --primary-line: #1a6634;
+  --primary-hover: #1a6634;
+  --primary-ink: #ffffff;
+  --tab-mark: #d4632a;
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  [data-theme="system"] {
+    --bg: #0d1117;
+    --panel: #151b23;
+    --sidebar: #010409;
+    --surface: #212830;
+    --surface-hover: #262c36;
+    --surface-active: #2f3742;
+    --input: #0d1117;
+    --code-bg: #010409;
+    --line: #30363d;
+    --line-strong: #484f58;
+    --ink: #f0f6fc;
+    --dim: #9198a1;
+    --dimmer: #8b949e;
+    --accent: #4493f8;
+    --accent-ink: #cae8ff;
+    --accent-soft: #121d2f;
+    --accent-line: #1f6feb;
+    --notice: #0d1d31;
+    --ok: #3fb950;
+    --ok-soft: #12261e;
+    --warn: #d29922;
+    --warn-soft: #272115;
+    --bad: #f85149;
+    --bad-soft: #25171c;
+    --danger-bg: #25171c;
+    --danger-line: #8e1519;
+    --shadow: rgba(1, 4, 9, 0.6);
+    --scrim: rgba(1, 4, 9, 0.6);
+    /* Primary actions are solid green, the code host's way. */
+    --primary-bg: #238636;
+    --primary-line: #2ea043;
+    --primary-hover: #29903b;
+    --primary-ink: #ffffff;
+    color-scheme: dark;
+    --tab-mark: #e8743b;
+  }
+}
+
+[data-theme="graphite"] {
+  /* The first Ravix palette: near-black rather than blue-black, so the
+     transcript is the brightest thing on screen. */
   --bg: #0c0d0f;
   --panel: #121316;
   --sidebar: #0f1012;
@@ -321,7 +479,7 @@
 
 /* ── the sections below ────────────────────────────────────────────────────
    One declaration block per selector, in the order the screen is read: base
-   type, the frame, the yard, the track's header and transcript, the composer,
+   type, the frame, the top bar, the track's header and transcript, the composer,
    the inspector and dock, then the pages that stand on their own (home,
    sign-in, first run, inbox), then dialogs, toasts and the LiveView runtime.
    Responsive rules all live in the `narrow` section at the end, on three
@@ -371,8 +529,8 @@ button:disabled { opacity: 0.42; cursor: default; }
   outline-offset: 2px;
 }
 :focus:not(:focus-visible) { outline: none; }
-button.primary { background: var(--accent-soft); border-color: var(--accent-line); color: var(--accent-ink); }
-button.primary:hover:not(:disabled) { background: color-mix(in srgb, var(--accent-soft) 80%, var(--accent)); }
+button.primary { background: var(--primary-bg, var(--accent-soft)); border-color: var(--primary-line, var(--accent-line)); color: var(--primary-ink, var(--accent-ink)); }
+button.primary:hover:not(:disabled) { background: var(--primary-hover, color-mix(in srgb, var(--accent-soft) 80%, var(--accent))); }
 button.ghost { background: transparent; border-color: transparent; color: var(--dim); }
 button.ghost:hover:not(:disabled) { background: var(--surface-hover); color: var(--ink); border-color: transparent; }
 button.ghost.on { background: var(--surface-active); color: var(--ink); }
@@ -447,7 +605,7 @@ h4 { font-size: 12px; color: var(--dim); font-weight: 500; letter-spacing: 0; }
 .sr-only { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; border: 0; }
 
 /* A row of controls, wherever a form or a toolbar needs one. The sections
-   that own a particular row (the yard's nav, the composer's foot) tighten it
+   that own a particular row (the composer's foot, say) tighten it
    under their own selector. */
 .workspace-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; padding: 12px; }
 
@@ -456,28 +614,53 @@ h4 { font-size: 12px; color: var(--dim); font-weight: 500; letter-spacing: 0; }
 .app {
   height: 100vh;
   min-width: 0;
-  display: grid;
-  grid-template-columns: clamp(220px, var(--yard-width, var(--rail)), min(480px, calc(100vw - 700px))) minmax(0, 1fr);
+  display: flex;
+  flex-direction: column;
   overflow: hidden;
 }
-.stage { position: relative; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
-.split {
-  flex: 1;
-  display: grid;
-  grid-template-columns: minmax(420px, 1fr) clamp(280px, var(--inspector-width, max(340px, 30vw)), min(800px, calc(100% - 420px)));
-  min-height: 0;
-}
-.inspector { position: relative; display: flex; flex-direction: column; border-left: 1px solid var(--line); background: var(--panel); min-width: 0; min-height: 0; }
+.stage { position: relative; flex: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+/* The track page's body: the conversation and its facts, or one of the
+   inspector's panels, or the terminal, as the tabs above it choose
+   (`data-narrow-view`). The inspector takes the whole width when shown. */
+.split { flex: 1; display: flex; min-height: 0; min-width: 0; }
+.inspector { position: relative; flex: 1; display: flex; flex-direction: column; background: var(--bg); min-width: 0; min-height: 0; }
+[data-narrow-view="conversation"] .inspector,
+[data-narrow-view="files"] .track-conversation,
+[data-narrow-view="terminal"] .track-conversation,
+[data-narrow-view="files"] .track-facts-aside,
+[data-narrow-view="terminal"] .track-facts-aside,
+[data-narrow-view="files"] .machine-dock-host,
+[data-narrow-view="terminal"] .inspector > .workspace-tabs,
+[data-narrow-view="terminal"] .workspace-panel { display: none; }
+[data-narrow-view="terminal"] .machine-dock-host { display: flex; flex: 1; flex-direction: column; min-height: 0; }
+[data-narrow-view="terminal"] .machine-dock { flex: 1; height: auto; }
+[data-narrow-view="terminal"] .dock-toggle { display: none; }
+/* The page's tabs name the panels, so the inspector keeps only its tools. */
+.inspector > .workspace-tabs > button:not(.panel-refresh):not(.panel-ignored) { display: none; }
+.inspector > .workspace-tabs { justify-content: flex-end; }
+.panel-resize-handle.right, #inspector-toggle { display: none; }
+
+/* The facts beside a conversation: machine, preview, origin, people. */
+.track-facts-aside { flex: 0 0 280px; display: flex; flex-direction: column; gap: 18px; padding: 20px 24px 20px 4px; overflow-y: auto; font-size: 14px; }
+.track-facts-aside section { display: flex; flex-direction: column; gap: 8px; }
+.track-facts-aside section + section { padding-top: 16px; border-top: 1px solid var(--line); }
+.track-facts-aside h2 { margin: 0; color: var(--dim); font-size: 13px; font-weight: 600; }
+.track-facts-aside small { color: var(--dim); font-size: 13px; }
+.track-fact { display: inline-flex; align-items: center; gap: 8px; }
+.track-fact .dot { width: 10px; height: 10px; }
+.track-fact-link { align-self: flex-start; padding: 0; border: 0; background: none; color: var(--accent); font-size: 14px; }
+.track-fact-link:hover:not(:disabled) { background: none; text-decoration: underline; }
+@media (max-width: 1100px) { .track-facts-aside { display: none; } }
 
 .panel-resize-handle { position: absolute; left: -4px; top: 0; bottom: 0; width: 8px; z-index: 10; cursor: col-resize; touch-action: none; }
 .panel-resize-handle:hover, .panel-resize-handle:focus-visible, .panel-resize-handle[data-dragging="true"] { background: var(--accent); }
 .panel-resize-handle:focus-visible { outline-offset: 0; }
 .app:has(.panel-resize-handle[data-dragging="true"]) { user-select: none; cursor: col-resize; }
 
-/* Show or hide a sidebar. The icon is the page with that side drawn in;
+/* Show or hide the inspector. The icon is the page with that side drawn in;
    the button stays on the side it controls, so closing the panel leaves a
    rail wide enough for the same control. Which name is read depends on
-   `data-yard` / `data-inspector` on `<html>` — set before paint by theme.js
+   `data-inspector` on `<html>` — set before paint by theme.js
    and kept there by PanelToggle. The narrow section is what declines to
    collapse a panel that is no longer beside the page. */
 .panel-toggle {
@@ -486,9 +669,7 @@ h4 { font-size: 12px; color: var(--dim); font-weight: 500; letter-spacing: 0; }
 }
 .panel-toggle:hover:not(:disabled) { color: var(--ink); }
 .panel-toggle .label-show { display: none; }
-html[data-yard="closed"] #yard-toggle .label-hide,
 html[data-inspector="closed"] #inspector-toggle .label-hide { display: none; }
-html[data-yard="closed"] #yard-toggle .label-show,
 html[data-inspector="closed"] #inspector-toggle .label-show { display: inline; }
 
 /* The track's page inside the stage. On a wide window the inspector is
@@ -500,37 +681,60 @@ html[data-inspector="closed"] #inspector-toggle .label-show { display: inline; }
    widens the column under the inspector. */
 .workspace-track-host, .track-workspace, .track-workspace-body { display: flex; flex: 1; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden; }
 .workspace-track-host > div { display: flex; flex: 1; min-width: 0; min-height: 0; }
-.track-view-switch.workspace-tabs { display: none; }
 .track-conversation { display: flex; flex: 1; flex-direction: column; min-width: 0; min-height: 0; }
 
-/* ── the yard (left rail) ──────────────────────────────────────────────── */
+/* ── the top bar ───────────────────────────────────────────────────────── */
 
-.yard { display: flex; flex-direction: column; min-width: 0; min-height: 0; background: var(--sidebar); border-right: 1px solid var(--line); }
-/* Drawn first, tabbed to after the nav (RAV-98): see the template. */
-.yard-top {
-  order: -1;
-  display: flex; align-items: center; gap: 4px; flex: none;
-  height: var(--pane-head); padding: 0 8px; border-bottom: 1px solid var(--line);
+/* Grey, across the top: the mark, the workspace, a search field that takes
+   the room, the places to go, New track and you. Inside a project it is a
+   breadcrumb instead. */
+.topbar {
+  flex: none; display: flex; align-items: center; gap: 16px; min-height: 60px; padding: 12px 24px;
+  background: var(--panel); border-bottom: 1px solid var(--line); flex-wrap: wrap; box-sizing: border-box;
 }
+.topbar-home { display: inline-flex; align-items: center; gap: 10px; color: var(--ink); font-size: 18px; font-weight: 700; text-decoration: none; }
+.topbar-home:hover { color: var(--ink); text-decoration: none; }
+.topbar-logo { color: var(--accent); }
+.topbar .workspace-switcher { flex: 0 1 260px; }
+.topbar-workspace {
+  display: inline-flex; align-items: center; gap: 8px; min-height: 36px; padding: 0 14px;
+  border: 1px solid var(--line); border-radius: var(--radius); background: var(--bg); font-size: 14px; font-weight: 500; white-space: nowrap;
+}
+.topbar-workspace .workspace-mark, .topbar .workspace-mark { width: 22px; height: 22px; border-radius: 6px; background: var(--accent); border-color: var(--accent); color: var(--bg); font-size: 12px; font-weight: 700; }
+.topbar-search {
+  flex: 1 1 280px; display: inline-flex; align-items: center; gap: 8px; min-width: 0; height: 36px; padding: 0 12px;
+  color: var(--dim); background: var(--input); border: 1px solid var(--line); border-radius: var(--radius); text-align: left; font-size: 14px;
+}
+.topbar-search span { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.topbar-search:hover:not(:disabled) { color: var(--ink); border-color: var(--line-strong); background: var(--input); }
+.topbar-search kbd { padding: 0 6px; font-family: var(--mono); font-size: 12px; color: var(--dim); border: 1px solid var(--line); border-radius: 4px; background: transparent; }
+.topbar-nav { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+.topbar-item {
+  display: inline-flex; align-items: center; gap: 7px; padding: 8px 12px;
+  color: var(--dim); border-radius: var(--radius); font-size: 14px; text-decoration: none;
+}
+.topbar-item:hover { color: var(--ink); background: var(--surface-hover); text-decoration: none; }
+.topbar-item.on { color: var(--ink); background: var(--surface-active); font-weight: 600; }
+.topbar-item .badge { height: 18px; min-width: 18px; padding: 0 5px; line-height: 1; }
+.topbar-crumbs { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-width: 0; font-size: 16px; }
+.topbar-crumbs a { color: var(--ink); text-decoration: none; }
+.topbar-crumbs a:hover { color: var(--accent); text-decoration: underline; }
+.topbar-crumbs a.here { font-weight: 600; }
+.topbar-crumbs .crumb-sep { color: var(--dimmer); }
+.crumb-skeleton { width: 9ch; height: 14px; }
+#top-new-track { display: inline-flex; align-items: center; gap: 6px; }
+.topbar-account {
+  position: relative; display: grid; place-items: center; width: 32px; height: 32px; padding: 0;
+  border-radius: 50%; background: var(--accent-soft); border: 0; color: var(--accent-ink);
+}
+.topbar-account:hover:not(:disabled) { background: var(--accent-soft); box-shadow: 0 0 0 2px var(--accent-line); }
+.topbar-account img { width: 100%; height: 100%; border-radius: 50%; object-fit: cover; }
+.topbar-account .account-icon { width: 100%; height: 100%; font-size: 12px; font-weight: 700; }
+.app:has(#account-menu:popover-open) .topbar-account { box-shadow: 0 0 0 2px var(--accent-line); }
+
 .avatar { flex: none; width: 24px; height: 24px; border-radius: var(--radius); background: var(--surface); border: 1px solid var(--line); object-fit: cover; }
 .workspace-avatar { display: grid; place-items: center; color: var(--ink); font-size: 12px; }
-.yard-who { flex: 1; min-width: 0; display: flex; flex-direction: column; line-height: 1.2; }
-.yard-who strong { font-size: 13px; font-weight: 600; }
-.yard-who small { color: var(--dimmer); font-size: 11px; }
 
-/* The person's row opens the account menu: a native popover in the top
-   layer, so it is placed against the viewport. The yard is always flush to
-   the left edge, which makes fixed coordinates correct wherever anchor
-   positioning is not available to say the same thing exactly. */
-.yard-account {
-  position: relative; flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px;
-  padding: 5px 6px; color: var(--ink); background: transparent;
-  border: 1px solid transparent; border-radius: var(--radius); text-align: left;
-}
-.yard-account:hover:not(:disabled) { background: var(--surface-hover); border-color: transparent; }
-.yard:has(#account-menu:popover-open) .yard-account { background: var(--surface-hover); }
-/* The login is `--dimmer` on the rail; on a lit row that falls under 4.5:1. */
-.yard-account:hover small, .yard:has(#account-menu:popover-open) .yard-account small { color: var(--dim); }
 .account-chevron { flex: none; color: var(--dimmer); transform: rotate(-90deg); }
 /* What's new has something unseen: a dot on the gear's corner. The gear is
    round, so its box's corner is empty and the dot there covers no stroke. */
@@ -539,20 +743,21 @@ html[data-inspector="closed"] #inspector-toggle .label-show { display: inline; }
   position: absolute; top: -3px; right: -3px; width: 7px; height: 7px; border-radius: 50%;
   background: var(--accent); box-shadow: 0 0 0 2px var(--sidebar);
 }
-.account-menu, .project-menu {
-  position: fixed; inset: auto; bottom: 64px; left: 8px; margin: 0;
+/* The account menu drops down from the top bar's avatar, at its right. */
+.account-menu {
+  position: fixed; inset: auto; top: 52px; right: 8px; margin: 0;
   width: min(272px, calc(100vw - 16px)); max-height: calc(100vh - 66px); overflow-y: auto;
   padding: 4px; color: var(--ink); background: var(--panel);
   border: 1px solid var(--line); border-radius: var(--radius-lg); box-shadow: 0 8px 28px var(--shadow);
 }
 @supports (position-anchor: --a) {
-  .yard-account { anchor-name: --account; }
-  .account-menu { position-anchor: --account; bottom: calc(anchor(top) + 4px); top: auto; left: anchor(left); }
+  .topbar-account { anchor-name: --account; }
+  .account-menu { position-anchor: --account; top: calc(anchor(bottom) + 4px); right: anchor(right); }
 }
 .account-menu hr { margin: 4px 2px; border: none; border-top: 1px solid var(--line); }
 .account-menu .theme-picker { width: 100%; }
 /* Inside the menu the palette list unfolds in place rather than floating
-   above a trigger that is now at the top of the screen. */
+   beside a trigger in a popover of its own. */
 .account-menu .theme-menu { position: static; max-height: min(40vh, 320px); margin: 2px 0 4px; box-shadow: none; }
 .account-item {
   display: flex; align-items: center; gap: 10px; width: 100%; padding: 6px 8px;
@@ -562,8 +767,8 @@ html[data-inspector="closed"] #inspector-toggle .label-show { display: inline; }
 .account-item:hover:not(:disabled), .account-item:focus-visible { background: var(--surface-hover); color: var(--ink); border-color: transparent; }
 .account-item svg { flex: none; color: var(--dimmer); }
 .account-item:hover svg, .account-item:focus-visible svg { color: var(--dim); }
-/* The workspace switcher (ADR 0009 phase 4a): first in the yard's top row,
-   its menu a native popover like the account menu, dropping down instead. */
+/* The workspace switcher (ADR 0009 phase 4a): in the top bar, its menu a
+   native popover like the account menu. */
 .workspace-switcher { flex: 1; min-width: 0; display: flex; align-items: center; gap: 2px; }
 .workspace-trigger { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; padding: 4px 6px; color: var(--ink); font-weight: 600; text-align: left; }
 .workspace-chevron { flex: none; margin-left: auto; color: var(--dimmer); }
@@ -586,12 +791,10 @@ html[data-inspector="closed"] #inspector-toggle .label-show { display: inline; }
 .workspace-menu small { color: var(--dimmer); font-size: 11px; }
 .new-workspace { display: grid; gap: 6px; padding: 6px 8px; }
 .new-workspace label { font-size: 12px; color: var(--dim); }
-html[data-yard="closed"] .workspace-trigger > :not(.workspace-mark) { display: none; }
 /* Before the first read answers: grey shapes where the switcher, rail rows
    and inbox cards will be, rather than text that claims anything. */
 .skeleton { display: block; border-radius: var(--radius); background: var(--line); animation: skeleton-pulse 1.4s ease-in-out infinite; }
 .workspace-trigger-skeleton { flex: 1; height: 28px; margin: 0 2px; }
-html[data-yard="closed"] .workspace-trigger-skeleton { flex: none; width: 28px; }
 .rail-row-skeleton { height: 14px; margin: 10px 8px; }
 .rail-row-skeleton:nth-child(odd) { width: 62%; }
 /* An inbox card's skeleton is a card's shape: the chip, project and age
@@ -637,97 +840,19 @@ html[data-yard="closed"] .workspace-trigger-skeleton { flex: none; width: 28px; 
 .workspace-github-actions { display: flex; align-items: center; gap: 12px; margin-bottom: 8px; }
 .workspace-github-actions a { display: inline-flex; align-items: center; gap: 6px; }
 .workspace-page h3 { margin: 12px 0 6px; font-size: 13px; }
-/* The x in the yard's corner and the scrim behind it exist only when the
-   yard has been forced over the page, which only `narrow` does. */
-.yard-close { display: none; margin-left: auto; }
-.yard-scrim { display: none; }
-
-/* The nav is a `.workspace-actions` row stood on end, so it is written after
-   that rule and takes its metrics back. */
-.yard-nav { display: flex; flex-direction: column; align-items: stretch; flex-wrap: nowrap; gap: 1px; padding: 2px 8px 10px; }
-#top-new-track { display: flex; align-items: center; justify-content: center; gap: 6px; margin-bottom: 6px; }
-.yard-nav a, .home-recent a { text-decoration: none; }
-/* Every row in the rail is lit by a tint on hover, never an underline, and
-   its focus ring is drawn inside it, so the scroller never clips it and it
-   never reaches past the rail's padding (RAV-96). */
-.yard a:hover { text-decoration: none; }
-.yard :is(button, a, [tabindex]):focus-visible { outline-offset: -2px; }
-.yard-item {
-  display: flex; align-items: center; gap: 10px; width: 100%; height: 30px; padding: 0 9px;
-  color: var(--dim); background: transparent; border: none; border-radius: 8px;
-  text-align: left; font-size: 13px;
-}
-.yard-item:hover:not(:disabled) { background: var(--surface-hover); color: var(--ink); border-color: transparent; }
-.yard-item.on { background: var(--surface-active); color: var(--ink); }
-.yard-item .ico { flex: none; width: 15px; display: grid; place-items: center; color: var(--dimmer); }
-.yard-item.on .ico, .yard-item:hover .ico { color: var(--dim); }
-/* Pressed, until the server answers the click: the row says it heard. */
-.yard-item.phx-click-loading { background: var(--surface-active); color: var(--ink); cursor: progress; }
+.home-recent a { text-decoration: none; }
 .badge { display: inline-grid; place-items: center; min-width: 21px; height: 23px; padding: 0 6px; border: 1px solid var(--line); border-radius: 999px; color: var(--dim); background: var(--surface); font-size: 11px; font-weight: 400; }
 
-/* In the rail a count sits inside its row, never taller than it (RAV-96). */
-.yard .badge { height: 18px; min-width: 18px; padding: 0 5px; line-height: 1; }
-
-.yard-footer { flex: none; padding: 8px; border-top: 1px solid var(--line); }
-.yard-footer .yard-account { width: 100%; }
-.yard-scroll { flex: 1; min-height: 0; overflow-y: auto; scrollbar-gutter: stable; padding: 10px 8px 12px; }
-.yard-label {
-  display: flex; align-items: center; justify-content: space-between;
-  padding: 6px 8px; color: var(--dimmer);
-  font-size: 10px; font-weight: 500; letter-spacing: 0.09em; text-transform: uppercase;
-}
-.yard-label .row { gap: 2px; }
-.yard-label button { padding: 2px; }
-
-/* A project is an item in the list, the same size as the nav's items; the
-   section it is filed under is the label above it. Its own actions sit at the
-   row's end: always on the open project, on hover or focus on the others
-   (and always where there is no hover to reveal them). */
-.workspace-project { padding: 1px 0; }
-.workspace-project-row { display: flex; align-items: center; gap: 2px; height: var(--rail-row); margin-left: var(--tree-indent, 0px); border-radius: var(--radius); }
-.workspace-project-row:hover { background: var(--surface-hover); }
-.workspace-project.current .workspace-project-row { background: var(--surface-active); }
-.workspace-project-name {
-  flex: 1; min-width: 0; min-height: var(--rail-row); display: flex; align-items: center; gap: 8px; padding: 0 6px;
-  color: var(--dim); text-decoration: none; border-radius: var(--radius); font-size: 13px; font-weight: 500;
-}
-.workspace-project-row:hover .workspace-project-name, .workspace-project-name.selected { color: var(--ink); }
-.workspace-project-name:hover, .account-item:hover { text-decoration: none; }
-.project-actions { flex: none; display: flex; align-items: center; gap: 1px; padding-right: 3px; }
-/* A project's actions sit edge to edge, giving its name back the 6px the
-   deeper indent under a heading takes (RAV-126). */
-.workspace-project-row > .project-action ~ .project-action { margin-left: -2px; }
-.project-action, .section-action {
-  flex: none; width: 22px; height: 22px; padding: 0; display: grid; place-items: center;
-  color: var(--dim); background: transparent; border: none; border-radius: var(--radius); text-decoration: none;
-}
-.project-action:hover:not(:disabled), .project-action:focus-visible, .section-action:hover, .section-action:focus-visible { color: var(--ink); background: var(--surface); border-color: transparent; }
-.project-action.on { color: var(--ink); background: var(--surface); }
-@media (hover: hover) {
-  .workspace-project .project-action[title="Project settings"],
-  .workspace-project .project-action[title="Plans"]:not(.on),
-  .workspace-project .project-action[title="More"] { opacity: 0; }
-  .workspace-project:has(.project-menu:popover-open) .project-action[title="More"] { opacity: 1; }
-  /* The open project's ⋯ holds its Settings (RAV-74), so it does not wait
-     for a hover. Its space was always there; only the icon appears. */
-  .workspace-project.current .project-action[title="More"] { opacity: 1; }
-  .workspace-project-row:hover .project-action, .workspace-project-row:focus-within .project-action { opacity: 1; }
-  .workspace-project:not(.current) .project-actions { opacity: 0; }
-  .workspace-project:hover .project-actions, .workspace-project:focus-within .project-actions { opacity: 1; }
-}
 .project-mark {
   flex: none; width: 18px; height: 18px; border-radius: 4px; display: grid; place-items: center;
   background: linear-gradient(135deg, var(--accent-soft), var(--surface)); border: 1px solid var(--line);
   font-size: 10px; color: var(--dim); font-weight: 600;
 }
 
-/* The rail that makes a list of tracks read as branches off one line. */
-.project-tracks { position: relative; margin-left: 17px; border-left: 1px solid var(--line); }
 .workspace-track {
   display: flex; gap: 8px; align-items: center; padding: 5px 8px 5px 26px; min-width: 0;
   color: var(--dim); text-decoration: none; border-radius: 8px;
 }
-.project-tracks .workspace-track { position: relative; margin-left: -17px; }
 .workspace-track .track-title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .workspace-track:hover { background: var(--surface-hover); }
 .workspace-track.selected { color: var(--ink); background: var(--surface-active); border-radius: 8px; }
@@ -736,7 +861,8 @@ html[data-yard="closed"] .workspace-trigger-skeleton { flex: none; width: 28px; 
 /* Status dots accompany track titles when there is activity to report. */
 .dot { flex: none; width: 6px; height: 6px; border-radius: 999px; background: var(--dimmer); }
 .dot.ready { background: var(--ok); }
-.dot.running, .dot.working { background: var(--accent); animation: pulse 1.4s ease-in-out infinite; }
+/* Working is green and idle blue, as Home's pills and the graph draw them. */
+.dot.running, .dot.working { background: var(--ok); animation: pulse 1.4s ease-in-out infinite; }
 .dot.opening, .dot.queued, .dot.starting, .dot.restarting { background: var(--warn); animation: pulse 1.4s ease-in-out infinite; }
 .dot.failed, .dot.setup_failed, .dot.error { background: var(--bad); }
 /* A track's machine (`Ravix.Tracks.MachineState`). Orange is provisioning,
@@ -745,7 +871,7 @@ html[data-yard="closed"] .workspace-trigger-skeleton { flex: none; width: 28px; 
    orange, asleep a hollow grey ring, idle a plain dot where a chip needs one. */
 .dot.closing { background: var(--warn); }
 .dot.asleep { background: transparent; box-shadow: inset 0 0 0 1.5px var(--dim); }
-.dot.idle { background: var(--dim); }
+.dot.idle { background: var(--accent); }
 .machine-chip { display: inline-flex; align-items: center; gap: 6px; }
 @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.32; } }
 
@@ -839,39 +965,54 @@ html[data-yard="closed"] .workspace-trigger-skeleton { flex: none; width: 28px; 
    shorter than its floor is marked by the server as not `.long` and never
    shrinks. Since RAV-82 the rest is Share, the ⋯ popover, and the machine
    chip only while its state is out of the ordinary, always in words. */
-.track-crumbs { flex-wrap: nowrap; }
-.track-header-path, .track-header-status { display: contents; }
-.track-crumbs > *, .track-header-path > *, .track-header-status > *, .track-plan-items > * { flex: none; }
-.track-crumbs > .spacer { flex: 1 1 0; min-width: 0; }
-.track-crumbs .project-crumb { max-width: 16rem; }
-.track-crumbs .project-crumb.long { flex: 0 1 auto; min-width: calc(25px + 12ch); }
-.track-crumbs .track-title-crumb { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.track-crumbs .track-title-crumb.long { flex: 0 1 auto; min-width: 17ch; }
+/* The track's head, as a pull request's: the title and its actions, a
+   status line, then the tabs. */
+.track-head { flex: none; display: flex; flex-direction: column; gap: 12px; padding: 24px 24px 0; background: var(--bg); }
+.track-head-title { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 12px; }
+.track-title { flex: 1 1 auto; display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; min-width: 0; margin: 0; font-size: 28px; font-weight: 600; line-height: 1.25; }
+.track-title-text { min-width: 0; overflow-wrap: anywhere; }
+.track-title-origin { color: var(--dim); font-weight: 400; }
+.track-head-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.track-head-actions > button, .track-head-actions > a.button { display: inline-flex; align-items: center; gap: 8px; min-height: 36px; padding: 0 14px; font-size: 14px; }
+.track-head-actions > a.button { border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel); color: var(--ink); text-decoration: none; }
+.track-head-status { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; color: var(--dim); font-size: 14px; }
+.track-head-status .machine-chip { padding: 4px 12px; border: 0; border-radius: 999px; background: var(--surface-active); color: var(--ink); font-weight: 600; font-size: 13px; }
+.track-head-status .machine-chip.machine-working { background: var(--ok); color: var(--bg); }
+.track-head-status .machine-chip.machine-working .dot { background: var(--bg); animation: none; }
+.track-head-status .machine-chip.machine-error { background: var(--bad); color: var(--bg); }
+.track-head-status .machine-chip.machine-error .dot { background: var(--bg); }
+.track-branch { color: var(--ink); max-width: 28ch; overflow: hidden; text-overflow: ellipsis; }
+.track-tabs { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 8px; border-bottom: 1px solid var(--line); }
+.track-tabs > button {
+  display: inline-flex; align-items: center; gap: 8px; padding: 10px 12px; margin-bottom: -1px;
+  border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: none; color: var(--dim); font-size: 14px;
+}
+.track-tabs > button:hover:not(:disabled) { color: var(--ink); background: none; }
+.track-tabs > button.on { color: var(--ink); font-weight: 600; border-bottom-color: var(--tab); }
+.track-tabs .count { padding: 0 8px; border: 1px solid var(--line); border-radius: 999px; color: var(--dim); font-size: 12px; font-weight: 400; }
 /* Label columns are `minmax(0, max-content)`: a grid's smallest width
    counts a column's minimum rather than its text, which is what lets a chip
    give way to its icon while a flex chip would stop at its longest word. */
-.track-crumbs .track-plan-chip {
+.track-head-status .track-plan-chip {
   display: inline-grid; grid-auto-flow: column; grid-template-columns: auto minmax(0, max-content);
   align-items: center; --label-gap: 5px; gap: var(--label-gap); flex: 0 1000000 auto; min-width: min-content; max-width: 18rem;
 }
-.track-crumbs .track-plan-toggle { grid-template-columns: auto minmax(0, max-content) auto auto; --label-gap: 4px; }
-.track-crumbs .track-plan-chip .truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.track-head-status .track-plan-toggle { grid-template-columns: auto minmax(0, max-content) auto auto; --label-gap: 4px; }
+.track-head-status .track-plan-chip .truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* HeaderFit's compact state: a label that would be cut is not drawn at
    all, so each chip is its icon, dot or count. Width, not `display`, so the
    hook can still read how wide each label would be. */
-.track-crumbs[data-compact] [data-fit-label] { max-width: 0; margin-left: calc(-1 * var(--label-gap)); }
-.track-crumbs[data-compact] .track-plan-sep { display: none; }
 /* RAV-42: the preview's state, and the way to its tab. A chip like the
    plan's: it gives way to its dot or globe before the title does. Ready is
    the dot alone in colour; pending and stopped are dim; failed is bad. */
-.track-crumbs .track-preview {
+.track-head-status .track-preview {
   display: inline-grid; grid-auto-flow: column; grid-template-columns: auto minmax(0, max-content);
   align-items: center; --label-gap: 6px; gap: var(--label-gap); flex: 0 1000000 auto; min-width: min-content;
   font-size: 12px; min-height: 24px;
 }
-.track-crumbs .track-preview .chip-label { overflow: hidden; white-space: nowrap; }
-.track-crumbs .track-preview:is(.preview-pending, .preview-stopped) { color: var(--dim); }
-.track-crumbs .track-preview.preview-failed { color: var(--bad); }
+.track-head-status .track-preview .chip-label { overflow: hidden; white-space: nowrap; }
+.track-head-status .track-preview:is(.preview-pending, .preview-stopped) { color: var(--dim); }
+.track-head-status .track-preview.preview-failed { color: var(--bad); }
 /* Who is here, on Share: faces overlapping to the left, as a stack. */
 .track-share { gap: 6px; }
 .track-viewers { display: inline-flex; align-items: center; padding-left: 4px; }
@@ -952,29 +1093,54 @@ html[data-yard="closed"] .workspace-trigger-skeleton { flex: none; width: 28px; 
 .workspace-turn .md { font-size: 15px; line-height: 1.6; --md-gap: 14px; }
 .agent-terminal .md { max-width: 80ch; }
 
-/* A person's message sits at the right as a bubble, the agent's reply at
-   the left as the page itself, so who said what reads from the layout
-   alone. The name stays above the bubble: a shared track has several. */
-.workspace-turn { display: flex; flex-direction: column; }
-.said { display: flex; flex-direction: column; align-items: flex-end; align-self: flex-end; max-width: 80%; min-width: 0; gap: 2px; margin-bottom: 14px; }
-.speaker { font-size: 11.5px; color: var(--dimmer); }
-/* The prompt is markdown (`RavixWeb.Markdown`, newlines kept as breaks).
-   The bubble is as wide as what it holds (RAV-93), so "Thanks" is a short
-   bubble; `max-width` holds it to its column however long a code line is:
-   the fence scrolls sideways inside it rather than widening it. */
+/* Each turn reads as two cards, as comments on a pull request do: the
+   person's message, with their initials and a grey header naming them, and
+   the agent's reply under an "Agent" header. The name stays above the text:
+   a shared track has several speakers. */
+.workspace-turn { display: flex; flex-direction: column; gap: 16px; }
+.said {
+  display: grid; grid-template-columns: 32px minmax(0, 1fr); grid-template-rows: auto auto; column-gap: 12px;
+  min-width: 0; margin: 0;
+}
+.said > :not(.said-avatar) { grid-column: 2; }
+.said-avatar {
+  grid-row: 1 / span 9; width: 32px; height: 32px; border-radius: 50%; display: grid; place-items: center;
+  background: var(--accent-soft); color: var(--accent-ink); font-size: 12px; font-weight: 700;
+}
+.speaker {
+  padding: 8px 14px; color: var(--dim); font-size: 13px; font-weight: 600;
+  background: var(--panel); border: 1px solid var(--line); border-bottom: 0; border-radius: 10px 10px 0 0;
+}
+.said > .chip { justify-self: start; margin: 6px 0; }
+/* The prompt is markdown (`RavixWeb.Markdown`, newlines kept as breaks);
+   a long code line scrolls sideways inside it rather than widening it. */
 .workspace-prompt {
-  width: fit-content; padding: 8px 12px; margin: 0; max-width: 100%; min-width: 0; color: var(--ink);
-  background: color-mix(in srgb, var(--accent) 8%, var(--surface));
-  border: 1px solid color-mix(in srgb, var(--accent) 14%, var(--line));
-  border-radius: 8px;
+  padding: 14px; margin: 0; min-width: 0; color: var(--ink); background: var(--bg);
+  border: 1px solid var(--line); border-radius: 0 0 10px 10px;
 }
 .workspace-prompt pre, .queue-prompt pre { white-space: pre; overflow-wrap: normal; overflow-x: auto; }
-.prompt-images { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; max-width: 100%; margin-top: 6px; }
+.prompt-images { display: flex; flex-wrap: wrap; gap: 8px; max-width: 100%; margin-top: 8px; }
 .prompt-images a { display: block; max-width: 100%; border-radius: 8px; overflow: hidden; border: 1px solid var(--line); background: var(--surface); }
 .prompt-images img { display: block; max-width: 100%; object-fit: contain; }
 
-.agent-terminal { min-width: 0; line-height: 1.6; }
-.agent-terminal-output { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.agent-terminal {
+  position: relative; min-width: 0; line-height: 1.6; margin-left: 44px;
+  border: 1px solid var(--line); border-radius: 10px; background: var(--bg);
+}
+/* The agent's mark, in the avatar column, and its card's header. Drawn,
+   not written: the section is already named "Agent output". */
+.agent-terminal::before {
+  content: ""; position: absolute; left: -44px; top: 0; width: 32px; height: 32px; border-radius: 50%;
+  background: var(--ink);
+}
+.agent-terminal::after {
+  content: "Agent"; position: absolute; left: 0; right: 0; top: 0; height: 36px; box-sizing: border-box;
+  padding: 8px 14px; color: var(--ink); font-size: 13px; font-weight: 600;
+  background: var(--panel); border-bottom: 1px solid var(--line); border-radius: 10px 10px 0 0;
+}
+.agent-terminal-output { display: flex; flex-direction: column; gap: 6px; min-width: 0; padding: 50px 14px 14px; }
+/* A turn's footer and its queued and failed notes line up with the cards. */
+.workspace-turn > :not(.said):not(.agent-terminal) { margin-left: 44px; }
 
 /* Under a finished turn: a copy of the answer and the ⋯ menu, how long,
    when, and the files it touched. Quiet until pointed at. A running turn's
@@ -1248,11 +1414,13 @@ html[data-yard="closed"] .workspace-trigger-skeleton { flex: none; width: 28px; 
   height: 18px; margin: 0; font-size: 12px; line-height: 18px; pointer-events: none;
   overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
 }
+/* A card like the turns above it: white, a hairline, the controls along
+   its foot. */
 .composer-box {
-  border: 1px solid var(--line-strong); border-radius: 12px; background: var(--panel);
+  border: 1px solid var(--line); border-radius: 10px; background: var(--bg);
   transition: border-color 80ms ease;
 }
-.composer-box:focus-within { border-color: var(--dimmer); box-shadow: none; }
+.composer-box:focus-within { border-color: var(--accent-line); box-shadow: none; }
 /* The textarea grows with its content up to a ceiling; the `Composer` hook
    sets the height, and `resize: none` keeps the grip out of the way. */
 .composer-box textarea {
@@ -1508,6 +1676,9 @@ html[data-yard="closed"] .workspace-trigger-skeleton { flex: none; width: 28px; 
   mask-image: linear-gradient(to right, transparent, black 28px, black calc(100% - 28px), transparent);
 }
 .thread-picker { display: none; min-width: 0; flex: 1; }
+/* The dashed New thread is the vertical list's; across a phone's strip the
+   "+" menu stays. */
+.thread-new { display: none; }
 .thread-picker select { width: 100%; min-width: 0; }
 .thread-tabs button {
   flex: none; display: inline-flex; align-items: center; gap: 6px;
@@ -1577,6 +1748,42 @@ html[data-yard="closed"] .workspace-trigger-skeleton { flex: none; width: 28px; 
   .thread-rename { position: static; flex: 1; width: auto; height: auto; }
 }
 @media (max-width: 760px) { .thread-tabs { padding-inline: 12px; } }
+
+/* Beside the conversation, from 761px up, the threads stand on end, the way
+   a pull request lists its conversations: each one's name, and under it its
+   state and agent. They share the track's branch and checkout, so the list
+   is always there, even with one thread. On a phone they lie across the top
+   again, as tabs. */
+.track-thread-body { display: flex; flex: 1; flex-direction: column; min-width: 0; min-height: 0; }
+.thread-tab-text { display: flex; min-width: 0; }
+.thread-tab-meta { display: none; }
+@media (min-width: 761px) {
+  .track-conversation { flex-direction: row; }
+  .thread-tabs {
+    flex-direction: column; align-items: stretch; flex: 0 0 220px; width: 220px; gap: 4px;
+    padding: 10px 8px; border-bottom: 0; border-right: 1px solid var(--line); overflow-y: auto;
+  }
+  .thread-tablist { flex-direction: column; flex: none; overflow: visible; padding: 0; }
+  .thread-tabs[data-overflow] .thread-tablist { mask-image: none; }
+  .thread-tabs[data-overflow] .thread-scroll { display: none; }
+  .thread-tab {
+    max-width: none; height: auto; min-height: 44px; padding: 6px 10px 6px 12px;
+    align-items: center; border-radius: var(--radius); text-align: left;
+  }
+  .thread-tab::after { left: 0; right: auto; top: 8px; bottom: 8px; width: 2px; height: auto; border-radius: 2px; }
+  .thread-tab[aria-selected="true"],
+  .thread-tab[aria-selected="true"]:hover:not(:disabled) { background: var(--surface-active); }
+  .thread-tab-text { flex: 1; flex-direction: column; gap: 1px; }
+  .thread-tab-meta { display: block; color: var(--dim); font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .thread-tabs .thread-more { margin-left: 0; }
+  .thread-tabs .thread-add, .thread-tabs .thread-more { align-self: flex-start; }
+  .thread-tabs .thread-new {
+    display: flex; align-items: center; gap: 8px; height: 40px; margin-top: 6px; padding: 0 12px;
+    border: 1px dashed var(--line); border-radius: var(--radius); background: var(--bg); color: var(--dim); font-size: 14px;
+  }
+  .thread-tabs .thread-new:hover:not(:disabled) { color: var(--ink); border-color: var(--line-strong); background: var(--bg); }
+  .threads-working { padding: 4px 2px; }
+}
 
 /* ── the inspector: files, changes, checks, preview ────────────────────── */
 
@@ -1835,6 +2042,8 @@ html[data-yard="closed"] .workspace-trigger-skeleton { flex: none; width: 28px; 
   padding: 10px 14px; color: var(--ink); text-decoration: none;
 }
 .recent-row:hover { background: var(--surface-hover); color: var(--ink); text-decoration: none; }
+/* `--dimmer` on a lit row falls under 4.5:1 in the paler palettes. */
+.recent-row:hover .track-age { color: var(--dim); }
 .recent-row:focus-visible { outline-offset: -2px; }
 .recent-main { display: grid; gap: 2px; min-width: 0; }
 .recent-main strong { font-weight: 500; }
@@ -2218,8 +2427,8 @@ section.first-prompt#project-start { align-self: center; padding: 32px 24px; }
   display: inline-flex; align-items: center; gap: 6px; padding: 5px 10px; border: 1px solid var(--line);
   border-radius: var(--radius); text-decoration: none;
 }
-.page-actions > a.button.primary { background: var(--accent-soft); border-color: var(--accent-line); color: var(--accent-ink); }
-.page-actions > a.button.primary:hover { background: color-mix(in srgb, var(--accent-soft) 80%, var(--accent)); }
+.page-actions > a.button.primary { background: var(--primary-bg, var(--accent-soft)); border-color: var(--primary-line, var(--accent-line)); color: var(--primary-ink, var(--accent-ink)); }
+.page-actions > a.button.primary:hover { background: var(--primary-hover, color-mix(in srgb, var(--accent-soft) 80%, var(--accent))); }
 .page-actions > button { display: inline-flex; align-items: center; gap: 6px; }
 
 /* ── the inbox: cross-project attention feed ───────────────────────────── */
@@ -2262,8 +2471,7 @@ section.first-prompt#project-start { align-self: center; padding: 32px 24px; }
 /* The runtime toggles `hidden` on elements it shows and hides (`JS.show`,
    `JS.hide`, and the `hidden` attribute LiveView renders itself). The user
    agent's `[hidden] { display: none }` loses to any author rule that sets
-   `display` on the same element — `.toast`, `.workspace-mobile-nav` and the
-   dock all do — so this `!important` is how an attribute outranks every class
+   `display` on the same element — `.toast` and the dock both do — so this `!important` is how an attribute outranks every class
    rule at once. The home wordmark is the other: its size is an inline style. */
 [hidden] { display: none !important; }
 
@@ -2300,7 +2508,6 @@ section.first-prompt#project-start { align-self: center; padding: 32px 24px; }
 .scroll.unpinned .jump-latest, .transcript-scroll.unpinned .jump-latest { display: flex; }
 
 /* The mobile nav only exists once the rail is gone; see `narrow`. */
-.workspace-mobile-nav { display: none; }
 
 /* ── narrow ────────────────────────────────────────────────────────────────
    Three breakpoints, and every responsive rule in the file is under one of
@@ -2320,94 +2527,25 @@ section.first-prompt#project-start { align-self: center; padding: 32px 24px; }
    stacked something, which is never wrong to do a little earlier.
 
    Collapsing is the exception that faces the other way. It only applies
-   while that panel is still a sidebar: the yard from 761px up, the inspector
-   from 1101px up. Narrower than that, the existing blocks already replace
+   while that panel is still a sidebar: the inspector from 1101px up. Narrower than that, the existing blocks already replace
    each of them, and the toggle is hidden so a reader cannot close a panel
    they would then have no way to open. */
 
-@media (min-width: 761px) {
-  html[data-yard="closed"] .app { grid-template-columns: 44px minmax(0, 1fr); }
-  html[data-yard="closed"] .yard > :not(.yard-top) { display: none; }
-  html[data-yard="closed"] .yard-account { display: none; }
-  html[data-yard="closed"] .yard-top { flex-direction: column; justify-content: center; padding: 8px 4px; }
-  html[data-yard="closed"] #yard-resize { display: none; }
-}
-
-@media (min-width: 1101px) {
-  /* `100%` is the stage, the same horizontal room the split used to fill.
-     The margin and the pinned panel share it, including when the rail is
-     closed down to the toggle. The track list lives in the yard now, so the
-     stage's content column is the tab panel, not a sibling of the inspector. */
-  .stage { --inspector-span: clamp(280px, var(--inspector-width, max(340px, 30vw)), min(800px, calc(100% - 420px))); }
-  .stage:has(.inspector) > .workspace-tabpanel { margin-right: var(--inspector-span); overflow: visible; }
-  /* Those ancestors clip overflow so their own scroller can shrink. The
-     inspector is positioned against the stage, past the crumbs, and would
-     be cut off at the tab panel if they kept clipping it. */
-  .stage:has(.inspector) :is(.workspace-track-host, .workspace-track-host > div, .track-workspace, .track-workspace-body) { overflow: visible; }
-  .stage:has(.inspector) .inspector {
-    position: absolute; top: 0; right: 0; bottom: 0; z-index: 2;
-    width: var(--inspector-span);
-  }
-  .split:has(.inspector) { grid-template-columns: minmax(0, 1fr); }
-  /* One file's diff wants room: while one is open the inspector takes about
-     half the stage, or more if it was already dragged wider, and still
-     leaves the conversation its 420px. Closing the diff gives it back. */
-  .stage:has(.inspector.diff-open) {
-    --inspector-span: min(max(clamp(280px, var(--inspector-width, max(340px, 30vw)), min(800px, calc(100% - 420px))), 50%), calc(100% - 420px));
-  }
-  html[data-inspector="closed"] .stage:has(.inspector) { --inspector-span: 44px; }
-  html[data-inspector="closed"] #inspector { align-items: center; }
-  html[data-inspector="closed"] #inspector > :not(.workspace-tabs) { display: none; }
-  html[data-inspector="closed"] #inspector .workspace-tabs {
-    justify-content: center; width: 100%; padding: 8px 4px; border-bottom: 0;
-  }
-  html[data-inspector="closed"] #inspector .workspace-tabs > :not(#inspector-toggle) { display: none; }
-}
-
-@media (max-width: 1100px) {
-  .app { grid-template-columns: clamp(220px, var(--yard-width, var(--rail)), min(480px, calc(100vw - 420px))) minmax(0, 1fr); }
-  .panel-resize-handle.right { display: none; }
-  #inspector-toggle { display: none; }
-  .split { display: flex; flex-direction: column; overflow: auto; }
-  .inspector { width: 100%; min-height: 560px; border-top: 1px solid var(--line); }
-  .track-conversation { min-height: 65vh; }
-}
 
 @media (max-width: 760px) {
-  .track-view-switch.workspace-tabs { display: flex; flex: none; }
-  .track-workspace-body > .split { overflow: hidden; }
-  .track-conversation { min-height: 0; }
-  .inspector { min-height: 0; flex: 1; border-left: 0; }
-  [data-narrow-view="conversation"] .inspector,
-  [data-narrow-view="files"] .track-conversation,
-  [data-narrow-view="terminal"] .track-conversation,
-  [data-narrow-view="files"] .machine-dock-host,
-  [data-narrow-view="terminal"] .inspector > .workspace-tabs,
-  [data-narrow-view="terminal"] .workspace-panel { display: none; }
-  [data-narrow-view="terminal"] .machine-dock-host { display: flex; flex: 1; flex-direction: column; min-height: 0; }
-  [data-narrow-view="terminal"] .machine-dock { flex: 1; height: auto; }
-  [data-narrow-view="terminal"] .dock-toggle { display: none; }
+  .track-head { padding: 16px 12px 0; }
+  .track-title { font-size: 22px; }
   .panel-resize-handle { display: none; }
-  #yard-toggle { display: none; }
-  .app { grid-template-columns: 1fr; }
-  .yard { display: none; }
-  .yard.forced { display: flex; position: fixed; inset: 0 auto 0 0; width: var(--rail); z-index: 30; box-shadow: 0 12px 40px var(--shadow); }
-  .yard.forced .yard-close { display: inline-flex; }
-  .yard-scrim { display: block; position: fixed; inset: 0; z-index: 29; background: var(--scrim); animation: fade 120ms ease; }
-  .workspace-mobile-nav .yard-menu { display: inline-flex; align-items: center; gap: 4px; }
-  .workspace-mobile-nav { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; padding: 10px; border-bottom: 1px solid var(--line); }
-  .workspace-mobile-nav > :is(a, button) { display: inline-flex; align-items: center; padding: 6px 10px; border: 1px solid transparent; border-radius: var(--radius); color: var(--dim); white-space: nowrap; }
-  .workspace-mobile-nav a:hover { color: var(--ink); background: var(--surface-hover); }
-  /* RAV-37: New track, the phone's create action, looks like the sidebar's;
-     it is the one on screen, so Home's own is not repeated under it. */
-  .workspace-mobile-nav > button.primary { gap: 4px; background: var(--accent-soft); border-color: var(--accent-line); color: var(--accent-ink); }
-  #home-new-track { display: none; }
-  .workspace-mobile-nav a[aria-current="page"] { color: var(--ink); background: var(--surface-active); border-color: var(--line-strong); font-weight: 600; }
+  /* A phone's top bar keeps search and New track; the nav wraps under
+     them, and the workspace's name gives way to its mark. */
+  .topbar { padding: 8px 12px; gap: 8px; }
+  .topbar-search { flex: 1 1 120px; }
+  .topbar-search kbd, .topbar .workspace-trigger > :not(.workspace-mark) { display: none; }
+  .topbar-workspace { font-size: 0; gap: 0; padding: 0 6px; }
+  .topbar .workspace-switcher { flex: none; }
+  .topbar-nav { order: 10; width: 100%; overflow-x: auto; flex-wrap: nowrap; }
   .crumbs { flex-wrap: wrap; row-gap: 6px; height: auto; min-height: 44px; padding: 8px 12px; }
   /* A phone has no room for the desktop floors; the same order holds. */
-  .track-crumbs { flex-wrap: nowrap; }
-  .track-crumbs .project-crumb.long { min-width: calc(25px + 4ch); }
-  .track-crumbs .track-title-crumb.long { min-width: 8ch; }
   .workspace-welcome { padding: 24px; }
   .said { max-width: 100%; }
   .transcript-scroll { padding-inline: 12px; }
@@ -2436,7 +2574,7 @@ section.first-prompt#project-start { align-self: center; padding: 32px 24px; }
 
 @media (prefers-reduced-motion: reduce) {
   .dot.running, .dot.opening, .dot.queued, .dot.working, .dot.starting, .dot.restarting { animation: none; }
-  .toast, .live-disconnected, .scrim, .yard-scrim, .share-popover { animation: none; }
+  .toast, .live-disconnected, .scrim, .share-popover { animation: none; }
 }
 
 /* Desktop tooling instructions stay readable inside the shared dialog shell. */
@@ -2659,49 +2797,13 @@ body:has(.phx-error) #request-progress { display: none; }
 @keyframes request-spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .loading-spinner { animation: none; } }
 
-/* Personal project sections in the sidebar. */
-/* A section's name is a group label: small, quiet, above its projects. The
-   unsectioned group is last and has a label only beside named sections. It
-   remains a drop target for moving a project out of its section. */
-.project-section + .project-section { margin-top: 6px; }
-.section-label { display: flex; align-items: center; min-width: 0; }
-.section-toggle, .section-name {
-  display: flex; align-items: center; gap: 6px; width: 100%; min-width: 0; padding: 4px 6px;
-  color: var(--dimmer); background: transparent; border: none; text-align: left;
-  font-size: 10.5px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase;
-}
-.section-name { padding-left: 24px; }
-.section-toggle:hover:not(:disabled) { color: var(--dim); background: transparent; border-color: transparent; }
-.section-toggle .truncate { flex: 1; }
-.section-toggle .dim { font-weight: 400; font-variant-numeric: tabular-nums; }
-/* Under a heading, a project steps in so its chevron sits under the first
-   letter of the heading's label (RAV-126): the label starts 24px in (6px
-   padding, 12px chevron, 6px gap) and the project's 12px chevron is centred
-   in a 24px button, so 18px. The row itself steps in, so its hover and
-   selected fill start at its level; its tracks move with it
-   (`.project-tree-tracks`). The empty line's words start where a project's
-   name would. Without a heading there is nothing to step in from. */
-.project-section.labelled { --tree-indent: 18px; }
-.section-empty { margin: 0; padding: 2px 6px 4px calc(32px + var(--tree-indent, 0px)); font-size: 12px; }
 .project-section-picker { display: flex; align-items: center; gap: 8px; padding: 4px 0; }
 .project-section-picker label { flex: 1; min-width: 0; }
 .project-section-picker select { flex: 1; min-width: 0; padding: 4px; }
-.workspace-project[draggable="true"] { cursor: grab; }
-.workspace-project.dragging { opacity: 0.5; }
-.project-section.drop-target { border-radius: var(--radius); background: var(--accent-soft); outline: 1px dashed var(--accent-line); outline-offset: -1px; }
 .section-editor { margin-top: 16px; }
 
-/* Project tracks share the sidebar's native vertical scrolling and mobile drawer. */
-.track-tab { display: flex; flex: none; align-items: center; gap: 8px; min-width: 0; padding: 6px 10px; white-space: nowrap; color: var(--dim); text-decoration: none; border-radius: 8px; border-bottom: 0; }
 .workspace-tabpanel { display: flex; flex: 1; flex-direction: column; min-height: 0; min-width: 0; overflow: hidden; }
-.track-tab:hover { background: var(--surface-hover); }
-.track-tab.selected { color: var(--ink); background: var(--surface-active); border-radius: 8px; }
-.track-tab:focus-visible { outline-offset: -2px; }
-.track-tab .track-title { position: relative; overflow: hidden; text-overflow: ellipsis; }
 /* A reply waiting to be read: still, where working pulses. */
-.track-tab .dot { width: 7px; height: 7px; }
-/* The dot's slot keeps its width when empty, so avatars form one column. */
-.track-status { flex: none; display: grid; place-items: center; width: 7px; height: 7px; }
 .dot.unread { background: var(--accent); }
 .dot.commented { background: var(--warn); }
 
@@ -2722,9 +2824,9 @@ body:has(.phx-error) #request-progress { display: none; }
 
 /* Assigned plan material is one header chip until the reader opens it; the
    items open in a panel hung from the header, over the transcript. */
-.track-crumbs { position: relative; }
+.track-head { position: relative; }
 .track-plan-items { display: contents; }
-.track-crumbs .track-plan-toggle { cursor: pointer; font: inherit; font-size: 12px; min-height: 24px; }
+.track-head-status .track-plan-toggle { cursor: pointer; font: inherit; font-size: 12px; min-height: 24px; }
 .track-plan-count { flex: none; color: var(--dim); }
 .track-plan-popover {
   position: absolute; top: 100%; left: 12px; z-index: 30; width: min(32rem, calc(100% - 24px));
@@ -2744,7 +2846,7 @@ body:has(.phx-error) #request-progress { display: none; }
 .track-plan-detail { padding: .65rem; font-size: .8rem; overflow-wrap: anywhere; background: var(--panel); border-left: 2px solid var(--line-strong); }
 .track-plan-detail textarea { display: block; width: 100%; margin: .4rem 0; }
 @media (max-width: 600px) {
-  .track-crumbs .track-plan-chip { max-width: 9rem; }
+  .track-head-status .track-plan-chip { max-width: 9rem; }
   .track-plan-popover { left: 8px; width: calc(100% - 16px); max-height: 70vh; }
   .track-plan-summary { padding: .4rem .5rem; }
   .track-plan-list { padding: .25rem .5rem .4rem; }
@@ -2862,57 +2964,18 @@ body:has(.phx-error) #request-progress { display: none; }
 
 .workspace-system-card { padding: 12px 16px; border: 1px solid var(--line); border-radius: 8px; margin: 12px 0; }
 
-/* A single project picker serves the desktop rail and narrow navigation. */
-
-/* The rail shares one tree on desktop and in the mobile menu. */
-/* A quiet guide (RAV-126) runs down from an open project's chevron beside
-   its tracks, so they read as that project's even when several are open. */
-.project-tree-tracks { position: relative; display: flex; flex-direction: column; gap: 1px; padding: 1px 0 4px calc(24px + var(--tree-indent, 0px)); min-width: 0; }
-.project-tree-tracks::before {
-  content: ""; position: absolute; top: 0; bottom: 4px; left: calc(var(--tree-indent, 0px) + 11.5px); width: 1px;
-  background: var(--line); pointer-events: none;
-}
-.project-tree-tracks[hidden] { display: none; }
-/* One height and one inset for every row (RAV-96), so a list of tracks, a
-   hint and the closed list below keep the project rows' beat. */
-.project-tree-tracks .track-tab { min-width: 0; height: var(--rail-row); padding: 0 8px; font-size: 13px; }
-.project-tree-tracks .hint { margin: 0; padding: 0 8px; line-height: var(--rail-row); font-size: 12px; }
 /* Who made each track: their GitHub avatar, or initials when there is none. */
 .track-creator {
   flex: none; width: 16px; height: 16px; border-radius: 50%; overflow: hidden; display: grid; place-items: center;
   font-size: 8px; font-weight: 600; line-height: 1; color: var(--ink); background: var(--surface-active);
 }
 .track-creator img { width: 100%; height: 100%; object-fit: cover; }
-/* One creator for every track shown: an avatar per row would say nothing
-   (RAV-96). Each row's name still says who created it. */
-#project-tree[data-one-creator] .track-creator { display: none; }
 /* How long since the track last did anything. It never shrinks: at the
    narrowest rail the title truncates first. */
 .track-age { flex: none; color: var(--dim); font-size: 11px; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .workspace-track.selected .track-age { color: inherit; }
-/* A row's end: its age, or a spinner while the agent takes a turn. One
-   width for both, so titles end together and nothing shifts as a turn
-   starts or stops. */
-.track-meta { flex: none; display: flex; align-items: center; justify-content: flex-end; min-width: 3.2ch; margin-left: auto; }
-.track-spinner { width: 11px; height: 11px; border-width: 1.5px; color: var(--accent); }
 .track-private { flex: none; display: inline-flex; align-items: center; color: var(--dim); }
-.rail-scope { display: flex; gap: 2px; margin: 0 8px 6px; padding: 2px; background: var(--surface); border-radius: var(--radius); }
-.rail-scope button { flex: 1; padding: 2px 8px; font-size: 12px; border: none; border-radius: var(--radius); }
-/* Selected by its fill and a hairline, not a shadow that reads as a focus ring (RAV-98). */
-.rail-scope button.on { color: var(--ink); background: var(--panel); box-shadow: inset 0 0 0 1px var(--line); }
-.project-menu { bottom: auto; top: 64px; width: min(220px, calc(100vw - 16px)); }
-@supports (position-area: bottom) {
-  .project-menu { top: auto; position-area: bottom span-left; margin-top: 4px; }
-}
 .menu-check { flex: none; width: 14px; height: 14px; display: grid; place-items: center; }
-/* Closed tracks are listed to be found and reopened, not worked in. */
-.closed-tracks .section-label { margin: 0; padding: 0 8px; line-height: var(--rail-row); color: var(--dim); }
-.closed-tracks ul { display: flex; flex-direction: column; gap: 1px; list-style: none; margin: 0; padding: 0; }
-.closed-track { display: flex; align-items: center; gap: 8px; min-width: 0; min-height: var(--rail-row); padding: 0 8px; color: var(--dim); font-size: 13px; }
-.closed-track .track-title { flex: 1; min-width: 0; }
-.closed-track .track-creator { opacity: 0.7; }
-.closed-track button { flex: none; padding: 1px 6px; font-size: 12px; }
-.project-collapse { flex: 0 0 24px; height: 24px; padding: 0; display: grid; place-items: center; }
 /* A disclosure points right when collapsed and down when expanded; the
    button's own `aria-expanded` turns it, whoever last set it. */
 [aria-expanded="true"] > .disclosure-chevron { transform: rotate(90deg); }
@@ -3026,7 +3089,6 @@ body:has(.phx-error) #request-progress { display: none; }
    shared tooltip. */
 .workspace-gear { position: relative; display: inline-flex; align-items: center; justify-content: center; flex: none; width: 28px; height: 28px; padding: 0; border-radius: 6px; color: var(--dim); }
 .workspace-gear:hover, .workspace-gear:focus-visible { background: var(--surface-hover); color: var(--ink); }
-html[data-yard="closed"] .workspace-gear { display: none; }
 
 @media (max-width: 760px) {
   .settings-page { padding: 18px 18px 0; }
@@ -3037,6 +3099,222 @@ html[data-yard="closed"] .workspace-gear { display: none; }
   .settings-group.danger { padding-top: 0; border-top: none; }
   .settings-link { white-space: nowrap; }
 }
+
+/* ── repository-style pages ────────────────────────────────────────────────
+   Home lists projects the way an account lists repositories, and a project's
+   page reads like a repository's: a title, tabs, and its tracks as a branch
+   graph or a list (`RavixWeb.Live.HomeProjects`, `RavixWeb.Live.ProjectTracks`). */
+
+.segmented { display: inline-flex; border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
+.segmented > button { display: inline-flex; align-items: center; gap: 6px; border: 0; border-radius: 0; }
+.segmented > button + button { border-left: 1px solid var(--line); }
+.segmented > button.on { background: var(--surface-active); color: var(--ink); }
+
+.workspace-home .stage-page-inner { max-width: 1360px; }
+/* Home, as a code host's dashboard: a column flush with the window's left
+   edge and as tall as it (whose workspace, its sections, the open tracks),
+   then the projects with room around them, then what needs you. Each column
+   scrolls on its own. */
+.home-dashboard { flex: 1; min-height: 0; display: flex; align-items: stretch; width: 100%; box-sizing: border-box; overflow: hidden; }
+.home-side {
+  flex: 0 0 320px; display: flex; flex-direction: column; gap: 20px; min-height: 0; overflow-y: auto;
+  padding: 24px 20px; box-sizing: border-box; background: var(--panel); border-right: 1px solid var(--line);
+}
+.home-main { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 16px; overflow-y: auto; padding: 32px 40px; box-sizing: border-box; }
+.home-main > * { width: 100%; max-width: 960px; }
+.home-activity { flex: 0 0 340px; display: flex; flex-direction: column; gap: 20px; overflow-y: auto; padding: 32px 24px 32px 0; box-sizing: border-box; }
+.home-active { display: flex; flex-direction: column; gap: 4px; padding-top: 16px; border-top: 1px solid var(--line); }
+.home-active-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+.home-active-row { display: flex; align-items: flex-start; gap: 10px; padding: 8px 10px; border-radius: var(--radius); color: var(--ink); text-decoration: none; }
+.home-active-row:hover { background: var(--surface-hover); text-decoration: none; }
+.home-active-row > .dot { width: 10px; height: 10px; margin-top: 5px; flex: none; }
+.home-active .hint { margin: 0; padding: 0 10px; font-size: 13px; }
+@media (max-width: 1100px) {
+  .home-dashboard { flex-wrap: wrap; overflow-y: auto; align-content: flex-start; }
+  .home-side { flex: 1 1 100%; border-right: 0; border-bottom: 1px solid var(--line); overflow: visible; }
+  .home-main, .home-activity { flex: 1 1 100%; overflow: visible; padding: 24px; }
+}
+.home-who { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.home-who-mark { flex: none; width: 48px; height: 48px; border-radius: 12px; display: grid; place-items: center; background: var(--accent); color: var(--bg); font-size: 22px; font-weight: 700; }
+.home-who-text { display: flex; flex-direction: column; min-width: 0; }
+.home-who-text strong { font-size: 16px; font-weight: 700; }
+.home-who-text small { color: var(--dim); font-size: 13px; }
+.home-sections { display: flex; flex-direction: column; gap: 4px; padding-top: 16px; border-top: 1px solid var(--line); }
+.home-label { margin: 0; padding: 0 8px 6px; color: var(--dim); font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; }
+.home-section {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px; width: 100%; min-height: 36px; padding: 0 10px;
+  color: var(--ink); background: transparent; border: 0; border-radius: var(--radius); text-align: left; font-size: 14px;
+}
+.home-section small { color: var(--dim); font-size: 12px; }
+.home-section:hover:not(:disabled) { background: var(--surface-hover); border-color: transparent; }
+.home-section.on { background: var(--surface-active); font-weight: 600; }
+.home-section-add { justify-content: flex-start; color: var(--dim); }
+.home-side .segmented { align-self: flex-start; }
+.home-start { display: flex; flex-direction: column; gap: 16px; max-width: 720px; }
+.home-start h1 { margin: 0; font-size: 22px; font-weight: 600; }
+.home-start-lede { margin: 0; color: var(--dim); }
+.home-projects-head { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
+.home-projects-head h1 { flex: 1 1 auto; margin: 0; font-size: 22px; font-weight: 600; }
+.home-projects-head button { display: inline-flex; align-items: center; gap: 8px; min-height: 36px; padding: 0 14px; font-size: 14px; }
+.home-project-list { list-style: none; margin: 0; padding: 0; border: 1px solid var(--line); border-radius: 12px; background: var(--bg); overflow: hidden; }
+.home-project { display: flex; flex-wrap: wrap; gap: 16px 24px; padding: 18px 20px; }
+.home-project + .home-project { border-top: 1px solid var(--line); }
+.home-project-main { flex: 1 1 340px; min-width: 0; display: flex; flex-direction: column; gap: 8px; }
+.home-project-title { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-width: 0; color: var(--dim); }
+.home-project-name { color: var(--accent); font-size: 17px; font-weight: 600; text-decoration: none; min-width: 0; }
+.home-project-name:hover { text-decoration: underline; }
+.home-project-meta { display: flex; flex-wrap: wrap; gap: 16px; color: var(--dim); font-size: 13px; }
+.home-project-agent { display: inline-flex; align-items: center; gap: 6px; }
+.home-agent-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--accent); }
+.home-project-lanes { flex: 0 1 260px; display: flex; flex-direction: column; justify-content: center; gap: 8px; color: var(--dim); font-size: 12px; }
+.home-label-small { color: var(--dim); font-size: 12px; }
+.lane-strip { display: flex; flex-wrap: wrap; gap: 4px; min-height: 10px; }
+.home-project-new { flex: none; align-self: center; display: grid; place-items: center; width: 30px; height: 30px; border-radius: var(--radius); color: var(--dim); }
+.home-project-new:hover { color: var(--ink); background: var(--surface-hover); }
+.home-activity h2 { margin: 0 0 12px; font-size: 15px; font-weight: 600; }
+.home-box { list-style: none; margin: 0; padding: 0; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
+.home-box li + li { border-top: 1px solid var(--line); }
+.home-activity-row { display: flex; align-items: flex-start; gap: 12px; padding: 12px 14px; color: var(--ink); text-decoration: none; }
+.home-activity-row:hover { background: var(--surface-hover); text-decoration: none; }
+.home-activity-row > .dot { width: 10px; height: 10px; margin-top: 5px; }
+.home-activity-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; font-size: 14px; }
+.home-activity-text small { color: var(--dim); font-size: 12px; }
+.home-needs .home-activity-text { font-size: 13px; }
+/* One colour per state, shared by Home's pills and the project graph. */
+.lane-pill, .lane { --lane: var(--dimmer); }
+.lane-pill.working, .lane.working { --lane: var(--ok); }
+.lane-pill.idle, .lane.idle { --lane: var(--accent); }
+.lane-pill.starting, .lane-pill.restarting, .lane-pill.closing,
+.lane.starting, .lane.restarting, .lane.closing { --lane: var(--warn); }
+.lane-pill.error, .lane.error { --lane: var(--bad); }
+.lane-pill.asleep, .lane.asleep, .lane.closed { --lane: var(--dimmer); }
+.lane-pill { width: 28px; height: 10px; border-radius: 999px; background: var(--lane); }
+.lane-pill.asleep { background: transparent; box-shadow: inset 0 0 0 1.5px var(--lane); }
+
+/* Never squeezed: a long Plans page scrolls under it, not over its tabs. */
+.repo-head.crumbs { flex: none; flex-direction: column; align-items: stretch; gap: 0; height: auto; min-height: 0; padding: 0 24px; background: var(--panel); }
+.repo-title { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-width: 0; }
+.repo-title strong { font-size: 16px; font-weight: 600; }
+.repo-tabs { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: -1px; }
+.repo-tabs > a, .repo-tabs > button, .repo-tabs > .current {
+  display: inline-flex; align-items: center; gap: 8px; padding: 12px; border: 0; border-bottom: 2px solid transparent;
+  border-radius: 0; background: none; color: var(--dim); font-size: 14px; text-decoration: none;
+}
+.repo-tabs > a:hover, .repo-tabs > button:hover { color: var(--ink); }
+.repo-tabs > [aria-current="page"] { color: var(--ink); font-weight: 600; border-bottom-color: var(--tab); }
+.repo-tabs .count { padding: 0 8px; border: 1px solid var(--line); border-radius: 999px; background: var(--bg); color: var(--dim); font-size: 12px; font-weight: 400; }
+
+.project-page { flex: 1 1 auto; min-height: 0; display: flex; flex-wrap: wrap; align-items: flex-start; align-content: flex-start; gap: 24px; width: 100%; max-width: 1360px; margin-inline: auto; padding: 24px; box-sizing: border-box; overflow-y: auto; }
+.project-tracks { flex: 999 1 640px; min-width: 0; display: flex; flex-direction: column; gap: 16px; }
+.project-about { flex: 1 1 260px; max-width: 320px; display: flex; flex-direction: column; gap: 20px; font-size: 14px; }
+.project-about section { display: flex; flex-direction: column; gap: 6px; }
+.project-about section + section { padding-top: 16px; border-top: 1px solid var(--line); }
+.project-about h2 { margin: 0; font-size: 15px; font-weight: 600; }
+.project-about small { color: var(--dim); }
+.project-about a { overflow-wrap: anywhere; }
+/* Whose a track is: the creator's face and login, and an icon before its
+   name for yours, shared with you, or private. */
+/* After the state, at the row's right edge: whose it is, then how it is
+   shared, both as icons of one size so every row's icons line up. */
+.track-who { flex: none; display: inline-flex; align-items: center; justify-content: flex-end; gap: 6px; margin-left: auto; }
+.track-owner { flex: none; display: inline-grid; place-items: center; width: 22px; height: 22px; }
+.track-owner img, .track-owner-mark { width: 22px; height: 22px; border-radius: 50%; object-fit: cover; }
+.track-owner-mark { display: grid; place-items: center; background: var(--accent-soft); color: var(--accent-ink); font-size: 9px; font-weight: 700; }
+.track-sharing { flex: none; display: inline-grid; place-items: center; width: 22px; height: 22px; border-radius: 6px; color: var(--dim); background: var(--surface); }
+.track-sharing.sharing-yours { color: var(--accent); background: var(--accent-soft); }
+.track-sharing.sharing-shared { color: var(--ok); background: var(--ok-soft); }
+.track-sharing.sharing-private { color: var(--warn); background: var(--warn-soft); }
+.tracks-graph-label:has(.tracks-graph-text) { flex-direction: row; align-items: center; gap: 8px; }
+.tracks-graph-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.home-active-meta { color: var(--dim); font-size: 12px; }
+.home-active-row .track-who { align-self: center; }
+.home-active-state { color: var(--dim); font-size: 12px; white-space: nowrap; }
+.project-people { display: flex; flex-wrap: wrap; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.project-people li > * { width: 32px; height: 32px; border-radius: 50%; display: grid; place-items: center; object-fit: cover; background: var(--accent-soft); color: var(--accent-ink); font-size: 12px; font-weight: 700; }
+#project-previews a { font-size: 13px; }
+.project-tracks-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
+.tracks-filter { flex: 1 1 260px; display: flex; align-items: center; gap: 8px; min-height: 36px; margin: 0; padding: 0 12px; color: var(--dim); background: var(--input); border: 1px solid var(--line); border-radius: var(--radius); }
+.tracks-filter input { flex: 1; min-width: 0; padding: 0; border: 0; outline: 0; background: transparent; color: var(--ink); font-family: var(--mono); font-size: 13px; }
+.tracks-filter:focus-within { border-color: var(--accent-line); }
+.tracks-view > button.on { background: var(--ink); color: var(--bg); }
+.tracks-frame { border: 1px solid var(--line); border-radius: 12px; overflow: hidden; background: var(--bg); }
+.tracks-frame-head { display: flex; flex-wrap: wrap; align-items: center; gap: 16px; padding: 12px 16px; background: var(--panel); border-bottom: 1px solid var(--line); font-size: 14px; }
+.tracks-legend { display: flex; flex-wrap: wrap; gap: 14px; margin: 0; padding: 0; list-style: none; color: var(--dim); font-size: 12px; }
+.tracks-legend li { display: inline-flex; align-items: center; gap: 6px; }
+.tracks-legend .dot { width: 10px; height: 10px; animation: none; }
+.legend-thread { width: 10px; height: 10px; border-radius: 50%; border: 2px solid var(--dim); box-sizing: border-box; }
+.project-tracks-count { display: inline-flex; gap: 12px; color: var(--dim); font-size: 13px; }
+.project-tracks-count strong { color: var(--ink); font-weight: 600; }
+.project-tracks-bar a.button { display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; border: 1px solid var(--primary-line, var(--accent-line)); border-radius: var(--radius); background: var(--primary-bg, var(--accent-soft)); color: var(--primary-ink, var(--accent-ink)); font-size: 13px; text-decoration: none; }
+.project-tracks-bar a.button:hover { background: var(--primary-hover, color-mix(in srgb, var(--accent-soft) 80%, var(--accent))); }
+.tracks-list { margin: 0; padding: 0; }
+.tracks-empty { padding: 14px 16px; margin: 0; }
+
+.tracks-list { list-style: none; }
+.tracks-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 18px; padding: 12px 16px; }
+.tracks-row + .tracks-row { border-top: 1px solid var(--line); }
+.tracks-row > .dot { width: 8px; height: 8px; }
+.tracks-row-main { flex: 1 1 300px; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.tracks-row-title { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.tracks-reopen { flex: none; padding: 1px 8px; font-size: 12px; }
+.tracks-older { align-self: flex-start; }
+.tracks-title { color: var(--ink); font-weight: 600; text-decoration: none; min-width: 0; }
+a.tracks-title:hover { color: var(--accent); text-decoration: underline; }
+.tracks-row-meta { color: var(--dim); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tracks-row-state, .tracks-row-threads, .tracks-row-age { color: var(--dim); font-size: 12.5px; }
+.tracks-row-state { flex: 0 0 90px; text-align: right; }
+.tracks-row-threads { flex: 0 0 80px; }
+.tracks-row-age { flex: 0 0 70px; text-align: right; }
+.tracks-row.closed .tracks-title { color: var(--dim); font-weight: 500; }
+
+.tracks-graph { overflow-x: auto; }
+.tracks-graph-inner { display: flex; min-width: 760px; }
+.tracks-graph-labels { flex: 0 0 300px; border-right: 1px solid var(--line); }
+.tracks-graph-axis { height: 36px; border-bottom: 1px solid var(--line); position: relative; }
+.tracks-graph-label { height: 56px; display: flex; flex-direction: column; justify-content: center; gap: 2px; padding: 0 16px; box-sizing: border-box; min-width: 0; }
+.tracks-graph-label + .tracks-graph-label { border-top: 1px solid var(--line); }
+.tracks-graph-axis + .tracks-graph-label { flex-direction: row; align-items: center; justify-content: flex-start; gap: 8px; }
+.tracks-graph-label small, .tracks-graph-label .mono { color: var(--dim); font-size: 11.5px; }
+.tracks-graph-label .tracks-title { font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tracks-graph-label.closed .tracks-title { color: var(--dim); font-weight: 500; }
+.tracks-graph-lanes { flex: 1 1 auto; min-width: 0; }
+.tracks-graph-tick { position: absolute; top: 11px; padding-left: 6px; color: var(--dim); font-size: 11px; white-space: nowrap; }
+.tracks-graph-plot { position: relative; background-image: repeating-linear-gradient(to bottom, transparent 0 55px, var(--line) 55px 56px); }
+.tracks-graph-plot > span, .lane > span { position: absolute; box-sizing: border-box; }
+.tracks-graph-grid { top: 0; bottom: 0; width: 1px; background: var(--line); opacity: .6; }
+.tracks-graph-main { left: 0; right: 0; height: 2px; background: var(--dim); }
+.tracks-graph-now { top: 0; bottom: 0; width: 0; border-left: 2px dashed var(--warn); }
+.tracks-graph-now small { position: absolute; top: 2px; left: 5px; color: var(--warn); font-size: 10.5px; font-weight: 600; }
+.lane-fork { width: 14px; border-left: 2px solid var(--lane); border-bottom: 2px solid var(--lane); border-bottom-left-radius: 10px; }
+.lane-fork.clipped { border-left-style: dashed; }
+.lane-bar { height: 3px; margin-top: -1px; background: var(--lane); border-radius: 2px; }
+.lane.asleep .lane-bar, .lane.closed .lane-bar { height: 0; background: none; border-top: 3px dashed var(--lane); }
+.lane-thread { width: 11px; height: 11px; margin: -5px 0 0 -5px; border-radius: 50%; border: 2px solid var(--lane); background: var(--panel); }
+.lane-head { width: 13px; height: 13px; margin: -6px 0 0 -6px; border-radius: 50%; background: var(--lane); }
+.lane.working .lane-head { box-shadow: 0 0 0 4px color-mix(in srgb, var(--lane) 25%, transparent); animation: pulse 1.4s ease-in-out infinite; }
+.lane.closed .lane-head { width: 9px; height: 9px; margin: -4px 0 0 -4px; }
+.lane-tag { margin: -8px 0 0 12px; color: var(--lane); font-size: 11px; font-weight: 600; white-space: nowrap; }
+.lane.asleep .lane-tag { color: var(--dim); }
+@media (prefers-reduced-motion: reduce) { .lane.working .lane-head { animation: none; } }
+
+/* The quick start's repositories, listed as a code host lists them, and its
+   prompt with no visible question over it (`RavixWeb.Live.QuickStart`). */
+.quick-start-repos { margin: 0; padding: 0; border: 0; min-width: 0; display: flex; flex-direction: column; gap: 8px; }
+.quick-start-repos legend { padding: 0; margin-bottom: 8px; font-size: 13px; font-weight: 600; }
+.quick-repo-list { list-style: none; margin: 0; padding: 0; max-height: min(46vh, 420px); overflow-y: auto; border: 1px solid var(--line); border-radius: var(--radius-lg); background: var(--panel); }
+.quick-repo-list li + li { border-top: 1px solid var(--line); }
+.quick-repo { display: flex; align-items: center; gap: 10px; min-width: 0; padding: 10px 14px; margin: 0; cursor: pointer; font-weight: 400; color: var(--ink); }
+.quick-repo:hover { background: var(--surface-hover); }
+.quick-repo.on { background: var(--accent-soft); box-shadow: inset 3px 0 0 var(--accent); }
+.quick-repo input[type="radio"] { flex: none; width: auto; margin: 0; accent-color: var(--accent); }
+.quick-repo > svg { flex: none; color: var(--dim); }
+.quick-repo-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.quick-repo-main strong { color: var(--accent); font-weight: 600; }
+.quick-repo-main small, .quick-repo-meta { color: var(--dim); font-size: 12px; }
+.quick-repo-meta { flex: none; white-space: nowrap; }
+.quick-repo-add { align-self: flex-start; display: inline-flex; align-items: center; gap: 6px; }
+@media (max-width: 760px) { .quick-repo-meta { display: none; } }
+.quick-start-prompt label { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; border: 0; }
 
 /* The one tooltip (RAV-98; `assets/js/tooltip.js`): the control's name, and
    its shortcut when it has one. A manual popover, so it is in the top layer;

@@ -1,6 +1,7 @@
 import { test, expect } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
 import { signIn, connectClaude } from './sign-in.js';
+import { openAddRepository } from './new-track.js';
 
 // RAV-56: the Checks tab's Git status. The Sprites mock answers the status,
 // commit and push scripts from a per-worktree fixture (mock/previews.ts):
@@ -13,14 +14,14 @@ const shoot = async (target, name, options = {}) => {
 };
 
 async function openChecks(page, branch) {
-  await page.locator('#yard .workspace-project.current .project-add').click();
+  await page.locator('#top-new-track').click();
   const dialog = page.getByRole('dialog', { name: 'New track', exact: true });
   await dialog.getByRole('button', { name: 'Options', exact: true }).click();
   await dialog.getByLabel('Branch name').fill(branch);
   await dialog.getByRole('button', { name: 'Create track', exact: true }).click();
   await expect(dialog).not.toBeVisible();
   await expect(page.getByRole('textbox', { name: 'Message', exact: true })).toBeEnabled({ timeout: 30_000 });
-  await page.getByRole('navigation', { name: 'Inspector panels' }).getByRole('button', { name: 'Checks', exact: true }).click();
+  await page.getByRole('navigation', { name: 'Track views' }).getByRole('button', { name: 'Checks', exact: true }).click();
   await expect(page.locator('#git-uncommitted')).toContainText('3 uncommitted changes');
 }
 
@@ -28,7 +29,7 @@ test('Checks shows uncommitted and unpushed work, commits and pushes it, and sur
   test.setTimeout(150_000);
   await signIn(page, 'gitstatus');
   await connectClaude(page);
-  await page.getByRole('button', { name: 'Add a repository', exact: true }).first().click();
+  await openAddRepository(page);
   const project = page.getByRole('dialog', { name: 'Add a repository' });
   await project.getByLabel('Project name', { exact: true }).fill('Atlas API');
   await expect(project.locator('#project-repositories input[type=radio]')).not.toHaveCount(0);

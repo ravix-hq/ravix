@@ -4,9 +4,10 @@ import { test, expect } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
 import { signIn, connectClaude } from './sign-in.js';
 import { createWorkspace } from './settings.js';
+import { openAddRepository } from './new-track.js';
 
 // ADR 0009 follow-up: the switcher makes a workspace current and the app
-// shows only it -- the sidebar, quick-jump and the Inbox -- the choice
+// shows only it -- Home's projects, quick-jump and the Inbox -- the choice
 // survives a reload, a `/p/:id` link into another workspace switches to it,
 // and the gear beside the name opens the workspace's settings. At desktop
 // and phone widths, axe clean. Runs under `bun run
@@ -35,7 +36,7 @@ async function axeClean(page, selector) {
 }
 
 async function addProject(page, name) {
-  await page.getByRole('button', { name: 'Add a repository', exact: true }).first().click();
+  await openAddRepository(page);
   const dialog = page.getByRole('dialog', { name: 'Add a repository', exact: true });
   await dialog.getByLabel('Project name', { exact: true }).fill(name);
   await dialog.getByRole('button', { name: 'Create scratch project', exact: true }).click();
@@ -45,7 +46,10 @@ async function addProject(page, name) {
 
 async function settled(page) {
   await expect(page.locator('[data-phx-main]')).toHaveClass(/phx-connected/);
-  await expect(page.locator('#project-sections[aria-busy="false"]')).toBeAttached();
+  // The rail is read: no page's loading skeleton (Home's rows, the Inbox's
+  // cards, a project's workspace crumb) is left.
+  await expect(page.locator('#topbar')).toBeVisible();
+  await expect(page.locator('#rail-loading, #inbox-loading, #crumb-workspace-loading')).toHaveCount(0);
 }
 
 test('the switcher scopes the app to the current workspace, and remembers it', async ({ page }) => {
@@ -67,14 +71,17 @@ test('the switcher scopes the app to the current workspace, and remembers it', a
   const teamId = idOf(new URL(page.url()).pathname.replace('/settings/members', ''));
   sql(`UPDATE ravix.projects SET workspace_id = '${teamId}' WHERE id = '${teamProjectId}'`);
 
-  const yard = page.locator('#yard');
+  const home = page.locator('#home-projects');
   await page.goto('/inbox');
   await settled(page);
   await expect(page.locator('#workspace-switcher-trigger')).toContainText('Scope Team');
-  await expect(yard.locator(`#project-row-${teamProjectId}`)).toBeVisible();
-  await expect(yard.locator(`#project-row-${personalId}`)).toHaveCount(0);
   await expect(page.locator('.inbox header')).toContainText('in Scope Team');
-  await axeClean(page, '#yard');
+  await axeClean(page, '#topbar');
+  await page.goto('/home');
+  await settled(page);
+  await expect(home.locator(`#home-project-${teamProjectId}`)).toBeVisible();
+  await expect(home.locator(`#home-project-${personalId}`)).toHaveCount(0);
+  await axeClean(page, '#home');
 
   // Quick-jump searches this workspace only.
   await page.locator('#quick-jump-trigger').click();
@@ -100,34 +107,41 @@ test('the switcher scopes the app to the current workspace, and remembers it', a
   await menu.getByRole('button', { name: /scopeowner/ }).click();
   await expect(page).toHaveURL(/\/home$/);
   await expect(page.locator('#workspace-switcher-trigger')).toContainText('scopeowner');
-  await expect(yard.locator(`#project-row-${personalId}`)).toBeVisible();
-  await expect(yard.locator(`#project-row-${teamProjectId}`)).toHaveCount(0);
+  await expect(home.locator(`#home-project-${personalId}`)).toBeVisible();
+  await expect(home.locator(`#home-project-${teamProjectId}`)).toHaveCount(0);
 
   // Remembered across a reload.
   await page.reload();
   await settled(page);
   await expect(page.locator('#workspace-switcher-trigger')).toContainText('scopeowner');
-  await expect(yard.locator(`#project-row-${personalId}`)).toBeVisible();
+  await expect(home.locator(`#home-project-${personalId}`)).toBeVisible();
 
   // A link to a project in another workspace switches to it.
   await page.goto(`/p/${teamProjectId}`);
   await settled(page);
+  // Inside a project the top bar is its breadcrumb, which names the
+  // workspace in place of the switcher.
+  await expect(page.locator('#workspace-switcher-trigger')).toHaveCount(0);
+  const crumbs = page.locator('#topbar .topbar-crumbs');
+  await expect(crumbs.locator('a[href="/home"]')).toHaveText('Scope Team');
+  await expect(crumbs.locator(`a[href="/p/${teamProjectId}"]`)).toContainText('Team scope project');
+  await crumbs.locator('a[href="/home"]').click();
+  await expect(page).toHaveURL(/\/home$/);
   await expect(page.locator('#workspace-switcher-trigger')).toContainText('Scope Team');
-  await expect(yard.locator(`#project-row-${teamProjectId}`)).toHaveClass(/current/);
-  await expect(yard.locator(`#project-row-${personalId}`)).toHaveCount(0);
+  await expect(home.locator(`#home-project-${teamProjectId}`)).toBeVisible();
+  await expect(home.locator(`#home-project-${personalId}`)).toHaveCount(0);
 
-  // A phone: the Menu brings the sidebar back, and switching works there too.
+  // A phone: the switcher stays in the top bar, and switching works there too.
   await page.setViewportSize({ width: 500, height: 900 });
   await page.goto('/home');
   await settled(page);
-  await page.locator('.workspace-mobile-nav').getByRole('button', { name: 'Menu' }).click();
-  await expect(yard).toBeVisible();
-  await axeClean(page, '#yard');
+  await expect(page.locator('#topbar')).toBeVisible();
+  await axeClean(page, '#topbar');
   await page.locator('#workspace-switcher-trigger').click();
   await expect(menu).toBeVisible();
   await axeClean(page, '#workspace-menu');
   await menu.getByRole('button', { name: /scopeowner/ }).click();
   await expect(page.locator('#workspace-switcher-trigger')).toContainText('scopeowner');
-  await expect(yard.locator(`#project-row-${personalId}`)).toBeAttached();
-  await expect(yard.locator(`#project-row-${teamProjectId}`)).toHaveCount(0);
+  await expect(home.locator(`#home-project-${personalId}`)).toBeVisible();
+  await expect(home.locator(`#home-project-${teamProjectId}`)).toHaveCount(0);
 });

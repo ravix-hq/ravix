@@ -1,6 +1,7 @@
 import { test, expect } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
 import { signIn, connectClaude } from './sign-in.js';
+import { openAddRepository } from './new-track.js';
 
 // RAV-60: New track leads with its prompt and keeps the rest in chips, and
 // the whole dialog fits a 1280×720 window: Create in view, nothing clipped,
@@ -33,7 +34,7 @@ test('New track fits 1280×720 with Create in view, and its chips are keyboard m
   test.setTimeout(150_000);
   await signIn(page, 'newtrackfit', '/home');
   await connectClaude(page);
-  await page.getByRole('button', { name: 'Add a repository', exact: true }).first().click();
+  await openAddRepository(page);
   const project = page.getByRole('dialog', { name: 'Add a repository', exact: true });
   await project.getByLabel('Project name', { exact: true }).fill('Atlas API');
   await expect(page.locator('#project-repositories input[type=radio]')).not.toHaveCount(0);
@@ -135,5 +136,5 @@ test('New track fits 1280×720 with Create in view, and its chips are keyboard m
   await expect(dialog).toHaveCount(0);
   await expect(page.locator('.workspace-queue')).toContainText('Add a health check endpoint');
   await expect(page.locator('.composer-model')).toContainText(name);
-  await expect(page.locator('.track-crumbs')).toContainText('Private');
+  await expect(page.locator('#track-header')).toContainText('Private');
 });

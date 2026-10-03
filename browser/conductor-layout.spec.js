@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
 import { signIn, connectClaude } from './sign-in.js';
-import { openRepositories } from './new-track.js';
+import { openRepositories, openAddRepository } from './new-track.js';
 import { draftChoice, newThread } from './draft-runtime.js';
 
 test('conversation tabs, project picker, settings gears and inspector at desktop and 500px', async ({ page }) => {
@@ -10,7 +10,7 @@ test('conversation tabs, project picker, settings gears and inspector at desktop
   await connectClaude(page);
   const projects = [];
   for (const name of ['Layout alternate', 'Layout current']) {
-    await page.getByRole('button', { name: 'Add a repository', exact: true }).first().click();
+    await openAddRepository(page);
     const dialog = page.getByRole('dialog', { name: 'Add a repository', exact: true });
     await dialog.getByLabel('Project name', { exact: true }).fill(name);
     await dialog.getByRole('button', { name: 'Create scratch project', exact: true }).click();
@@ -51,43 +51,65 @@ test('conversation tabs, project picker, settings gears and inspector at desktop
       await expect(tabs.last()).toBeFocused();
       await expect(page.locator('[role=tab][tabindex="0"]')).toHaveCount(1);
       await expect(tabs.last()).toHaveAttribute('tabindex', '0');
-      expect(await page.locator('#thread-tablist').evaluate(el => el.scrollLeft)).toBeGreaterThan(0);
+      // Beside the conversation the threads stand on end, one under another.
+      await expect(page.locator('#thread-tablist')).toHaveAttribute('aria-orientation', 'vertical');
+      const tops = await tabs.evaluateAll(els => els.map(el => el.getBoundingClientRect().top));
+      expect(tops.every((top, i) => i === 0 || top > tops[i - 1]), `tab tops ${tops}`).toBe(true);
+      await tabs.last().press('ArrowDown');
+      await expect(tabs.first()).toBeFocused();
+      await tabs.first().press('ArrowUp');
+      await expect(tabs.last()).toBeFocused();
       await tabs.last().press('ArrowRight');
       await expect(tabs.first()).toBeFocused();
       await tabs.first().press('Enter');
       await expect(tabs.first()).toHaveAttribute('aria-selected', 'true');
-      const panels = page.getByRole('navigation', { name: 'Inspector panels' });
-      await expect(panels.locator('[phx-click=panel]')).toHaveText(['Files', 'Changes', 'Checks', 'Preview']);
-      await page.locator('#inspector-toggle').click();
-      await expect(page.locator('#inspector-toggle')).toHaveAttribute('aria-expanded', 'false');
-      await expect(page.locator('#inspector .workspace-panel')).not.toBeVisible();
-      await page.locator('#inspector-toggle').click();
+      // The track's own tabs name the inspector's panels; the inspector
+      // keeps only its tools, and takes the page's width in place of the
+      // conversation rather than sitting beside it.
+      const views = page.getByRole('navigation', { name: 'Track views' });
+      await expect(views.getByRole('button')).toHaveText([/Threads\s*4/, 'Files', 'Changes', 'Checks', 'Preview', 'Terminal']);
+      await expect(page.locator('#inspector')).toBeHidden();
+      await page.locator('#track-tab-files').click();
+      await expect(page.locator('#track-tab-files')).toHaveAttribute('aria-pressed', 'true');
       await expect(page.locator('#inspector .workspace-panel')).toBeVisible();
+      await expect(page.locator('.track-conversation')).toBeHidden();
+      await expect(page.getByRole('navigation', { name: 'Inspector panels' }).locator('[phx-click=panel]')).toHaveCount(4);
+      await expect(page.getByRole('navigation', { name: 'Inspector panels' }).locator('[phx-click=panel]').first()).toBeHidden();
+      await page.locator('#track-tab-threads').click();
+      await expect(page.locator('#track-tab-threads')).toHaveAttribute('aria-pressed', 'true');
+      await expect(page.locator('#inspector')).toBeHidden();
+      await expect(page.locator('.track-conversation')).toBeVisible();
     } else {
       await expect(tabs.first()).not.toBeVisible();
       await expect(page.getByLabel('Thread', { exact: true })).toBeVisible();
       await page.getByLabel('Thread', { exact: true }).selectOption(firstId);
       await expect(page.locator(`#composer-${firstId}`)).toBeVisible();
-      await page.getByRole('button', { name: 'Files', exact: true }).click();
-      await expect(page.getByRole('navigation', { name: 'Inspector panels' })).toBeVisible();
-      await page.getByRole('button', { name: 'Conversation', exact: true }).click();
-      await page.getByRole('button', { name: 'Menu', exact: true }).click();
+      await page.locator('#track-tab-files').click();
+      await expect(page.locator('#inspector .workspace-panel')).toBeVisible();
+      await expect(page.locator('.track-conversation')).toBeHidden();
+      await page.locator('#track-tab-threads').click();
+      await expect(page.locator('.track-conversation')).toBeVisible();
     }
-    await page.locator('.workspace-project.current .workspace-project-row').hover();
-    const gear = page.locator('.workspace-project.current button[data-tip="Project settings"]');
-    await gear.focus();
-    await expect(gear).toHaveCSS('opacity', '1');
-    await gear.click();
-    // Settings are a page in the shell (RAV-72); Back returns to the track.
+    // The top bar's project crumb leads to the project's page, whose
+    // Settings tab opens its settings.
+    const crumb = page.locator('#topbar .topbar-crumbs a[href^="/p/"]');
+    await expect(crumb).toHaveAttribute('href', `/p/${projects[1]}`);
+    await crumb.click();
+    const settingsTab = page.locator('#crumb-settings');
+    await settingsTab.focus();
+    await expect(settingsTab).toBeVisible();
+    await settingsTab.click();
+    // Settings are a page in the shell (RAV-72); Back returns the way it came.
     await expect(page).toHaveURL(/\/settings\/general$/);
     await expect(page.locator('#settings-page')).toBeVisible();
     await page.goBack();
+    await expect(page).toHaveURL(new RegExp(`/p/${projects[1]}$`));
+    await page.goBack();
     await expect(page).toHaveURL(trackUrl);
-    if (width === 500) await page.getByRole('button', { name: 'Menu', exact: true }).click();
+    await expect(page.locator('#track-header')).toBeVisible();
     await page.getByRole('button', { name: 'You', exact: true }).click();
     await expect(page.locator('#account-menu')).toBeVisible();
     await page.keyboard.press('Escape');
-    if (width === 500) await page.getByRole('button', { name: 'Menu', exact: true }).click();
     await page.locator('#top-new-track').click();
     await newTrack.getByRole('button', { name: 'Options', exact: true }).click();
     await newTrack.getByLabel('Branch name').fill('keep-my-draft');
@@ -100,7 +122,7 @@ test('conversation tabs, project picker, settings gears and inspector at desktop
     await page.keyboard.press('Escape');
     await expect(newTrack.locator('#new-track-repo-menu')).toBeHidden();
     await expect(page).toHaveURL(trackUrl);
-    await expect(page.locator('.workspace-project.current')).toHaveAttribute('data-project-id', projects[1]);
+    await expect(page.locator('#topbar .topbar-crumbs a[href^="/p/"]')).toHaveAttribute('href', `/p/${projects[1]}`);
     await page.keyboard.press('Escape');
     await expect(page).toHaveURL(trackUrl);
     await expect(page.locator('[data-phx-main]')).toHaveClass(/phx-connected/);

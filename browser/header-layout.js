@@ -1,15 +1,16 @@
 import { expect } from '@playwright/test';
 
 /**
- * No control in a track's header may sit over another, and a click on the
- * plan chip's centre must reach the chip. Playwright's own click only fails
+ * No control in a track's head (title and actions, status line, tabs) may
+ * sit over another, and a click on the plan chip's centre must reach the
+ * chip. Playwright's own click only fails
  * on a cover after its timeout, and only where a spec happens to click; this
  * says which two overlap, at every width a spec measures (RAV-63).
  */
 export async function expectHeaderUnobstructed(page) {
-  const { overlaps, hit } = await page.locator('header.track-crumbs').evaluate(header => {
+  const { overlaps, hit } = await page.locator('header#track-header').evaluate(header => {
     const controls = [...header.querySelectorAll('a, button, .chip, [role=status], .track-private')]
-      // A visually hidden element (the machine chip while Idle, RAV-82) covers nothing.
+      // A visually hidden element covers nothing.
       .filter(el => !el.closest('.track-plan-popover, .sr-only') && el.getClientRects().length > 0);
     const name = el => el.getAttribute('aria-label') || el.textContent.trim().replace(/\s+/g, ' ').slice(0, 40);
     const overlaps = [];

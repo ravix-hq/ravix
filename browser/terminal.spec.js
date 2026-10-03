@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { signIn, connectClaude } from './sign-in.js';
+import { openAddRepository } from './new-track.js';
 
 // RAV-54: an interactive terminal is a real shell on the track's machine,
 // drawn by xterm.js. The mock's shell (mock/previews.ts) echoes, answers a
@@ -9,16 +10,18 @@ test('terminal tabs: open, type, resize, several, reconnect, reload and close', 
   await page.setViewportSize({ width: 1440, height: 900 });
   await signIn(page, 'eli', '/home');
   await connectClaude(page);
-  await page.getByRole('button', { name: 'Add a repository', exact: true }).first().click();
+  await openAddRepository(page);
   await page.getByLabel('Project name', { exact: true }).fill('Terminal tabs');
   await page.getByRole('button', { name: 'Create scratch project', exact: true }).click();
-  await page.locator('#yard .workspace-project.current .project-add').click();
+  await page.locator('#top-new-track').click();
   await page.getByRole('button', { name: 'Create track', exact: true }).click();
   await expect(page.getByRole('textbox', { name: 'Message', exact: true })).toBeEnabled();
   // The machine exists once setup has run; the chip says Idle then.
   await expect(page.locator('#track-machine-state')).toHaveText('Idle', { timeout: 30_000 });
 
-  // "+" is a menu (RAV-101): New terminal is its first item.
+  // The dock is the Terminal tab's page. "+" is a menu (RAV-101): New
+  // terminal is its first item.
+  await page.locator('#track-tab-terminal').click();
   await page.locator('#dock-add-trigger').click();
   await expect(page.locator('#dock-add-menu')).toBeVisible();
   await page.getByRole('menuitem', { name: /New terminal/ }).click();

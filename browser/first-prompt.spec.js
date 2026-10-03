@@ -1,6 +1,7 @@
 import { test, expect } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
 import { signIn, connectClaude } from './sign-in.js';
+import { openAddRepository } from './new-track.js';
 
 // RAV-47: the New track dialog takes an optional first prompt. Enter creates
 // the track, and the prompt waits in its queue until setup is ready.
@@ -8,12 +9,12 @@ test('a first prompt typed in the create dialog opens the track with it waiting 
   test.setTimeout(180_000);
   await signIn(page, 'threadruntime', '/home');
   await connectClaude(page);
-  await page.getByRole('button', { name: 'Add a repository', exact: true }).first().click();
+  await openAddRepository(page);
   const project = page.getByRole('dialog', { name: 'Add a repository', exact: true });
   await project.getByLabel('Project name', { exact: true }).fill('First prompt');
   await project.getByRole('button', { name: 'Create scratch project', exact: true }).click();
   await expect(project).toHaveCount(0);
-  await page.locator('#yard .workspace-project.current .project-add').click();
+  await page.locator('#top-new-track').click();
 
   const dialog = page.getByRole('dialog', { name: 'New track', exact: true });
   const prompt = dialog.getByLabel('What do you want to work on?', { exact: true });
@@ -71,7 +72,9 @@ test('a first prompt typed in the create dialog opens the track with it waiting 
   }, { delivered, text: 'Add a health check endpoint' });
   expect(fit).not.toBeNull();
   expect(fit.bubble).toBeLessThanOrEqual(fit.column + 0.5);
-  expect(fit.column).toBeLessThanOrEqual(fit.turn * 0.8 + 0.5);
+  // The message is a card the turn's width (no longer a bubble at 80%), and
+  // the wide line scrolls inside it rather than widening it.
+  expect(fit.column).toBeLessThanOrEqual(fit.turn + 0.5);
   expect(fit.scrolls).toBe(true);
   expect(fit.overflow).toBe('auto');
 });

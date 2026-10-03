@@ -2,10 +2,11 @@ import { test, expect } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
 import { signIn } from './sign-in.js';
 import { openAgentSettings } from './settings.js';
+import { openAddRepository } from './new-track.js';
 
 test('connect Codex inline without losing the new project draft', async ({ page }) => {
   await signIn(page, 'dana', '/home');
-  await page.getByRole('button', { name: 'Add a repository', exact: true }).first().click();
+  await openAddRepository(page);
   const dialog = page.getByRole('dialog', { name: 'Add a repository' });
   await dialog.getByLabel('Project name', { exact: true }).fill('Credential gate');
   await dialog.locator('#project-agent-codex').click();
@@ -25,7 +26,7 @@ test('connect Codex inline without losing the new project draft', async ({ page 
   await expect(dialog.getByRole('button', { name: 'Create scratch project', exact: true })).toBeEnabled();
   await dialog.getByRole('button', { name: 'Create scratch project', exact: true }).click();
   await expect(dialog).not.toBeVisible();
-  await expect(page.locator('.crumbs')).toContainText('Credential gate');
+  await expect(page.locator('#topbar .topbar-crumbs')).toContainText('Credential gate');
 });
 
 test('connect ChatGPT inline by device code and preserve the project draft', async ({ page }) => {
@@ -45,7 +46,7 @@ test('connect ChatGPT inline by device code and preserve the project draft', asy
   await expect(panel.locator('#agent-codex')).toBeVisible();
   await page.goto('/home');
   await expect(page.locator('[data-phx-main]')).toHaveClass(/phx-connected/);
-  await page.getByRole('button', { name: 'Add a repository', exact: true }).first().click();
+  await openAddRepository(page);
   const dialog = page.getByRole('dialog', { name: 'Add a repository' });
   await dialog.getByLabel('Project name', { exact: true }).fill('ChatGPT inline');
   await dialog.locator('#project-agent-codex').click();
@@ -61,12 +62,12 @@ test('connect ChatGPT inline by device code and preserve the project draft', asy
   await expect(dialog.getByLabel('Project name', { exact: true })).toHaveValue('ChatGPT inline');
   await dialog.getByRole('button', { name: 'Create scratch project', exact: true }).click();
   await expect(dialog).not.toBeVisible();
-  await expect(page.locator('.crumbs')).toContainText('ChatGPT inline');
+  await expect(page.locator('#topbar .topbar-crumbs')).toContainText('ChatGPT inline');
 });
 
 test('late dialog focus never steals typing from the project name', async ({ page }) => {
   await signIn(page, 'dana', '/home');
-  await page.getByRole('button', { name: 'Add a repository', exact: true }).first().click();
+  await openAddRepository(page);
   const dialog = page.getByRole('dialog', { name: 'Add a repository' });
   await expect(dialog.getByRole('searchbox', { name: 'Repository', exact: true })).toBeFocused();
   const name = dialog.getByLabel('Project name', { exact: true });

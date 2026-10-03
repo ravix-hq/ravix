@@ -1,10 +1,13 @@
 import { expect } from '@playwright/test';
 
 // RAV-72: a project's settings are pages in the shell, one URL a section.
-// The row's gear opens the first; the frame's nav moves between them.
+// The project page's Settings tab opens the first (from a track, its
+// header's project crumb leads there); the frame's nav moves between them.
 // RAV-74: the pages are general, access, agent, machine and danger.
 export async function openProjectSettings(page, section = 'general') {
-  await page.locator('#yard .workspace-project.current button[data-tip="Project settings"]').click();
+  const tab = page.locator('#crumb-settings');
+  if (!(await tab.isVisible())) await page.locator('#topbar .topbar-crumbs a[href^="/p/"]').click();
+  await tab.click();
   await expect(page).toHaveURL(/\/p\/[^/]+\/settings\/general$/);
   const settings = page.locator('#settings-page');
   if (section !== 'general') {

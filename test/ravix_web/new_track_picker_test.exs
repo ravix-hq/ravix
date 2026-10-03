@@ -1,9 +1,9 @@
 defmodule RavixWeb.NewTrackPickerTest do
   @moduledoc """
-  RAV-10 in the New track dialog, and the scratch rail group (ADR 0009
+  RAV-10 in the New track dialog, and the scratch group on Home (ADR 0009
   phase 4c): the list's contents per workspace, preselection, type-ahead,
   Add a repository returning selected, scratch apart, legacy duplicates
-  absent, and the switch off keeping today's dialog and rail.
+  absent, and the switch off keeping today's dialog and project list.
 
   Not async: the tests turn `RAVIX_WORKSPACE_ACCESS` on, application-wide.
   """
@@ -206,15 +206,19 @@ defmodule RavixWeb.NewTrackPickerTest do
     refute has_element?(view, "#repo-picker-add")
   end
 
-  test "scratch projects have their own rail group", ctx do
-    insert_project(user: ctx.user, repo_full_name: "me/app", name: "App")
+  test "scratch projects have their own group on Home", ctx do
+    app = insert_project(user: ctx.user, repo_full_name: "me/app", name: "App")
     scratch = insert_project(user: ctx.user, repo_full_name: nil, name: "Sandbox")
 
     {:ok, view, _} = live(ctx.conn, "/home")
     render_async(view)
-    assert has_element?(view, "#section-scratch", "Scratch")
-    assert has_element?(view, "#section-scratch #project-row-#{scratch.id}")
-    refute has_element?(view, "#section-other #project-row-#{scratch.id}")
+    assert has_element?(view, "#home-section-scratch", "Scratch")
+    view |> element("#home-section-scratch") |> render_click()
+    assert has_element?(view, "#home-project-#{scratch.id}")
+    refute has_element?(view, "#home-project-#{app.id}")
+    view |> element("#home-section-other") |> render_click()
+    assert has_element?(view, "#home-project-#{app.id}")
+    refute has_element?(view, "#home-project-#{scratch.id}")
   end
 
   test "the scratch group sits beside real sections, which keep their projects", ctx do
@@ -225,9 +229,25 @@ defmodule RavixWeb.NewTrackPickerTest do
 
     {:ok, view, _} = live(ctx.conn, "/home")
     render_async(view)
-    assert has_element?(view, "#section-#{section.id} #project-row-#{app.id}")
-    assert has_element?(view, "#section-scratch #project-row-#{scratch.id}[draggable=false]")
-    refute has_element?(view, "#section-scratch[data-section-drop]")
+    # Named sections, then Scratch; with nothing unsectioned, no Other.
+    [_, after_section] = String.split(render(view), ~s(id="home-section-#{section.id}"), parts: 2)
+    assert after_section =~ ~s(id="home-section-scratch")
+    refute has_element?(view, "#home-section-other")
+    view |> element("#home-section-#{section.id}") |> render_click()
+    assert has_element?(view, "#home-project-#{app.id}")
+    refute has_element?(view, "#home-project-#{scratch.id}")
+    view |> element("#home-section-scratch") |> render_click()
+    assert has_element?(view, "#home-project-#{scratch.id}")
+    refute has_element?(view, "#home-project-#{app.id}")
+
+    # Filing a scratch project under a section leaves it in Scratch.
+    view |> element("#manage-sections") |> render_click()
+    view |> form("#move-project-#{scratch.id}", section: section.id) |> render_change()
+    render_click(view, "dismiss-switcher")
+    view |> element("#home-section-#{section.id}") |> render_click()
+    refute has_element?(view, "#home-project-#{scratch.id}")
+    view |> element("#home-section-scratch") |> render_click()
+    assert has_element?(view, "#home-project-#{scratch.id}")
   end
 
   describe "with RAVIX_WORKSPACE_ACCESS off" do
@@ -240,10 +260,15 @@ defmodule RavixWeb.NewTrackPickerTest do
       app = insert_project(user: ctx.user, repo_full_name: "me/app", name: "App")
       scratch = insert_project(user: ctx.user, repo_full_name: nil, name: "Sandbox")
 
-      {:ok, view, _} = live(ctx.conn, "/p/#{app.id}")
+      {:ok, view, _} = live(ctx.conn, "/home")
       render_async(view)
-      refute has_element?(view, "#section-scratch")
-      assert has_element?(view, "#section-other #project-row-#{scratch.id}")
+      # One group, so Home offers no section filters, and scratch is listed
+      # with the rest.
+      refute has_element?(view, "#home-section-scratch")
+      assert has_element?(view, "#home-project-#{scratch.id}")
+      assert has_element?(view, "#home-project-#{app.id}")
+      view |> element("#project-link-#{app.id}") |> render_click()
+      assert_patch(view, "/p/#{app.id}")
 
       view |> element("#top-new-track") |> render_click()
       render_async(view)

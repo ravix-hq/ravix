@@ -52,7 +52,8 @@ defmodule RavixWeb.PersonalSettingsLiveTest do
       assert has_element?(view, ".settings-crumbs [aria-current=page]", label)
       assert has_element?(view, "#settings-title", label)
       assert has_element?(view, "#settings-nav-#{key}[aria-current=page]")
-      assert has_element?(view, "#yard[aria-label='Projects']")
+      # The settings frame sits inside the app's shell, top bar and all.
+      assert has_element?(view, "#topbar #account-trigger")
 
       for {other, _} <- @sections,
           other != key,
@@ -63,7 +64,7 @@ defmodule RavixWeb.PersonalSettingsLiveTest do
   test "the You menu is quick toggles and a short list, with Settings opening Profile",
        %{conn: conn} do
     {:ok, view, _} = live(log_in_user(conn, insert_user()), "/home")
-    menu = "#yard #account-menu[popover]"
+    menu = "#topbar #account-menu[popover]"
 
     # Theme and notifications stay as quick toggles, the same switches the
     # Appearance and Notifications pages draw.

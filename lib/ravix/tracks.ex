@@ -501,6 +501,7 @@ defmodule Ravix.Tracks do
           conversation_id: thread.conversation_id,
           reply_excerpt: thread.reply_excerpt,
           reply_at: thread.reply_at,
+          created_at: thread.created_at,
           last_active_at: conversation && conversation.last_active_at,
           status:
             if(conversation && conversation.status in [:running, :pending, :failed],

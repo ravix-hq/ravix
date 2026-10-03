@@ -1,12 +1,13 @@
 import { test, expect } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
 import { signIn, connectClaude } from './sign-in.js';
+import { openAddRepository } from './new-track.js';
 
 // RAV-99: Ctrl+K (⌘K on a Mac) opens quick jump from anywhere, the composer
 // included; nothing typed straight after it is lost; and the dialog's top
 // stays where it opened while the results under it change.
 async function newTrack(page, name) {
-  await page.locator('#yard .workspace-project.current .project-add').click();
+  await page.locator('#top-new-track').click();
   const dialog = page.getByRole('dialog', { name: 'New track', exact: true });
   await dialog.getByRole('button', { name: 'Options', exact: true }).click();
   await dialog.getByLabel('Branch name', { exact: true }).fill(name);
@@ -22,7 +23,7 @@ test('Ctrl+K opens quick jump from the composer, keeps every key and stays put',
   await page.setViewportSize({ width: 1440, height: 900 });
   await signIn(page, 'quickjumper', '/home');
   await connectClaude(page);
-  await page.getByRole('button', { name: 'Add a repository', exact: true }).first().click();
+  await openAddRepository(page);
   await page.getByLabel('Project name', { exact: true }).fill('Jump project');
   await page.getByRole('button', { name: 'Create scratch project', exact: true }).click();
   await expect(page.locator('#crumb-plans')).toBeVisible();
@@ -92,5 +93,5 @@ test('Ctrl+K opens quick jump from the composer, keeps every key and stays put',
   expect((await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa']).analyze()).violations).toEqual([]);
   await page.keyboard.press('Enter');
   await expect(dialog).toHaveCount(0);
-  await expect(page.locator('.track-crumbs')).toContainText(named);
+  await expect(page.locator('#track-header')).toContainText(named);
 });

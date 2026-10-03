@@ -1,14 +1,15 @@
 import { test, expect } from '@playwright/test';
 import { signIn, connectClaude } from './sign-in.js';
 import { openProjectSettings, saveMachine } from './settings.js';
+import { openAddRepository } from './new-track.js';
 
 test('project run script is inherited: run, ready, restart, stop and plain override', async ({ page }) => {
   await signIn(page, 'eli', '/home');
   await connectClaude(page);
-  await page.getByRole('button', { name: 'Add a repository', exact: true }).first().click();
+  await openAddRepository(page);
   await page.getByLabel('Project name', { exact: true }).fill('Run script browser');
   await page.getByRole('button', { name: 'Create scratch project', exact: true }).click();
-  await page.locator('#yard .workspace-project.current .project-add').click();
+  await page.locator('#top-new-track').click();
   await page.getByRole('button', { name: 'Create track', exact: true }).click();
   await expect(page.getByRole('textbox', { name: 'Message', exact: true })).toBeEnabled();
 
@@ -22,11 +23,13 @@ test('project run script is inherited: run, ready, restart, stop and plain overr
   expect(question).toContain('Save these changes?');
   expect(question).toContain('The machine is not rebuilt.');
   await expect(page.getByText('Machine settings saved.', { exact: true })).toBeVisible();
+  // Machine, General, the project's page, and the track.
+  await page.goBack();
   await page.goBack();
   await page.goBack();
   await expect(page).toHaveURL(trackUrl);
 
-  await page.locator('button[phx-click="panel"][phx-value-name="preview"]').click();
+  await page.locator('#track-tab-preview').click();
   const status = page.locator('#run-status');
   // Stopped, the panel is its empty state and Run is that state's action.
   const empty = page.locator('#preview-empty');

@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { signIn, connectClaude } from './sign-in.js';
 import { openProjectSettings, saveMachine } from './settings.js';
+import { openAddRepository } from './new-track.js';
 
 const mock = `http://localhost:${process.env.MOCK_PORT || 8893}`;
 
@@ -10,12 +11,12 @@ test('a flagged track copies secrets, becomes ready, and deletes its own machine
   test.setTimeout(180_000);
   await signIn(page, 'threadruntime', '/home');
   await connectClaude(page);
-  await page.getByRole('button', { name: 'Add a repository', exact: true }).first().click();
+  await openAddRepository(page);
   const project = page.getByRole('dialog', { name: 'Add a repository', exact: true });
   await project.getByLabel('Project name', { exact: true }).fill('Dedicated lifecycle with a project name long enough to crowd the header');
   await project.getByRole('button', { name: 'Create scratch project', exact: true }).click();
   await expect(project).toHaveCount(0);
-  await page.locator('#yard .workspace-project.current .project-add').click();
+  await page.locator('#top-new-track').click();
   await page.getByRole('button', { name: 'Create track', exact: true }).click();
   await expect(page.getByRole('dialog', { name: 'New track', exact: true })).toHaveCount(0);
   await expect(page.locator('#track-machine-scope')).toHaveText('Own machine');
@@ -30,7 +31,7 @@ test('a flagged track copies secrets, becomes ready, and deletes its own machine
   const box = boxes.find(b => b.vault_id === vaultId);
   expect(box).toBeTruthy();
   const firstUrl = page.url();
-  await page.locator('#yard .workspace-project.current .project-add').click();
+  await page.locator('#top-new-track').click();
   await page.getByRole('button', { name: 'Create track', exact: true }).click();
   await expect(page.getByRole('dialog', { name: 'New track', exact: true })).toHaveCount(0);
   // The New track dialog also changes the URL with ?new=track. Wait for a
@@ -50,28 +51,39 @@ test('a flagged track copies secrets, becomes ready, and deletes its own machine
   await page.goto(firstUrl);
   await expect(page.locator('[data-phx-main]')).toHaveClass(/phx-connected/);
   await expect(page.locator('#rebuild-track-machine')).toHaveCount(0);
-  // A long name and every header button must not widen the track past its
-  // column: the pinned inspector would cover Close and the composer's edge,
-  // and its resize handle would swallow clicks on the thread strip's "+" and ⋯.
+  // A long name and every header button must not widen the track past the
+  // window, and nothing may sit over the header's ⋯ or the thread list's
+  // "+" and ⋯: the inspector is not pinned beside the conversation any more
+  // (its tab takes the page instead), and its resize handle is not drawn.
   // Rebuild is only in the header's ⋯ (RAV-82), beside Close.
   const more = page.getByRole('button', { name: 'More for this track', exact: true });
   await expect(page.getByRole('button', { name: 'Rebuild machine', exact: true })).toBeHidden();
   await more.click();
   await expect(page.locator('#track-more-panel').getByRole('button', { name: 'Rebuild machine', exact: true })).toBeVisible();
+  await expect(page.locator('#inspector')).toBeHidden();
+  await expect(page.locator('#inspector-resize')).toBeHidden();
   const layout = await page.evaluate(() => {
     const right = sel => document.querySelector(sel).getBoundingClientRect().right;
+    // Whatever is on top at a control's centre is the control itself.
+    const onTop = sel => {
+      const r = document.querySelector(sel).getBoundingClientRect();
+      const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+      return !!hit && document.querySelector(sel).contains(hit);
+    };
     return {
-      inspector: document.querySelector('#inspector').getBoundingClientRect().left,
+      window: document.documentElement.clientWidth,
       track: right('.track-workspace'),
       close: right('#track-more-trigger'),
       add: right('.thread-add'),
       threadMore: right('#thread-more-trigger'),
+      onTop: ['#track-more-trigger', '#thread-add-trigger', '#thread-more-trigger'].filter(sel => !onTop(sel)),
     };
   });
-  expect(layout.track).toBeLessThanOrEqual(layout.inspector);
-  expect(layout.close).toBeLessThanOrEqual(layout.inspector);
-  expect(layout.add).toBeLessThanOrEqual(layout.inspector - 8);
-  expect(layout.threadMore).toBeLessThanOrEqual(layout.inspector - 8);
+  expect(layout.track).toBeLessThanOrEqual(layout.window);
+  expect(layout.close).toBeLessThanOrEqual(layout.track);
+  expect(layout.add).toBeLessThanOrEqual(layout.track - 8);
+  expect(layout.threadMore).toBeLessThanOrEqual(layout.track - 8);
+  expect(layout.onTop).toEqual([]);
   await page.getByRole('button', { name: 'Rebuild machine', exact: true }).click();
   const rebuild = page.getByRole('dialog', { name: 'Rebuild machine', exact: true });
   await expect(rebuild).toContainText("Rebuilding deletes only this track's machine");
@@ -95,6 +107,8 @@ test('a flagged track copies secrets, becomes ready, and deletes its own machine
   await settings.locator('#settings-nav-danger').click();
   await expect(settings.locator('#danger-zone')).toBeVisible();
   await expect(settings.locator('#project-rebuild-form')).toHaveCount(0);
+  // Danger, Agent, General, the project's page, and the track.
+  await page.goBack();
   await page.goBack();
   await page.goBack();
   await page.goBack();
@@ -118,7 +132,7 @@ test('a flagged track copies secrets, becomes ready, and deletes its own machine
 test('an owner confirms an uncertain secret change and can save again', async ({ page }) => {
   await signIn(page, 'threadruntime', '/home');
   await connectClaude(page);
-  await page.getByRole('button', { name: 'Add a repository', exact: true }).first().click();
+  await openAddRepository(page);
   const project = page.getByRole('dialog', { name: 'Add a repository', exact: true });
   await project.getByLabel('Project name', { exact: true }).fill('Secret change recovery');
   await project.getByRole('button', { name: 'Create scratch project', exact: true }).click();

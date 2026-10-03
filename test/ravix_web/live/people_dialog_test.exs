@@ -58,9 +58,11 @@ defmodule RavixWeb.Live.PeopleDialogTest do
           do: ctx.project.name,
           else: "#{ctx.owner.login} / #{ctx.project.name}"
 
-      view = track_page(ctx.conn, user, ctx.project, ctx.track)
-      assert has_element?(view, ".project-crumb .project-label", label)
-      assert has_element?(view, ".project-crumb .dim") == (user != ctx.owner)
+      {view, parent} = track_page_with_parent(ctx.conn, user, ctx.project, ctx.track)
+      # The project is named in the top bar's breadcrumb, over the track.
+      crumb = "#topbar .topbar-crumbs a[href='/p/#{ctx.project.id}']"
+      assert has_element?(parent, "#{crumb} .project-label", label)
+      assert has_element?(parent, "#{crumb} .dim") == (user != ctx.owner)
       open_people(view)
       assert has_element?(view, "#track-people-dialog .project-label", label)
     end

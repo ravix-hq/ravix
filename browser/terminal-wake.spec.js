@@ -1,8 +1,11 @@
 import { test, expect } from '@playwright/test';
 import { signIn, connectClaude } from './sign-in.js';
+import { openAddRepository } from './new-track.js';
 
 // RAV-101: "+" opens a menu; "New terminal" is its first item.
+// The dock is the Terminal tab's page.
 async function openTerminal(page) {
+  await page.locator('#track-tab-terminal').click();
   await page.locator('#dock-add-trigger').click();
   await page.getByRole('menuitem', { name: /New terminal/ }).click();
 }
@@ -21,12 +24,12 @@ async function newTrack(page, request, name) {
   await page.setViewportSize({ width: 1440, height: 900 });
   await signIn(page, 'threadruntime', '/home');
   await connectClaude(page);
-  await page.getByRole('button', { name: 'Add a repository', exact: true }).first().click();
+  await openAddRepository(page);
   const dialog = page.getByRole('dialog', { name: 'Add a repository', exact: true });
   await dialog.getByLabel('Project name', { exact: true }).fill(name);
   await dialog.getByRole('button', { name: 'Create scratch project', exact: true }).click();
   await expect(dialog).toHaveCount(0);
-  await page.locator('#yard .workspace-project.current .project-add').click();
+  await page.locator('#top-new-track').click();
   await page.getByRole('button', { name: 'Create track', exact: true }).click();
   await expect(page).toHaveURL(url => url.pathname.includes('/t/') && !url.search);
   await expect(page.locator('#track-machine-scope')).toHaveText('Own machine');
@@ -42,6 +45,7 @@ test('a terminal opened on a sleeping machine wakes it, then connects', async ({
   test.setTimeout(120_000);
   const sandbox = await newTrack(page, request, 'Terminal wake');
   expect((await request.post(`${mock}/__browser/sandbox-status`, { data: { id: sandbox, status: 'suspended', wake_ms: 1500 } })).ok()).toBe(true);
+  await page.locator('#track-tab-files').click();
   await page.locator('.panel-refresh').click();
   await expect(page.locator('#track-machine-state')).toHaveText('Asleep');
 

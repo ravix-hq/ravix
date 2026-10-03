@@ -43,7 +43,8 @@ test('the You menu opens Settings, and every personal page is a section of the f
     await expect(page).toHaveURL(new RegExp(`/settings/${key}$`));
     await expect(page).toHaveTitle(`${label} · You · Ravix`);
     await expect(page.getByRole('heading', { level: 1, name: label, exact: true })).toBeVisible();
-    await expect(page.locator('#yard')).toBeVisible();
+    await expect(page.locator('#topbar')).toBeVisible();
+    await expect(page.locator('#topbar .topbar-nav')).toBeVisible();
     await expect(page.locator('#settings-page .agent-card-status', { hasText: 'Checking' })).toHaveCount(0);
     await accessible(page);
   }
@@ -77,9 +78,11 @@ test('Appearance and the menu\'s theme toggle are one choice, kept by this brows
 
   await page.locator('#account-trigger').click();
   await page.locator('#account-menu [data-theme-toggle]').click();
-  await page.locator('#account-menu').getByRole('menuitemradio', { name: 'Ravix', exact: true }).click();
+  // The default palette (`ravix`) is the light one, listed first as Light.
+  await expect(page.locator('#account-menu').getByRole('menuitemradio').first()).toHaveAccessibleName(/^Light/);
+  await page.locator('#account-menu').getByRole('menuitemradio', { name: 'Light', exact: true }).click();
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'ravix');
-  await expect(picker.locator('[data-theme-toggle] [data-theme-name]')).toHaveText('Ravix');
+  await expect(picker.locator('[data-theme-toggle] [data-theme-name]')).toHaveText('Light');
   await page.keyboard.press('Escape');
 
   await page.reload();

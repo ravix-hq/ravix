@@ -20,28 +20,25 @@ defmodule RavixWeb.PlansLiveTest do
     %{user: user, project: project}
   end
 
-  test "plans live behind the project row, not on the project's home", ctx do
+  test "plans live behind the project's Plans tab, not on the project's home", ctx do
     {:ok, plan} = Plans.create(ctx.user, ctx.project.id, %{"title" => "Roadmap", "items" => []})
     {:ok, view, _} = live(log_in_user(ctx.conn, ctx.user), "/p/#{ctx.project.id}")
     render_async(view)
     refute has_element?(view, "#plans-panel")
+    assert has_element?(view, "#crumb-tracks[aria-current=page]")
 
-    view |> element("#project-plans-#{ctx.project.id}") |> render_click()
+    view |> element("#crumb-plans") |> render_click()
     assert_patch(view, "/p/#{ctx.project.id}/plans")
     render_async(view)
     assert has_element?(view, "#plans-panel .plans-list a", "Roadmap")
-    assert has_element?(view, "#project-plans-#{ctx.project.id}[aria-current=page]")
+    assert has_element?(view, ".repo-tabs .current[aria-current=page]", "Plans")
+    refute has_element?(view, "#crumb-plans")
+    refute has_element?(view, "#crumb-tracks[aria-current=page]")
     assert page_title(view) =~ "Plans · #{ctx.project.name}"
 
     view |> element("#plans-panel button", "New plan") |> render_click()
     assert_patch(view, "/p/#{ctx.project.id}/plans?new=plan")
     assert has_element?(view, "#plan-editor h3", "New plan")
-
-    # The crumb on the project's home reaches the same page.
-    {:ok, home, _} = live(log_in_user(ctx.conn, ctx.user), "/p/#{ctx.project.id}")
-    render_async(home)
-    home |> element("#crumb-plans") |> render_click()
-    assert_patch(home, "/p/#{ctx.project.id}/plans")
 
     # Links stored before the page existed still open the plan.
     {:ok, old, _} = live(log_in_user(ctx.conn, ctx.user), "/p/#{ctx.project.id}?plan=#{plan.id}")
@@ -78,7 +75,14 @@ defmodule RavixWeb.PlansLiveTest do
     refute has_element?(view, "#search-plan-link-#{plan.id}")
     view |> form("#search-form", q: "launch") |> render_change()
     assert has_element?(view, "#search-dialog", "No tracks match")
-    refute has_element?(view, "#project-plans-#{ctx.project.id}")
+
+    # The project page shows a track guest no Plans tab.
+    {:ok, project_page, _} = live(log_in_user(build_conn(), guest), "/p/#{ctx.project.id}")
+    # The header waits on the rail's read; under a loaded run that can pass
+    # `render_async/1`'s 100ms default.
+    render_async(project_page, 1_000)
+    assert has_element?(project_page, "#crumb-tracks")
+    refute has_element?(project_page, "#crumb-plans")
 
     # The page itself refuses a track guest too.
     {:ok, page, _} = live(log_in_user(build_conn(), guest), "/p/#{ctx.project.id}/plans")

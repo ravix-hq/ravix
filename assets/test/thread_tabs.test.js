@@ -15,6 +15,11 @@ test('roving focus wraps, Home/End work, and activation stays native', () => {
   key(tabs[1], 'ArrowRight')
   expect(document.activeElement).toBe(tabs[0])
   expect(tabs.map(tab => tab.tabIndex)).toEqual([0, -1])
+  // Standing on end, the list answers up and down as well.
+  key(tabs[0], 'ArrowDown')
+  expect(document.activeElement).toBe(tabs[1])
+  key(tabs[1], 'ArrowUp')
+  expect(document.activeElement).toBe(tabs[0])
   key(tabs[0], 'End')
   expect(document.activeElement).toBe(tabs[1])
   key(tabs[1], 'Home')

@@ -206,7 +206,7 @@ defmodule RavixWeb.WorkspaceSettingsLiveTest do
 
     test "opening a workspace's settings makes it current, in the app shell", ctx do
       {view, _html} = open(ctx.owner, ctx.team.id)
-      assert has_element?(view, "#yard")
+      assert has_element?(view, "#topbar #account-trigger")
       assert has_element?(view, ".settings-crumbs", "Acme")
       assert has_element?(view, ".settings-crumbs [aria-current=page]", "Members")
       assert has_element?(view, "#settings-nav-members[aria-current=page] .settings-count", "1")

@@ -321,15 +321,29 @@ defmodule RavixWeb.ThreadCommentsLiveTest do
     render_async(rail, 1_000)
     {my_parent, mine} = open(ctx, ctx.owner)
     render_async(my_parent, 1_000)
-    refute has_element?(rail, ".track-tab [aria-label='New comment']")
+    row = "#tracks-graph-row-#{ctx.track.id}"
+    refute has_element?(rail, "#{row} [aria-label='New comment']")
 
     comment_mode(mine)
     submit(mine, "@#{ctx.member.login} can you look?")
     render_async(rail, 1_000)
     render_async(my_parent, 1_000)
 
-    assert has_element?(rail, ".track-tab [role=img][aria-label='New comment']")
-    refute has_element?(my_parent, ".track-tab [aria-label='New comment']")
+    # The project page marks the track for the member, and Home's Needs you
+    # says the same, and why; the author, who wrote it, sees no mark.
+    assert has_element?(rail, "#{row} [role=img][aria-label='New comment']")
+    {:ok, home, _} = live(log_in_user(build_conn(), ctx.member), "/home")
+    render_async(home, 1_000)
+    needs = "#home-needs-#{ctx.track.id}"
+    assert has_element?(home, "#{needs} [role=img][aria-label^='New comment']")
+    assert has_element?(home, needs, "mentions you in a comment")
+    {:ok, own_home, _} = live(log_in_user(build_conn(), ctx.owner), "/home")
+    render_async(own_home, 1_000)
+    refute has_element?(own_home, needs)
+    {:ok, own, _} = live(log_in_user(build_conn(), ctx.owner), "/p/#{ctx.project.id}")
+    render_async(own, 1_000)
+    assert has_element?(own, row)
+    refute has_element?(own, "#{row} [aria-label='New comment']")
 
     # The mention puts it in their Inbox, by name, and nobody else's.
     {:ok, inbox, _} = live(log_in_user(build_conn(), ctx.member), "/inbox")

@@ -29,8 +29,11 @@ export async function signIn(page, login, landing = '/') {
   await expect(page.getByRole('link', { name: 'Sign out' }).or(page.locator('#account-trigger'))).toBeVisible();
   await expect(page.locator('[data-phx-main]')).toHaveClass(/phx-connected/);
   // A connected workspace can still be deciding whether to send a first
-  // visit to onboarding. Wait for that decision before inspecting the URL.
-  await expect(page.locator('#project-sections[aria-busy="false"]')
+  // visit to onboarding. Wait for that decision before inspecting the URL:
+  // Sign-in lands on `/` (the Inbox) or the page it was asked for; each
+  // draws a skeleton (Home's rows, the Inbox's cards, a project's
+  // workspace crumb) until the rail is read.
+  await expect(page.locator('body:not(:has(#rail-loading, #inbox-loading, #crumb-workspace-loading)) #topbar')
     .or(page.getByRole('button', { name: 'Skip setup', exact: true }))).toBeAttached();
   await expect(page.locator('[data-phx-main]')).toHaveClass(/phx-connected/);
   // Whoever signs in first, with no project yet, is shown the walkthrough.

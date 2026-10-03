@@ -1,6 +1,7 @@
 import { test, expect } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
 import { signIn, connectClaude } from './sign-in.js';
+import { openAddRepository } from './new-track.js';
 
 const mock = `http://localhost:${process.env.MOCK_PORT || 8893}`;
 
@@ -17,22 +18,24 @@ test('an asleep track says so once, in the inspector, and Wake wakes it', async 
   await page.setViewportSize({ width: 1440, height: 900 });
   await signIn(page, 'threadruntime', '/home');
   await connectClaude(page);
-  await page.getByRole('button', { name: 'Add a repository', exact: true }).first().click();
+  await openAddRepository(page);
   const dialog = page.getByRole('dialog', { name: 'Add a repository', exact: true });
   await dialog.getByLabel('Project name', { exact: true }).fill('Empty states');
   await dialog.getByRole('button', { name: 'Create scratch project', exact: true }).click();
   await expect(dialog).toHaveCount(0);
-  await page.locator('#yard .workspace-project.current .project-add').click();
+  await page.locator('#top-new-track').click();
   await page.getByRole('button', { name: 'Create track', exact: true }).click();
   await expect(page).toHaveURL(url => url.pathname.includes('/t/') && !url.search);
   await expect(page.locator('#track-machine-scope')).toHaveText('Own machine');
 
-  // Setting up: the inspector says the banner's step, and turns while it does.
+  // Setting up: the inspector (the Files tab's page) says the banner's step,
+  // and turns while it does.
+  await page.locator('#track-tab-files').click();
+  const banner = page.locator('#track-setup-status strong');
   const setup = page.locator('#panel-setup');
   await expect(setup).toBeVisible();
   // Setup moves on between two reads, so wait for both to show the same step
   // rather than comparing against a snapshot of the banner.
-  const banner = page.locator('#track-setup-status strong');
   await expect.poll(async () => {
     const [step, heading] = await Promise.all([banner.textContent(), setup.locator('h3').textContent()]);
     return step !== null && step.trim() !== '' && step.trim() === heading?.trim();
@@ -58,11 +61,16 @@ test('an asleep track says so once, in the inspector, and Wake wakes it', async 
   await expect(page.locator('#track-machine-state')).toHaveText('Asleep');
   await expect(page.locator('#track-machine-status')).toHaveCount(0);
   // Only the header chip's description, for a screen reader, carries the rest.
-  await expect(page.getByText('Your next message wakes it')).toHaveCount(1);
+  // (The conversation's facts aside has its own Machine line; it is not
+  // drawn beside the inspector.)
+  await expect(page.getByText('Your next message wakes it')).toHaveCount(2);
+  expect(await page.getByText('Your next message wakes it').evaluateAll(els =>
+    els.filter(el => !el.closest('#track-facts')).length)).toBe(1);
+  await expect(page.locator('#track-facts')).toBeHidden();
   await expect(page.locator('#track-machine-detail')).toHaveText('Your next message wakes it.');
   expect((await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa']).analyze()).violations).toEqual([]);
 
-  await page.getByRole('button', { name: 'Changes', exact: true }).click();
+  await page.locator('#track-tab-changes').click();
   await expect(asleep.getByRole('status')).toHaveText('Machine is asleep');
 
   expect((await request.post(`${mock}/__browser/clean-worktree`, { data: { id: sandbox } })).ok()).toBe(true);
@@ -71,7 +79,7 @@ test('an asleep track says so once, in the inspector, and Wake wakes it', async 
   await expect(page.locator('#changes-empty h3')).toHaveText('No changes yet');
   await expect(page.locator('#track-machine-state')).not.toHaveText('Asleep');
 
-  await page.getByRole('button', { name: 'Preview', exact: true }).click();
+  await page.locator('#track-tab-preview').click();
   await expect(page.locator('#preview-empty h3')).toHaveText('No preview running');
   expect((await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa']).analyze()).violations).toEqual([]);
 });

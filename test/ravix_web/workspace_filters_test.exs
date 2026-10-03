@@ -39,63 +39,50 @@ defmodule RavixWeb.WorkspaceFiltersTest do
     view
   end
 
-  test "Mine hides others' tracks, Everyone shows them, and the choice persists", ctx do
-    view = open(ctx.conn, ctx.viewer, "/p/#{ctx.project.id}")
-    mine_tab = "#project-track-tab-#{ctx.mine.id}"
-    their_tab = "#project-track-tab-#{ctx.theirs.id}"
+  # There is no Everyone / Mine filter any more: every track this person may
+  # see is listed, and each row says whose it is.
+  test "every visible track is listed, each saying whose it is", ctx do
+    view = open(ctx.conn, ctx.viewer, "/home")
+    mine_row = "#home-active-#{ctx.mine.id}"
+    their_row = "#home-active-#{ctx.theirs.id}"
 
-    assert has_element?(view, "#rail-scope-everyone[aria-pressed=true]")
-    assert has_element?(view, their_tab)
+    refute has_element?(view, "#rail-scope-mine")
+    assert has_element?(view, "#{mine_row} .track-owner", "You")
 
-    # Creator avatars: an image with an accessible name, or initials without one.
     assert has_element?(
              view,
-             "#{mine_tab} .track-creator[role=img][aria-label='Created by @ada-lovelace'][title='Created by @ada-lovelace'] img[src='https://avatars.example/ada.png']"
+             "#{mine_row} .track-sharing.sharing-yours[aria-label='Yours, open to the project']"
            )
 
-    assert has_element?(view, "#{their_tab} .track-creator[aria-label='Created by @grace']", "GR")
-    assert has_element?(view, "#{mine_tab}[aria-label*='created by @ada-lovelace']")
+    assert has_element?(view, "#{their_row} .track-owner", "@grace")
 
-    view |> element("#rail-scope-mine") |> render_click()
-    assert has_element?(view, "#rail-scope-mine[aria-pressed=true]")
-    assert has_element?(view, mine_tab)
-    refute has_element?(view, their_tab)
-    assert Accounts.Store.get_user(ctx.viewer.id).rail_scope == :mine
+    assert has_element?(
+             view,
+             "#{their_row} .track-sharing.sharing-shared[aria-label='Shared with you by @grace']"
+           )
 
-    # Persisted server-side: a new page load keeps Mine.
-    reloaded = open(ctx.conn, ctx.viewer, "/p/#{ctx.project.id}")
-    refute has_element?(reloaded, their_tab)
+    assert has_element?(view, "#home-project-#{ctx.project.id}", "2 open tracks")
 
-    # Counts and badges still cover every open track.
-    render_click(reloaded, "dialog", %{name: "search"})
-    reloaded |> form("#search-form", q: "track") |> render_change()
-    assert has_element?(reloaded, "#search-track-link-#{ctx.theirs.id}")
-    reloaded |> form("#search-form", q: "mine: track") |> render_change()
-    assert has_element?(reloaded, "#search-track-link-#{ctx.mine.id}")
-    refute has_element?(reloaded, "#search-track-link-#{ctx.theirs.id}")
-    render_click(reloaded, "dismiss-switcher")
-
-    reloaded |> element("#rail-scope-everyone") |> render_click()
-    assert has_element?(reloaded, their_tab)
-    assert Accounts.Store.get_user(ctx.viewer.id).rail_scope == :everyone
+    # Search still narrows to your own with `mine:`.
+    render_click(view, "dialog", %{name: "search"})
+    view |> form("#search-form", q: "track") |> render_change()
+    assert has_element?(view, "#search-track-link-#{ctx.theirs.id}")
+    view |> form("#search-form", q: "mine: track") |> render_change()
+    assert has_element?(view, "#search-track-link-#{ctx.mine.id}")
+    refute has_element?(view, "#search-track-link-#{ctx.theirs.id}")
   end
 
-  test "Mine keeps the selected track and says when nothing is the viewer's", ctx do
+  test "a Mine saved before the filter went no longer hides anybody's tracks", ctx do
     {:ok, _} = Accounts.put_rail_scope(ctx.viewer, :mine)
-    view = open(ctx.conn, ctx.viewer, "/p/#{ctx.project.id}/t/#{ctx.theirs.id}")
-    assert has_element?(view, "#project-track-tab-#{ctx.theirs.id}")
+    view = open(ctx.conn, ctx.viewer, "/p/#{ctx.project.id}")
 
-    Repo.delete!(ctx.mine)
-    render_patch(view, "/p/#{ctx.project.id}")
-    render_async(view, 5_000)
+    assert has_element?(view, "#tracks-graph-row-#{ctx.mine.id} .track-owner", "You")
+    assert has_element?(view, "#tracks-graph-row-#{ctx.theirs.id} .track-owner", "@grace")
 
-    assert has_element?(
-             view,
-             "#project-tree-tracks, .project-tree-tracks",
-             "No open tracks of yours"
-           )
-
-    assert render_click(view, "rail-scope", %{scope: "nobody"}) =~ "Choose Mine or Everyone."
+    view |> element("#project-tracks-list") |> render_click()
+    assert has_element?(view, "#tracks-row-#{ctx.mine.id} .tracks-row-owner", "You")
+    assert has_element?(view, "#tracks-row-#{ctx.theirs.id} .tracks-row-owner", "@grace")
+    assert has_element?(view, "#tracks-row-#{ctx.theirs.id} .tracks-row-meta", "by @grace")
   end
 
   test "Show closed lists visible closed tracks, muted and uncounted, and never another person's private one",
@@ -123,23 +110,33 @@ defmodule RavixWeb.WorkspaceFiltersTest do
       )
 
     view = open(ctx.conn, ctx.viewer, "/p/#{ctx.project.id}")
-    refute has_element?(view, "#closed-tracks-#{ctx.project.id}")
+    refute has_element?(view, "#tracks-graph-row-#{closed.id}")
+    assert has_element?(view, "#project-tracks-closed[aria-pressed=false]", "Show closed")
 
-    assert has_element?(
-             view,
-             "#show-closed-#{ctx.project.id}[role=menuitemcheckbox][aria-checked=false]"
-           )
-
-    view |> element("#show-closed-#{ctx.project.id}") |> render_click()
+    view |> element("#project-tracks-closed") |> render_click()
     render_async(view, 5_000)
     assert Sections.closed_shown(ctx.viewer) == [ctx.project.id]
-    assert has_element?(view, "#show-closed-#{ctx.project.id}[aria-checked=true]")
-    assert has_element?(view, "#closed-track-#{closed.id}.closed-track", "Closed track")
-    assert has_element?(view, "#closed-track-#{closed.id} .track-creator", "GR")
+    assert has_element?(view, "#project-tracks-closed[aria-pressed=true]", "Hide closed")
+    # Muted, and not a page to open: a span, not a link.
+    assert has_element?(
+             view,
+             "#tracks-graph-row-#{closed.id}.closed span.tracks-title",
+             "Closed track"
+           )
+
+    refute has_element?(view, "#tracks-graph-row-#{closed.id} a.tracks-title")
     assert has_element?(view, "#reopen-track-#{closed.id}")
-    refute has_element?(view, "#closed-track-#{foreign_private.id}")
+    refute has_element?(view, "#tracks-graph-row-#{foreign_private.id}")
     refute render(view) =~ "Grace private"
-    refute has_element?(view, "#project-track-tab-#{closed.id}")
+    # Uncounted: the open count is still the two open tracks.
+    assert has_element?(view, ".project-tracks-count strong", "2 open")
+    assert has_element?(view, ".project-tracks-count", "1 closed")
+    assert has_element?(view, "#crumb-tracks .count", "2")
+
+    view |> element("#project-tracks-list") |> render_click()
+    assert has_element?(view, "#tracks-row-#{closed.id}.closed .tracks-row-meta", "@grace")
+    assert has_element?(view, "#tracks-row-#{closed.id} .tracks-row-state", "Closed")
+    refute has_element?(view, "#tracks-row-#{foreign_private.id}")
 
     # A closed track is not a page to open.
     render_patch(view, "/p/#{ctx.project.id}/t/#{closed.id}")
@@ -147,11 +144,11 @@ defmodule RavixWeb.WorkspaceFiltersTest do
 
     # Persisted per viewer; another person keeps their own setting.
     reloaded = open(ctx.conn, ctx.viewer, "/p/#{ctx.project.id}")
-    assert has_element?(reloaded, "#closed-track-#{closed.id}")
+    assert has_element?(reloaded, "#tracks-graph-row-#{closed.id}")
     assert Sections.closed_shown(ctx.other) == []
 
-    reloaded |> element("#show-closed-#{ctx.project.id}") |> render_click()
-    refute has_element?(reloaded, "#closed-tracks-#{ctx.project.id}")
+    reloaded |> element("#project-tracks-closed") |> render_click()
+    refute has_element?(reloaded, "#tracks-graph-row-#{closed.id}")
     assert Sections.closed_shown(ctx.viewer) == []
   end
 
@@ -169,22 +166,37 @@ defmodule RavixWeb.WorkspaceFiltersTest do
 
     {:ok, _} = Sections.show_closed(ctx.viewer, ctx.project.id, true)
     view = open(ctx.conn, ctx.viewer, "/p/#{ctx.project.id}")
-    list = "#closed-tracks-#{ctx.project.id}"
+    view |> element("#project-tracks-list") |> render_click()
     {older, newest} = Enum.split(closed, 5)
 
-    for track <- newest, do: assert(has_element?(view, "#closed-track-#{track.id}"))
-    for track <- older, do: refute(has_element?(view, "#closed-track-#{track.id}"))
-    # Most recently closed first.
-    [first | _] = String.split(render(element(view, list)), ~s(id="closed-track-)) |> tl()
-    assert first =~ List.last(closed).id
+    for track <- newest, do: assert(has_element?(view, "#tracks-row-#{track.id}.closed"))
+    for track <- older, do: refute(has_element?(view, "#tracks-row-#{track.id}"))
+
+    # Most recently closed first, after the open tracks.
+    open_ids = [ctx.mine.id, ctx.theirs.id]
+
+    [first | _] =
+      view
+      |> render()
+      |> LazyHTML.from_document()
+      |> LazyHTML.query("#tracks-list > li.tracks-row")
+      |> LazyHTML.attribute("id")
+      |> Enum.map(&String.replace_prefix(&1, "tracks-row-", ""))
+      |> Enum.reject(&(&1 in open_ids))
+
+    assert first == List.last(closed).id
 
     view |> element("#closed-older-#{ctx.project.id}", "Show older") |> render_click()
     render_async(view, 5_000)
-    for track <- closed, do: assert(has_element?(view, "#closed-track-#{track.id}"))
+    for track <- closed, do: assert(has_element?(view, "#tracks-row-#{track.id}"))
     refute has_element?(view, "#closed-older-#{ctx.project.id}")
+
     # Counts and badges only count open tracks.
-    assert has_element?(view, "#project-track-tab-#{ctx.mine.id}")
-    refute has_element?(view, "#project-link-#{ctx.project.id} .badge")
+    assert has_element?(view, "#tracks-row-#{ctx.mine.id}:not(.closed)")
+    assert has_element?(view, ".project-tracks-count strong", "2 open")
+    render_patch(view, "/home")
+    assert has_element?(view, "#home-project-#{ctx.project.id}", "2 open tracks")
+    refute has_element?(view, "#home-project-#{ctx.project.id} .badge")
   end
 
   test "Show closed and Reopen belong to project access; track-only members and forged projects are refused",
@@ -197,22 +209,25 @@ defmodule RavixWeb.WorkspaceFiltersTest do
     foreign = insert_project()
 
     view = open(ctx.conn, guest, "/p/#{ctx.project.id}")
-    assert has_element?(view, "#project-track-tab-#{ctx.theirs.id}")
-    refute has_element?(view, "#project-menu-trigger-#{ctx.project.id}")
+    assert has_element?(view, "#tracks-graph-row-#{ctx.theirs.id}")
+    refute has_element?(view, "#project-tracks-closed")
+    refute has_element?(view, "#crumb-settings")
 
     for id <- [ctx.project.id, foreign.id] do
       assert render_click(view, "show-closed", %{project: id, show: "true"}) =~
                "No such thing here."
     end
 
-    refute has_element?(view, "#closed-track-#{shared.id}")
+    refute has_element?(view, "#tracks-graph-row-#{shared.id}")
     assert render_click(view, "reopen-track", %{track: shared.id}) =~ "Track not available."
     assert Sections.closed_shown(guest) == []
 
     # A choice made while a project member lapses with that access.
     Repo.insert_all(Ravix.Projects.ClosedView, [%{user_id: guest.id, project_id: ctx.project.id}])
     reloaded = open(ctx.conn, guest, "/p/#{ctx.project.id}")
-    refute has_element?(reloaded, "#closed-tracks-#{ctx.project.id}")
+    assert has_element?(reloaded, "#tracks-graph-row-#{ctx.theirs.id}")
+    refute has_element?(reloaded, "#tracks-graph-row-#{shared.id}")
+    refute has_element?(reloaded, "#project-tracks-closed")
   end
 
   test "Reopen is offered only where the project has a repository", ctx do
@@ -220,7 +235,7 @@ defmodule RavixWeb.WorkspaceFiltersTest do
     closed = insert_track(project: scratch, closed_at: DateTime.utc_now())
     {:ok, _} = Sections.show_closed(ctx.viewer, scratch.id, true)
     view = open(ctx.conn, ctx.viewer, "/p/#{scratch.id}")
-    assert has_element?(view, "#closed-track-#{closed.id}")
+    assert has_element?(view, "#tracks-graph-row-#{closed.id}.closed")
     refute has_element?(view, "#reopen-track-#{closed.id}")
     assert render_click(view, "reopen-track", %{track: closed.id}) =~ "Track not available."
   end

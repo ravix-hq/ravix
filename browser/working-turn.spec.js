@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { signIn, connectClaude } from './sign-in.js';
+import { openAddRepository } from './new-track.js';
 
 // RAV-91: a working turn, as four surfaces say it --- the shown thread's tab,
 // the composer's Stop, the header's machine chip (which the dock's asleep
@@ -19,12 +20,12 @@ test('the tab, Stop, the machine chip and Checks agree throughout a turn', async
   test.setTimeout(150_000);
   await signIn(page, 'workingturn');
   await connectClaude(page);
-  await page.getByRole('button', { name: 'Add a repository', exact: true }).first().click();
+  await openAddRepository(page);
   const project = page.getByRole('dialog', { name: 'Add a repository', exact: true });
   await project.getByLabel('Project name', { exact: true }).fill('Working turn');
   await project.getByRole('button', { name: 'Create scratch project', exact: true }).click();
   await expect(project).toHaveCount(0);
-  await page.locator('#yard .workspace-project.current .project-add').click();
+  await page.locator('#top-new-track').click();
   await page.getByRole('dialog', { name: 'New track', exact: true })
     .getByRole('button', { name: 'Create track', exact: true }).click();
   const composer = page.getByRole('textbox', { name: 'Message', exact: true });
@@ -40,7 +41,7 @@ test('the tab, Stop, the machine chip and Checks agree throughout a turn', async
   // Request progress is a 2px bar along the page's top edge, transparent
   // for its first 400ms and never in the way of a click.
   await page.evaluate(() => window.liveSocket.enableLatencySim(900));
-  await page.getByRole('navigation', { name: 'Inspector panels' }).getByRole('button', { name: 'Checks', exact: true }).click();
+  await page.locator('#track-tab-checks').click();
   const bar = page.locator('#request-progress');
   await expect(bar).toBeVisible();
   // Read off its animation rather than raced against the clock.
@@ -57,6 +58,10 @@ test('the tab, Stop, the machine chip and Checks agree throughout a turn', async
   await expect(bar).toBeHidden();
   await page.evaluate(() => window.liveSocket.disableLatencySim());
   await expect(page.locator('#git-status')).toBeVisible();
+  // Checks takes the page; the conversation is its own tab again. Checks'
+  // rows stay in the page (hidden), so the record below still reads them.
+  await page.locator('#track-tab-threads').click();
+  await expect(composer).toBeVisible();
 
   // Every DOM change from here on records what each surface says.
   await page.evaluate(() => {
@@ -91,9 +96,11 @@ test('the tab, Stop, the machine chip and Checks agree throughout a turn', async
   await expect(stop).toBeVisible({ timeout: 30_000 });
   await expect(tab).toHaveAttribute('aria-label', /· Running/);
   await expect(chip).toHaveText('Working');
-  await expect(page.locator('#git-working')).toBeVisible();
   await expect(notice).toHaveText('');
   await shoot(page, 'working');
+  await page.locator('#track-tab-checks').click();
+  await expect(page.locator('#git-working')).toBeVisible();
+  await page.locator('#track-tab-threads').click();
 
   await stop.click();
   await expect(stop).toHaveCount(0, { timeout: 30_000 });

@@ -1,6 +1,7 @@
 import { test, expect } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
 import { signIn, connectClaude } from './sign-in.js';
+import { openAddRepository } from './new-track.js';
 
 // Whether `inner` lies wholly inside `outer`, with a pixel of rounding.
 function within(inner, outer) {
@@ -18,17 +19,20 @@ test("the dock's Commands empty state is whole, under no second machine heading"
   // A seeded dedicated-open identity, so the header badge says "Own machine".
   await signIn(page, 'threadruntime', '/home');
   await connectClaude(page);
-  await page.getByRole('button', { name: 'Add a repository', exact: true }).first().click();
+  await openAddRepository(page);
   const dialog = page.getByRole('dialog', { name: 'Add a repository', exact: true });
   await dialog.getByLabel('Project name', { exact: true }).fill('Dock commands');
   await dialog.getByRole('button', { name: 'Create scratch project', exact: true }).click();
   await expect(dialog).toHaveCount(0);
-  await page.locator('#yard .workspace-project.current .project-add').click();
+  await page.locator('#top-new-track').click();
   await page.getByRole('button', { name: 'Create track', exact: true }).click();
   await expect(page).toHaveURL(url => url.pathname.includes('/t/') && !url.search);
   await expect(page.locator('#track-machine-state')).toHaveText('Idle', { timeout: 45_000 });
   await expect(page.locator('#track-machine-scope')).toHaveText('Own machine');
 
+  // The dock is the Terminal tab's page now, not a strip under the inspector.
+  const views = page.getByRole('navigation', { name: 'Track views', exact: true });
+  await views.getByRole('button', { name: 'Terminal', exact: true }).click();
   await page.getByRole('button', { name: 'Commands', exact: true }).click();
   const scroll = page.locator('#track-terminal .term-scroll');
   const empty = page.locator('#track-terminal .dock-empty .empty');
@@ -59,11 +63,12 @@ test("the dock's Commands empty state is whole, under no second machine heading"
     await expect(empty.locator('p')).toBeVisible();
   }
 
-  // The narrow Commands view is all dock, as tall as the window leaves it:
+  // The narrow Terminal view is all dock, as tall as the window leaves it:
   // from a phone held sideways to a tall one.
   await page.setViewportSize({ width: 500, height: 900 });
-  const views = page.getByRole('navigation', { name: 'Track views', exact: true });
-  await views.getByRole('button', { name: 'Commands', exact: true }).click();
+  await views.getByRole('button', { name: 'Threads' }).click();
+  await expect(empty.locator('h3')).toBeHidden();
+  await views.getByRole('button', { name: 'Terminal', exact: true }).click();
   await expect(empty.locator('h3')).toBeVisible();
   const heights = [];
   for (let height = 900; height >= 320; height -= 20) {
@@ -78,9 +83,12 @@ test("the dock's Commands empty state is whole, under no second machine heading"
   await page.setViewportSize({ width: 500, height: 320 });
   await expect(empty.locator('p')).toBeHidden();
   await expect(empty.locator('h3')).toHaveText('No commands yet');
-  await views.getByRole('button', { name: 'Conversation', exact: true }).click();
+  await views.getByRole('button', { name: 'Threads' }).click();
+  await expect(empty.locator('h3')).toBeHidden();
 
   await page.setViewportSize({ width: 1440, height: 900 });
+  await views.getByRole('button', { name: 'Terminal', exact: true }).click();
+  await expect(empty.locator('h3')).toBeVisible();
   expect((await new AxeBuilder({ page }).include('#machine-dock').withTags(['wcag2a', 'wcag2aa']).analyze()).violations).toEqual([]);
 
   await page.getByRole('button', { name: 'Machine stats', exact: true }).click();

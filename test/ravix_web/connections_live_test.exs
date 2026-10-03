@@ -32,7 +32,7 @@ defmodule RavixWeb.ConnectionsLiveTest do
     assert page_title(view) == "Connected apps · You · Ravix"
     assert has_element?(view, ".settings-crumbs [aria-current=page]", "Connected apps")
     assert has_element?(view, "#settings-nav-connected-apps[aria-current=page]")
-    assert has_element?(view, "#yard[aria-label='Projects']")
+    assert has_element?(view, "#topbar #account-trigger")
     refute has_element?(view, ".landing, .invite, .inbox-empty")
     assert has_element?(view, "#connection-#{first.grant.id} h2", "Desktop test")
     assert has_element?(view, "#connection-#{second.grant.id} h2", "Desktop test")

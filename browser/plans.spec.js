@@ -1,6 +1,7 @@
 import { test, expect } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
 import { signIn, connectClaude } from './sign-in.js';
+import { openAddRepository } from './new-track.js';
 
 test('a project plan assigns coordinated tracks and works at phone width', async ({ page }) => {
   // Not @mockuser: this file runs before workspace.spec.js, whose first-visit
@@ -8,14 +9,14 @@ test('a project plan assigns coordinated tracks and works at phone width', async
   // tooling.spec.js's, so plans get @eli.
   await signIn(page, 'eli', '/home');
   await connectClaude(page);
-  await page.getByRole('button', { name: 'Add a repository', exact: true }).first().click();
+  await openAddRepository(page);
   await page.getByLabel('Project name', { exact: true }).fill('Planned release');
   await page.getByRole('button', { name: 'Create scratch project', exact: true }).click();
   const panel = page.locator('#plans-panel');
-  // Plans are not on the project's home; the project row opens them.
-  await expect(page.locator('#project-tabpanel .crumbs')).toBeVisible();
+  // Plans are not on the project's home; its Plans tab opens them.
+  await expect(page.locator('#project-tabpanel nav.repo-tabs')).toBeVisible();
   await expect(panel).toHaveCount(0);
-  await page.getByRole('link', { name: 'Plans in Planned release', exact: true }).click();
+  await page.locator('nav.repo-tabs').getByRole('link', { name: 'Plans', exact: true }).click();
   await expect(page).toHaveURL(/\/plans$/);
   await expect(panel).toBeVisible();
   await panel.getByRole('button', { name: 'New plan', exact: true }).click();
@@ -135,16 +136,28 @@ test('a project plan assigns coordinated tracks and works at phone width', async
   await expect(panel.locator('.chip', { hasText: 'in progress' })).toHaveCount(2);
   const result = await new AxeBuilder({ page }).include('#plans-panel').withTags(['wcag2a', 'wcag2aa']).analyze();
   expect(result.violations).toEqual([]);
-  // Track navigation lives in the sidebar and follows its mobile collapse.
-  await page.setViewportSize({ width: 1280, height: 844 });
-  const tabs = page.locator('#yard .workspace-project.current .project-tree-tracks');
-  await expect(tabs).toHaveAttribute('aria-label', /^Tracks in /);
-  await expect(tabs.locator(`a[href="${uiHref}"]`)).toBeVisible();
-  await page.setViewportSize({ width: 390, height: 844 });
-  await expect(tabs).not.toBeVisible();
-  await page.getByRole('button', { name: 'Menu', exact: true }).click();
-  await expect(tabs.locator(`a[href="${uiHref}"]`)).toBeInViewport();
-  await page.getByRole('button', { name: 'Close menu', exact: true }).click();
+  // The assigned tracks are listed on the project's Tracks tab, at desktop
+  // and phone widths alike, and Back returns to the plan.
+  const plansUrl = page.url();
+  for (const width of [1280, 390]) {
+    await page.setViewportSize({ width, height: 844 });
+    // The project's tabs stay whole above a long plan: nothing covers the
+    // Tracks tab where a person would click it.
+    const tab = page.locator('#crumb-tracks');
+    await expect(tab).toBeVisible();
+    expect(await tab.evaluate(el => {
+      const r = el.getBoundingClientRect();
+      return !!document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2)?.closest('#crumb-tracks');
+    }), 'the Tracks tab is uncovered').toBe(true);
+    await tab.click();
+    const tracks = page.locator('#project-tracks');
+    await expect(tracks).toBeVisible();
+    const link = tracks.locator(`a[href="${uiHref}"]`);
+    await link.scrollIntoViewIfNeeded();
+    await expect(link).toBeInViewport();
+    await page.goBack();
+    await expect(page).toHaveURL(plansUrl);
+  }
 
   await expect(panel).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);

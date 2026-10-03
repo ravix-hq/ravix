@@ -125,7 +125,9 @@ defmodule RavixWeb.SettingsFrameTest do
       stub_settings(ctx.project)
       view = open(ctx.conn, ctx.user, "/p/#{ctx.project.id}/settings/agent")
 
-      assert has_element?(view, "#yard")
+      assert has_element?(view, "#topbar")
+      # The project's own header and tabs give way to the settings frame.
+      refute has_element?(view, "header.repo-head")
       assert has_element?(view, ".settings-crumbs li", "Atlas")
       assert has_element?(view, ".settings-crumbs [aria-current=page]", "Agent")
       assert has_element?(view, "#settings-title", "Agent")
@@ -348,12 +350,11 @@ defmodule RavixWeb.SettingsFrameTest do
       render_async(view)
       refute has_element?(view, "#crumb-settings")
       refute has_element?(view, "#crumb-people")
-      refute has_element?(view, "#project-menu-settings-#{ctx.project.id}")
       view |> element(".crumbs button", "People") |> render_click()
       assert has_element?(view, "#people-dialog")
     end
 
-    test "the owner reaches settings from the project header and its ⋯ menu", ctx do
+    test "the owner reaches settings from the project header's People and Settings tabs", ctx do
       stub_settings(ctx.project)
       view = open(ctx.conn, ctx.user, "/p/#{ctx.project.id}")
       assert has_element?(view, ~s(#crumb-settings[href="/p/#{ctx.project.id}/settings/general"]))
@@ -362,7 +363,7 @@ defmodule RavixWeb.SettingsFrameTest do
       assert has_element?(view, "#project-access-person-#{ctx.user.login}", "owner")
 
       render_patch(view, "/p/#{ctx.project.id}")
-      view |> element("#project-menu-settings-#{ctx.project.id}") |> render_click()
+      view |> element("#crumb-settings") |> render_click()
       assert_patch(view, "/p/#{ctx.project.id}/settings/general")
     end
 

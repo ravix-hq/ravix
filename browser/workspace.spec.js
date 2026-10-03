@@ -4,6 +4,7 @@ import AxeBuilder from '@axe-core/playwright';
 import { composerFixture } from './composer-fixture.js';
 import { signIn as signInAs, connectClaude } from './sign-in.js';
 import { openProjectSettings, saveMachine } from './settings.js';
+import { openAddRepository } from './new-track.js';
 
 async function primaryAppearance(locator) {
   return locator.evaluate((element) => {
@@ -13,29 +14,27 @@ async function primaryAppearance(locator) {
   });
 }
 
-// Home's recent tracks (RAV-100): the title and the age line up row to row,
-// and a long name wraps inside its row rather than pushing it wider.
-async function recentColumns(page) {
-  const rows = page.locator('.home-recent .recent-row');
+// Home's projects (RAV-100): each row's name starts on one line down the
+// list, and a long name wraps inside its row rather than pushing it wider.
+async function projectColumns(page) {
+  const rows = page.locator('#home-projects .home-project');
   expect(await rows.count()).toBeGreaterThanOrEqual(2);
   const columns = await rows.evaluateAll((elements) => elements.map((row) => {
-    const title = row.querySelector('.recent-main').getBoundingClientRect();
-    const age = row.querySelector('.track-age').getBoundingClientRect();
-    return { title: title.x, age: age.right, right: row.getBoundingClientRect().right, overflow: row.scrollWidth > row.clientWidth };
+    const title = row.querySelector('.home-project-name').getBoundingClientRect();
+    return { title: title.x, right: row.getBoundingClientRect().right, overflow: row.scrollWidth > row.clientWidth };
   }));
   for (const column of columns) {
     expect(column.title).toBeCloseTo(columns[0].title, 0);
-    expect(column.age).toBeCloseTo(columns[0].age, 0);
     expect(column.right).toBeLessThanOrEqual(page.viewportSize().width);
     expect(column.overflow).toBe(false);
   }
 }
 
-// A track in the open project, from the sidebar's +, with the defaults.
+// A track in the open project, from the top bar's New track, with the defaults.
 // Its setup turn finishes while it is on screen, so it leaves nothing
 // unread behind for the Inbox.
 async function openTrackHere(page) {
-  await page.locator('#yard .workspace-project.current .project-add').click();
+  await page.locator('#top-new-track').click();
   await page.getByRole('button', { name: 'Create track', exact: true }).click();
   await expect(page).toHaveURL(url => url.pathname.includes('/t/'));
   await expect(page.locator('#track-setup-status')).toHaveCount(0, { timeout: 60_000 });
@@ -86,6 +85,9 @@ async function chooseTheme(page, name) {
   if (inMenu) {
     await page.keyboard.press('Escape');
     await expect(page.locator('#account-menu')).toBeHidden();
+    // The menu dropped down over the page; the pointer left on its theme row
+    // would now hover whatever is under it. Rest it on the top bar's gap.
+    await page.mouse.move(Math.round((page.viewportSize()?.width || 1280) * 0.6), 5);
   }
   // Measure the selected palette after its CSS transitions, not a mixed frame.
   await page.evaluate(async () => {
@@ -151,7 +153,7 @@ test('public design loads local Plex fonts and works in dark, light, and narrow 
   expect(fonts).toHaveLength(8);
   expect(fonts.every(font => font.status === 'loaded' && font.family.startsWith('IBM Plex'))).toBe(true);
   expect(await page.evaluate(() => performance.getEntriesByType('resource').filter(entry => entry.name.includes('.woff2')).every(entry => new URL(entry.name).origin === location.origin))).toBe(true);
-  for (const theme of ['Ravix', 'Daylight']) {
+  for (const theme of ['System', 'Daylight']) {
     await chooseTheme(page, theme);
     for (const width of [1280, 820, 390]) {
       await page.setViewportSize({ width, height: 900 });
@@ -345,100 +347,105 @@ test('home quick start creates a scratch project and recent navigation survives 
   // test's rail and Inbox.
   await signInAs(page, 'homerecent');
   await connectClaude(page);
-  await page.getByRole('link', { name: 'Home', exact: true }).first().click();
+  const home = page.locator('#topbar .topbar-home');
+  await home.click();
   await expect(page.getByRole('button', { name: /Open a local project/ })).toHaveCount(0);
   await accessible(page);
   await capture(page, 'home-empty');
   // With no project yet, /home is the first-prompt form (first-run.spec.js);
-  // adding a repository is the sidebar's "Add repository" (RAV-100, RAV-37).
+  // adding a repository is its "Add another repository" (RAV-100, RAV-37),
+  // not the top bar's.
   await expect(page.locator('#home-start')).toBeVisible();
-  await expect(page.locator('#home').getByRole('button', { name: /New project|Add a repository/ })).toHaveCount(0);
-  await page.getByRole('button', { name: 'Add a repository', exact: true }).first().click();
+  // The first run is Home's own frame, not a centred stage page: the side,
+  // the start form in the middle and the (empty) activity on the right.
+  await expect(page.locator('#home.home-dashboard #home-start #home-title')).toHaveText('Start your first track');
+  await expect(page.locator('#home .stage-page-inner')).toHaveCount(0);
+  await expect(page.locator('#home-side #home-section-all')).toBeVisible();
+  await expect(page.locator('#home-side #home-active-empty')).toHaveText('No open tracks.');
+  await expect(page.locator('#home-activity #home-needs-empty')).toBeVisible();
+  await expect(page.locator('#topbar').getByRole('button', { name: /New project|Add a repository/ })).toHaveCount(0);
+  await expect(page.locator('#home-quick-start-add-repository')).toBeVisible();
+  await openAddRepository(page);
   await page.getByLabel('Project name', { exact: true }).fill('Quick start quality');
   // Scratch is the list's last choice, and chosen while nothing else is.
   await expect(page.getByRole('radio', { name: 'No repository (scratch machine)', exact: true })).toBeChecked();
   await page.getByRole('button', { name: 'Create scratch project', exact: true }).click();
   await expect(page.locator('#crumb-plans')).toBeVisible();
-  await expect(page.locator('.crumbs')).toContainText('Quick start quality');
+  await expect(page.locator('#topbar .topbar-crumbs')).toContainText('Quick start quality');
+  const quickId = new URL(page.url()).pathname.split('/')[2];
   await capture(page, 'project-empty');
-  await page.getByRole('link', { name: 'Home', exact: true }).first().click();
-  const recent = page.getByRole('region', { name: 'Recent tracks' });
-  await expect(recent).toContainText('No open tracks yet');
-  await page.locator('#yard .workspace-project', { hasText: 'Quick start quality' })
-    .getByRole('link', { name: /Quick start quality/ }).first().click();
+  // Home's row for it says it has no open track yet.
+  await home.click();
+  const quickRow = page.locator(`#home-project-${quickId}`);
+  await expect(quickRow).toContainText('No open tracks');
+  await quickRow.getByRole('link', { name: /Quick start quality/ }).first().click();
   await openTrackHere(page);
-  await page.getByRole('button', { name: 'Add a repository', exact: true }).first().click();
+  await openAddRepository(page);
   await page.getByLabel('Project name', { exact: true }).fill('A much longer project name to verify columns and narrow screen wrapping');
   await page.getByRole('button', { name: 'Create scratch project', exact: true }).click();
   await expect(page.locator('#crumb-plans')).toBeVisible();
+  const longId = new URL(page.url()).pathname.split('/')[2];
   await openTrackHere(page);
-  await page.getByRole('link', { name: 'Home', exact: true }).first().click();
-  await expect(recent.getByRole('link')).toHaveCount(2);
-  await expect(recent).toContainText('Quick start quality');
-  await expect(recent).toContainText('@homerecent');
-  await recentColumns(page);
-  for (const theme of ['Ravix', 'Daylight']) {
+  await home.click();
+  // Each project's row counts its open track and draws it as a live pill.
+  for (const id of [quickId, longId]) {
+    await expect(page.locator(`#home-project-${id}`)).toContainText('1 open track');
+    await expect(page.locator(`#home-project-${id} .lane-strip .lane-pill`)).toHaveCount(1);
+  }
+  await projectColumns(page);
+  for (const theme of ['System', 'Daylight']) {
     await chooseTheme(page, theme);
     await accessible(page);
     await capture(page, `home-${theme}`);
   }
   await page.reload();
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'daylight');
-  // Opening each track reads its setup reply, so the Inbox below is empty.
-  await recent.getByRole('link', { name: /in A much longer project name/ }).click();
-  await expect(page).toHaveURL(/\/p\/.+\/t\//);
-  await expect(page.locator('.track-crumbs')).toBeVisible();
-  await page.getByRole('link', { name: 'Home', exact: true }).first().click();
-  await recent.getByRole('link', { name: /in Quick start quality/ }).click();
-  await expect(page).toHaveURL(/\/p\/.+\/t\//);
-  await expect(page.locator('.track-crumbs')).toBeVisible();
+  // Opening each track (Home's project, then its track) reads its setup
+  // reply, so the Inbox below is empty.
+  for (const id of [longId, quickId]) {
+    await page.locator(`#project-link-${id}`).click();
+    await page.locator('#project-tracks a.tracks-title').first().click();
+    await expect(page).toHaveURL(/\/p\/.+\/t\//);
+    await expect(page.locator('#track-header')).toBeVisible();
+    await home.click();
+  }
   // Exact: an empty inbox must not put a "0" badge in the link's name.
   await page.getByRole('link', { name: 'Inbox', exact: true }).first().click();
   await expect(page.getByRole('heading', { name: "You're all caught up" })).toBeVisible();
   await accessible(page);
   await capture(page, 'inbox-Daylight');
   await page.setViewportSize({ width: 390, height: 844 });
-  const mobileNav = page.getByRole('navigation', { name: 'Workspace navigation' });
-  await mobileNav.getByRole('link', { name: 'Home' }).click();
+  const mobileNav = page.locator('#topbar').getByRole('navigation', { name: 'Workspace', exact: true });
+  await mobileNav.getByRole('link', { name: 'Projects' }).click();
   await accessible(page);
-  await recentColumns(page);
+  await projectColumns(page);
   await capture(page, 'home-mobile');
-  // The rail is gone at this width, and everything in it --- signing out,
-  // the theme picker, the account --- was unreachable until Menu brought it
-  // back over the page. Following a link in it closes it again.
-  const menu = mobileNav.getByRole('button', { name: 'Menu' });
+  // The top bar stays at this width: the account menu --- signing out, the
+  // theme picker --- is one tap away, and the nav row lies under it.
   const account = page.locator('#account-trigger');
-  await expect(account).toBeHidden();
-  await expect(menu).toHaveAttribute('aria-expanded', 'false');
-  await menu.click();
-  await expect(menu).toHaveAttribute('aria-expanded', 'true');
-  await expect(account).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Close menu' })).toBeVisible();
-  await accessible(page);
-  await capture(page, 'home-mobile-menu');
+  await expect(account).toBeInViewport();
   await account.click();
   await expect(page.getByRole('link', { name: 'Sign out' })).toBeVisible();
+  await expect(page.getByRole('link', { name: 'Sign out' })).toBeInViewport();
   await accessible(page);
   await capture(page, 'home-mobile-account-menu');
   await page.keyboard.press('Escape');
   await expect(page.getByRole('link', { name: 'Sign out' })).toBeHidden();
-  await page.keyboard.press('Escape');
-  await expect(account).toBeHidden();
-  await menu.click();
-  await page.getByRole('complementary', { name: 'Projects' }).getByRole('link', { name: 'Inbox' }).click();
+  await expect(account).toBeVisible();
+  await mobileNav.getByRole('link', { name: 'Inbox' }).click();
   await expect(page.getByRole('heading', { name: "You're all caught up" })).toBeVisible();
-  await expect(account).toBeHidden();
-  await expect(menu).toHaveAttribute('aria-expanded', 'false');
+  await expect(mobileNav.getByRole('link', { name: 'Inbox' })).toHaveAttribute('aria-current', 'page');
 });
 
 test('workspace titles follow links, reloads and browser history', async ({ page }) => {
   await signIn(page);
-  for (const name of ['Home', 'Inbox', 'Schedules']) {
-    await page.getByRole('link', { name, exact: true }).first().click();
-    await expect(page).toHaveTitle(`${name} · Ravix`);
+  // The top bar's Projects is Home.
+  for (const [name, title] of [['Projects', 'Home'], ['Inbox', 'Inbox'], ['Schedules', 'Schedules']]) {
+    await page.locator('#topbar .topbar-nav').getByRole('link', { name, exact: true }).click();
+    await expect(page).toHaveTitle(`${title} · Ravix`);
     await page.reload();
     await expect(page.locator('[data-phx-main]')).toHaveClass(/phx-connected/);
-    await expect(page).toHaveTitle(`${name} · Ravix`);
+    await expect(page).toHaveTitle(`${title} · Ravix`);
   }
   await expect(page.getByRole('button', { name: 'Refresh', exact: true })).toHaveAccessibleDescription(
     'Refresh to see the latest run status and changes made in another tab.');
@@ -451,8 +458,8 @@ test('mobile navigation marks the current page and names Search consistently', a
   await signIn(page);
   await page.setViewportSize({ width: 500, height: 844 });
   await page.goto('/home');
-  const nav = page.getByRole('navigation', { name: 'Workspace navigation', exact: true });
-  await expect(nav.getByRole('link', { name: 'Home', exact: true })).toHaveAttribute('aria-current', 'page');
+  const nav = page.locator('#topbar').getByRole('navigation', { name: 'Workspace', exact: true });
+  await expect(nav.getByRole('link', { name: 'Projects', exact: true })).toHaveAttribute('aria-current', 'page');
   await expect(nav.locator('[aria-current="page"]')).toHaveCount(1);
   const gaps = await nav.evaluate(el => {
     const boxes = Array.from(el.children, child => child.getBoundingClientRect());
@@ -466,13 +473,15 @@ test('mobile navigation marks the current page and names Search consistently', a
   await expect(nav.getByRole('link', { name: 'Inbox', exact: true })).toHaveAttribute('aria-current', 'page');
   await expect(nav.locator('[aria-current="page"]')).toHaveCount(1);
   await capture(page, 'mobile-nav-inbox-500');
-  await nav.getByRole('button', { name: 'Search', exact: true }).click();
+  // Search stays in the top bar, above the nav row, under the one name.
+  const search = page.locator('#topbar').getByRole('button', { name: 'Search', exact: true });
+  await expect(search).toBeInViewport();
+  expect((await search.boundingBox()).y).toBeLessThan((await nav.boundingBox()).y);
+  await search.click();
   await expect(page.getByRole('dialog', { name: 'Search', exact: true })).toBeVisible();
   await expect(page.getByLabel('Search projects, tracks and plans')).toBeFocused();
   await page.keyboard.press('Escape');
-  await expect(nav.getByRole('button', { name: 'Search', exact: true })).toBeFocused();
-  await nav.getByRole('button', { name: 'Menu', exact: true }).click();
-  await expect(page.locator('#yard').getByRole('button', { name: 'Search', exact: true })).toBeVisible();
+  await expect(search).toBeFocused();
 });
 
 test('find a track focuses its search field and explains no matches', async ({ page }) => {
@@ -498,15 +507,27 @@ test('find a track focuses its search field and explains no matches', async ({ p
   await expect(open).toBeFocused();
 });
 
-test('keyboard users can resize panels and close dialogs with focus restored', async ({ page }) => {
-  await signIn(page);
-  const handle = page.getByRole('separator', { name: 'Sidebar width' });
-  await handle.focus();
-  await handle.press('Home');
-  await expect(handle).toHaveAttribute('aria-valuenow', '220');
-  await handle.press('ArrowRight');
-  await expect(handle).toHaveAttribute('aria-valuenow', '230');
-  const open = page.getByRole('complementary', { name: 'Projects' }).getByRole('button', { name: 'Add a repository', exact: true }).first();
+test('keyboard users close dialogs with focus restored, and no hidden panel handle takes focus', async ({ page }) => {
+  // The inspector's width handle was the one resizable panel. The inspector
+  // is the track tabs' whole page now, so the handle is not drawn: it must
+  // not be reachable either.
+  await signInAs(page, 'eli', '/home');
+  await connectClaude(page);
+  await openAddRepository(page);
+  const create = page.getByRole('dialog', { name: 'Add a repository' });
+  await create.getByLabel('Project name', { exact: true }).fill('Panel resize');
+  await create.getByRole('button', { name: 'Create scratch project', exact: true }).click();
+  await expect(create).toHaveCount(0);
+  await page.locator('#top-new-track').click();
+  await page.getByRole('button', { name: 'Create track', exact: true }).click();
+  await expect(page.getByRole('textbox', { name: 'Message', exact: true })).toBeEnabled({ timeout: 30_000 });
+  await expect(page.getByRole('separator', { name: 'Inspector width' })).toHaveCount(0);
+  await page.locator('#track-tab-files').click();
+  await expect(page.locator('#inspector')).toBeVisible();
+  await expect(page.getByRole('separator', { name: 'Inspector width' })).toHaveCount(0);
+  // Home's New project opens Add a repository; Escape returns focus to it.
+  await page.locator('#topbar .topbar-home').click();
+  const open = page.locator('#home-add-repository');
   await open.focus();
   await open.press('Enter');
   const dialog = page.getByRole('dialog', { name: 'Add a repository' });
@@ -525,7 +546,7 @@ test('project, track, streaming, image upload, reconnect, and revocation', async
   page.on('pageerror', error => errors.push(error.message));
   await signIn(page);
   await connectClaude(page);
-  await page.getByRole('button', { name: 'Add a repository', exact: true }).first().click();
+  await openAddRepository(page);
   const projectDialog = page.getByRole('dialog', { name: 'Add a repository' });
   await expect(projectDialog).toBeVisible();
   await page.getByLabel('Project name', { exact: true }).fill('Browser quality');
@@ -533,7 +554,7 @@ test('project, track, streaming, image upload, reconnect, and revocation', async
   await page.getByRole('radio', { name: 'mockuser/atlas-api', exact: true }).check();
   await projectDialog.getByRole('button', { name: 'Add repository' }).click();
   await expect(projectDialog).not.toBeVisible();
-  await page.locator('#yard .workspace-project.current .project-add').click();
+  await page.locator('#top-new-track').click();
   const newTrack = page.getByRole('dialog', { name: 'New track', exact: true });
   await expect(newTrack.getByLabel('Branch name')).toHaveValue('');
   await newTrack.getByRole('button', { name: 'Options', exact: true }).click();
@@ -574,13 +595,13 @@ test('project, track, streaming, image upload, reconnect, and revocation', async
   await page.getByRole('button', { name: 'Create track', exact: true }).click();
   const composer = page.getByRole('textbox', { name: 'Message', exact: true });
   await expect(composer).toBeEnabled({ timeout: 30_000 });
-  const selectedTrackTitle = await page.locator('.project-tree-tracks [aria-current="page"] .track-title').textContent();
+  const selectedTrackTitle = (await page.locator('#track-header .track-title-text').textContent()).trim();
   await expect(page).toHaveTitle(`${selectedTrackTitle} · Browser quality · Ravix`);
   // The composer enables once the conversation exists, before the opening
   // turn has made the worktree. A diff read then is honestly empty and the
   // panel does not poll, so wait for the turn to settle first.
   await expect(page.locator('#transcript-status')).toHaveText('Agent replied', { timeout: 30_000 });
-  await page.getByRole('button', { name: 'Changes', exact: true }).click();
+  await page.locator('#track-tab-changes').click();
   await expect(page.locator('.change-file')).toHaveCount(2);
   await page.getByLabel('Filter paths').fill('window');
   await expect(page.locator('.change-file')).toHaveCount(1);
@@ -590,14 +611,14 @@ test('project, track, streaming, image upload, reconnect, and revocation', async
   await accessible(page);
   await capture(page, 'changes-diff');
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.getByRole('navigation', { name: 'Track views' }).getByRole('button', { name: 'Files', exact: true }).click();
+  await page.getByRole('navigation', { name: 'Track views' }).getByRole('button', { name: /^Changes/ }).click();
   await expect(page.locator('.file-diff')).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   await capture(page, 'changes-diff-mobile');
   await page.setViewportSize({ width: 1280, height: 720 });
   await page.getByRole('button', { name: '← All changed files' }).click();
   await expect(page.getByLabel('Filter paths')).toHaveValue('window');
-  await page.getByRole('button', { name: 'Files', exact: true }).click();
+  await page.locator('#track-tab-files').click();
   const explorer = page.locator('.file-explorer');
   const src = explorer.getByRole('button', { name: 'src', exact: true });
   await expect(src).toHaveAttribute('aria-expanded', 'false');
@@ -616,52 +637,33 @@ test('project, track, streaming, image upload, reconnect, and revocation', async
 
 
   await accessible(page);
-  await expect(page.locator('.crumbs')).toHaveCount(1);
-  const firstTrackTab = page.locator('.project-tree-tracks .workspace-track[aria-current="page"]');
-  await expect(firstTrackTab).toBeVisible();
-  const firstTrackName = (await firstTrackTab.locator('.track-title').textContent()).trim();
+  await expect(page.getByRole('navigation', { name: 'Breadcrumb' })).toHaveCount(1);
   // RAV-48: the first prompt retitles the track, so find it again by id.
-  const firstTrackTabId = await firstTrackTab.getAttribute('id');
-  await expect(page.locator('#yard .project-tree-tracks .workspace-track')).toHaveCount(1);
-  // Personal sections persist across reloads and never delete the projects inside.
-  await page.getByRole('button', { name: 'Manage sections', exact: true }).click();
-  await page.getByLabel('New section', { exact: true }).fill('Browser work');
-  await page.getByRole('button', { name: 'Create section', exact: true }).click();
-  const sectionsDialog = page.getByRole('dialog', { name: 'Project sections', exact: true });
-  await expect(sectionsDialog.getByLabel('Section name', { exact: true })).toHaveValue('Browser work');
-  await page.keyboard.press('Escape');
-  await expect(page.getByRole('combobox', { name: 'Section for Browser quality', exact: true })).toHaveCount(0);
-  const sectionGroup = page.locator('.project-section').filter({ has: page.locator('.section-toggle', { hasText: 'Browser work' }) });
-  await page.locator('#project-tree .workspace-project', { hasText: 'Browser quality' }).dragTo(sectionGroup);
-  await expect(sectionGroup.locator('.workspace-project-name')).toContainText('Browser quality');
-  await sectionGroup.locator('.section-toggle').click();
-  await expect(sectionGroup.locator('.workspace-project-name')).toBeHidden();
-  await page.reload();
-  await expect(sectionGroup.locator('.section-toggle')).toHaveAttribute('aria-expanded', 'false');
-  await sectionGroup.locator('.section-toggle').click();
-  await expect(sectionGroup.locator('.workspace-project-name')).toBeVisible();
-  await accessible(page);
-  await capture(page, 'project-sections');
-  await page.getByRole('button', { name: 'Manage sections', exact: true }).click();
-  await sectionsDialog.getByLabel('Section name', { exact: true }).fill('Renamed work');
-  await sectionsDialog.getByRole('button', { name: 'Rename', exact: true }).click();
-  await expect(sectionsDialog.getByLabel('Section name', { exact: true })).toHaveValue('Renamed work');
-  await sectionsDialog.getByRole('button', { name: 'Remove section', exact: true }).click();
-  await expect(sectionsDialog.getByLabel('Section name', { exact: true })).toHaveCount(0);
-  await page.keyboard.press('Escape');
-  await expect(page.locator('#section-other .workspace-project-name', { hasText: 'Browser quality' })).toBeVisible();
-
+  const firstTrackId = new URL(page.url()).pathname.split('/t/')[1];
+  const firstTrackName = (await page.locator('#track-header .track-title-text').textContent()).trim();
+  // Its project's page lists it, and only it.
+  await page.locator('#topbar .topbar-crumbs a[href^="/p/"]').click();
+  await expect(page.locator('#tracks-graph [id^="tracks-graph-row-"]')).toHaveCount(1);
+  await expect(page.locator(`#tracks-graph-row-${firstTrackId}`)).toBeVisible();
+  await page.goBack();
+  await expect(page).toHaveURL(new RegExp(`/t/${firstTrackId}`));
+  await expect(composer).toBeEnabled();
 
   await page.keyboard.press('Escape');
 
+  // The dock is the Terminal tab's page; the conversation's has none.
   await expect(page.getByLabel('Command', { exact: true })).not.toBeVisible();
+  await page.locator('#track-tab-terminal').click();
   await page.getByRole('button', { name: 'Commands', exact: true }).click();
   await expect(page.locator('#track-terminal .dock-empty')).toContainText('For an interactive shell, open a terminal with +.');
   await expect(page.locator('#track-terminal').getByRole('button', { name: 'Run', exact: true })).toHaveCount(0);
   await page.getByLabel('Command', { exact: true }).fill('echo draft');
-  await page.getByRole('button', { name: 'Collapse the dock' }).click();
+  // Leaving for the conversation and coming back keeps the draft (the
+  // dock's own collapse is not drawn on its page).
+  await expect(page.getByRole('button', { name: 'Collapse the dock' })).toBeHidden();
+  await page.locator('#track-tab-threads').click();
   await expect(page.getByLabel('Command', { exact: true })).not.toBeVisible();
-  await page.getByRole('button', { name: 'Expand the dock' }).click();
+  await page.locator('#track-tab-terminal').click();
   await expect(page.getByLabel('Command', { exact: true })).toHaveValue('echo draft');
   await page.getByRole('button', { name: 'Machine stats', exact: true }).click();
   await expect(page.getByLabel('Command', { exact: true })).not.toBeVisible();
@@ -676,9 +678,9 @@ test('project, track, streaming, image upload, reconnect, and revocation', async
   await capture(page, 'machine-stats');
   await page.getByRole('button', { name: 'Commands', exact: true }).click();
   await expect(page.getByLabel('Command', { exact: true })).toHaveValue('echo draft');
-  await page.getByRole('button', { name: 'Collapse the dock' }).click();
+  await page.locator('#track-tab-threads').click();
   await composer.fill('A draft while opening workspace dialogs');
-  const newTrackTrigger = page.locator('#yard .workspace-project.current .project-add');
+  const newTrackTrigger = page.locator('#top-new-track');
   await newTrackTrigger.click();
   await expect(newTrack).toBeVisible();
   await page.keyboard.press('Escape');
@@ -691,8 +693,10 @@ test('project, track, streaming, image upload, reconnect, and revocation', async
   const removeProject = settings.getByRole('button', { name: 'Delete project', exact: true });
   await removeProject.scrollIntoViewIfNeeded();
   await expect(removeProject).toBeInViewport();
-  await expect(page.locator('#yard')).toBeVisible();
+  await expect(page.locator('#topbar')).toBeVisible();
   await capture(page, 'settings');
+  // Danger, General, the project's page, and the track.
+  await page.goBack();
   await page.goBack();
   await page.goBack();
   await expect(page).toHaveURL(trackPage);
@@ -732,8 +736,8 @@ test('project, track, streaming, image upload, reconnect, and revocation', async
   // yet and the track's branch, URL and default draft left as they were.
   const trackUrl = page.url();
   // A new track is titled with its branch, which the header then shows once.
-  const branch = (await page.locator('.project-tree-tracks [aria-current="page"] .track-title').textContent()).trim();
-  await expect(page.locator('.track-crumbs')).toContainText(branch);
+  const branch = (await page.locator('#track-header .track-title-text').textContent()).trim();
+  await expect(page.locator('#track-header')).toContainText(branch);
   const threadTabs = page.getByRole('navigation', { name: 'Threads', exact: true });
   const currentThread = threadTabs.locator('[aria-selected="true"]');
   const threadTab = id => threadTabs.locator(`button[data-thread-id="${id}"]`);
@@ -743,7 +747,7 @@ test('project, track, streaming, image upload, reconnect, and revocation', async
   await expect(currentThread).toHaveAttribute('data-thread-id', 'draft');
   await expect(page.locator('#draft-thread-empty')).toContainText('Your first message starts this thread.');
   await expect(composer).toHaveValue('');
-  await expect(page.locator('.track-crumbs')).toContainText(branch);
+  await expect(page.locator('#track-header')).toContainText(branch);
   expect(page.url()).toBe(trackUrl);
   await composer.fill('A separate thread draft');
   await threadTab(defaultThread).click();
@@ -779,21 +783,19 @@ test('project, track, streaming, image upload, reconnect, and revocation', async
   await accessible(page);
   await capture(page, 'track-Daylight');
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.getByRole('navigation', { name: 'Track views' }).getByRole('button', { name: 'Conversation', exact: true }).click();
+  await page.getByRole('navigation', { name: 'Track views' }).getByRole('button', { name: /^Threads/ }).click();
   await accessible(page);
   await capture(page, 'track-mobile');
-  // On a phone the project's own controls live in the yard, and the yard is
-  // behind Menu. The owner's "Project settings" is the one worth proving
-  // reachable from the current project row.
-  const trackMenu = page.getByRole('navigation', { name: 'Workspace navigation' }).getByRole('button', { name: 'Menu' });
-  await expect(page.locator('#yard .workspace-project.current button[data-tip="Project settings"]')).toBeHidden();
-  await trackMenu.click();
-  await expect(page.locator('#yard .workspace-project.current button[data-tip="Project settings"]')).toBeVisible();
+  // On a phone the top bar stays, and the project's own controls are one
+  // step away through the header's project crumb. The owner's Settings is
+  // the one worth proving reachable.
   await expect(page.locator('#account-trigger')).toBeVisible();
+  await page.locator('#topbar .topbar-crumbs a[href^="/p/"]').click();
+  await expect(page.locator('#crumb-settings')).toBeInViewport();
   await accessible(page);
-  await capture(page, 'track-mobile-menu');
-  await page.getByRole('button', { name: 'Close menu' }).click();
-  await expect(page.locator('#yard .workspace-project.current button[data-tip="Project settings"]')).toBeHidden();
+  await capture(page, 'project-mobile');
+  await page.goBack();
+  await expect(composer).toBeVisible();
   await page.setViewportSize({ width: 1280, height: 720 });
   // The same session is revoked from a second tab while the first remains connected.
   const trackURL = page.url();
@@ -829,23 +831,25 @@ test('project, track, streaming, image upload, reconnect, and revocation', async
   // answer for fifteen seconds, so anything inserted ahead of it moves what
   // that test is actually measuring.
   const firstLane = await page.locator('#transcript-scroll').getAttribute('data-track');
-  await page.locator('#yard .workspace-project.current .project-add').click();
+  await page.locator('#top-new-track').click();
   await expect(newTrack).toBeVisible();
   await newTrack.getByRole('button', { name: 'Options', exact: true }).click();
   await page.getByLabel('Branch name').fill('second-lane');
   await page.getByRole('button', { name: 'Create track', exact: true }).click();
-  await expect(page.locator('.track-crumbs')).toContainText('Second lane');
+  await expect(page.locator('#track-header')).toContainText('Second lane');
   await expect(composer).toBeEnabled({ timeout: 30_000 });
   await expect(page.locator('#transcript-scroll')).not.toHaveAttribute('data-track', firstLane);
   // The track arrived at is its own; the one left behind had three turns in it.
   await expect(page.locator('#transcript-turns')).not.toContainText('Draft survives reconnect');
   await accessible(page);
 
-  const firstTrackLink = page.locator(`#${firstTrackTabId}`);
-  await expect(firstTrackLink.locator('.track-title')).not.toHaveText(firstTrackName);
-  const firstTrackTitle = (await firstTrackLink.locator('.track-title').textContent()).trim();
+  await page.locator('#topbar .topbar-crumbs a[href^="/p/"]').click();
+  const firstTrackLink = page.locator(`#tracks-graph-row-${firstTrackId} .tracks-title`);
+  const shownName = async () => (await firstTrackLink.getAttribute('title')).split('\n')[0];
+  await expect.poll(shownName).not.toBe(firstTrackName);
+  const firstTrackTitle = await shownName();
   await firstTrackLink.click();
-  await expect(page.locator('.track-crumbs')).toContainText(firstTrackTitle);
+  await expect(page.locator('#track-header')).toContainText(firstTrackTitle);
   await expect(page.locator('#transcript-scroll')).toHaveAttribute('data-track', firstLane);
   await expect(page.locator('#transcript-turns')).toContainText('Draft survives reconnect');
 
@@ -909,7 +913,6 @@ test('help explains desktop connections and stays accessible on mobile', async (
   // comes back to the menu's trigger rather than to a hidden item.
   await expect(account).toBeFocused();
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.getByRole('navigation', { name: 'Workspace navigation' }).getByRole('button', { name: 'Menu' }).click();
   await account.click();
   await help.click();
   await expect(dialog).toBeVisible();
@@ -924,7 +927,7 @@ test('help explains desktop connections and stays accessible on mobile', async (
 test('project settings navigate, warn before discarding, and save sections accessibly', async ({ page }) => {
   await signIn(page);
   await connectClaude(page);
-  await page.getByRole('button', { name: 'Add a repository', exact: true }).first().click();
+  await openAddRepository(page);
   const create = page.getByRole('dialog', { name: 'Add a repository' });
   await create.getByLabel('Project name', { exact: true }).fill('Settings browser');
   await create.getByRole('button', { name: 'Create scratch project', exact: true }).click();
@@ -933,7 +936,9 @@ test('project settings navigate, warn before discarding, and save sections acces
   const nav = page.getByRole('navigation', { name: 'Settings sections' });
   const leave = page.getByRole('alertdialog', { name: 'Leave without saving?' });
   await expect(page).toHaveTitle('General · Settings browser · Ravix');
-  await expect(page.getByRole('navigation', { name: 'Breadcrumb' })).toContainText('Settings browser');
+  // Two breadcrumbs here: the top bar's (the project) and the page's own.
+  await expect(page.locator('nav.settings-crumbs')).toContainText('Settings browser');
+  await expect(page.locator('#topbar .topbar-crumbs')).toContainText('Settings browser');
   // One Save a page, in the unsaved-changes bar (RAV-74).
   const bar = page.getByRole('region', { name: 'Unsaved changes' });
   await settings.getByLabel('Name', { exact: true }).fill('Unsaved name');
@@ -1046,18 +1051,18 @@ test('composer Send stays compact and keeps its arrow after repeated submissions
   test.setTimeout(150_000);
   await signIn(page);
   await connectClaude(page);
-  await page.getByRole('button', { name: 'Add a repository', exact: true }).first().click();
+  await openAddRepository(page);
   const projectDialog = page.getByRole('dialog', { name: 'Add a repository', exact: true });
   await projectDialog.getByLabel('Project name', { exact: true }).fill('Send regression');
   await projectDialog.getByRole('button', { name: 'Create scratch project', exact: true }).click();
   await expect(projectDialog).toHaveCount(0);
-  await page.locator('#yard .workspace-project.current .project-add').click();
+  await page.locator('#top-new-track').click();
   // New tracks are named after their reserved ravix/ branch (#154).
   const newTrack = page.getByRole('dialog', { name: 'New track', exact: true });
   await newTrack.getByRole('button', { name: 'Options', exact: true }).click();
   await newTrack.getByLabel('Branch name', { exact: true }).fill('compact-send');
   await newTrack.getByRole('button', { name: 'Create track', exact: true }).click();
-  await expect(page.locator('.track-crumbs')).toContainText('Compact send');
+  await expect(page.locator('#track-header')).toContainText('Compact send');
   const composer = page.getByRole('textbox', { name: 'Message', exact: true });
   const send = page.getByRole('button', { name: 'Send', exact: true });
   await expect(composer).toBeEnabled({ timeout: 30_000 });
@@ -1090,7 +1095,7 @@ test('composer Send stays compact and keeps its arrow after repeated submissions
     await expect(model).toHaveText(/^\S/);
     expect(await model.getAttribute('title')).toMatch(/^(Claude Code|Codex) · /);
     await expect(model).toHaveAccessibleName(await model.locator('.truncate').innerText());
-    expect(await model.evaluate(el => getComputedStyle(el).fontFamily)).toContain('IBM Plex Sans');
+    expect(await model.evaluate(el => getComputedStyle(el).fontFamily)).toContain('Segoe UI');
     await fitsViewport(page);
   };
   // The same checks for the 220-cell theme/viewport matrix, read in one
@@ -1138,7 +1143,7 @@ test('composer Send stays compact and keeps its arrow after repeated submissions
     expect(m.formText).not.toContain('to send');
     expect(m.modelText).toMatch(/^\S/);
     expect(m.modelTitle).toMatch(/^(Claude Code|Codex) · /);
-    expect(m.modelFont).toContain('IBM Plex Sans');
+    expect(m.modelFont).toContain('Segoe UI');
     expect(m.fits).toBe(true);
   };
   await chooseTheme(page, 'Bubblegum');
@@ -1235,16 +1240,17 @@ test('shared project prefixes stay muted and truncate across every theme', async
   test.setTimeout(120_000);
   await signIn(page);
   await connectClaude(page);
-  await page.getByRole('link', { name: 'Home', exact: true }).first().click();
-  await page.getByRole('button', { name: 'Add a repository', exact: true }).first().click();
+  await page.locator('#topbar .topbar-home').click();
+  await openAddRepository(page);
   const name = 'Shared project with a deliberately long name for a narrow rail';
   await page.getByLabel('Project name', { exact: true }).fill(name);
   await page.getByRole('button', { name: 'Create scratch project', exact: true }).click();
   // An owner's project page links to its plans (RAV-8), not the track picker.
   await expect(page.locator('#crumb-plans')).toBeVisible();
   const projectPath = new URL(page.url()).pathname;
-  await expect(page.locator('.workspace-project-name.selected .project-label')).toHaveText(name);
-  await expect(page.locator('.workspace-project-name.selected .project-label .dim')).toHaveCount(0);
+  await expect(page.locator('#topbar .topbar-crumbs .project-label')).toHaveText(name);
+  await expect(page.locator('#topbar .topbar-crumbs .project-label .dim')).toHaveCount(0);
+  const projectId = projectPath.split('/')[2];
   // The owner's People is the project's Access settings page (RAV-74).
   await page.locator('#workspace-stage').getByRole('link', { name: 'People', exact: true }).click();
   await expect(page).toHaveURL(/\/settings\/access$/);
@@ -1273,12 +1279,14 @@ test('shared project prefixes stay muted and truncate across every theme', async
     await member.getByRole('link', { name: 'Sign in as @eli', exact: true }).click();
     await member.goto(projectPath);
     await expect(member.locator('[data-phx-main]')).toHaveClass(/phx-connected/);
-    const label = member.locator('.workspace-project-name.selected .project-label');
-    await expect(label).toHaveText(`mockuser / ${name}`);
+    await expect(member.locator('#topbar .topbar-crumbs .project-label')).toHaveText(`mockuser / ${name}`);
     await expect(member).toHaveTitle(`mockuser / ${name} · Ravix`);
-    const railWidth = member.getByRole('separator', { name: 'Sidebar width' });
-    await railWidth.focus();
-    await railWidth.press('Home');
+    // Home's project list, at a phone's width, where the name must give way.
+    await member.setViewportSize({ width: 390, height: 844 });
+    await member.goto('/home');
+    await expect(member.locator('[data-phx-main]')).toHaveClass(/phx-connected/);
+    const label = member.locator(`#project-link-${projectId} .project-label`);
+    await expect(label).toHaveText(`mockuser / ${name}`);
     // The menu supplies every supported theme's display name.
     const names = await member.getByRole('menuitemradio', { includeHidden: true }).evaluateAll(nodes => nodes.map(node => node.getAttribute('data-theme-name')));
     expect(names.length).toBeGreaterThan(2);
@@ -1297,12 +1305,12 @@ test('shared project prefixes stay muted and truncate across every theme', async
           dim,
           ellipsis: style.textOverflow,
           clipped: node.scrollWidth > node.clientWidth,
-          fits: node.getBoundingClientRect().right <= node.closest('.workspace-project-name').getBoundingClientRect().right,
+          fits: node.getBoundingClientRect().right <= node.closest('.home-project-title').getBoundingClientRect().right,
         };
       });
       expect(measured).toMatchObject({ prefix: measured.dim, ellipsis: 'ellipsis', clipped: true, fits: true });
     }
-    for (const theme of ['Ravix', 'Daylight']) {
+    for (const theme of ['System', 'Daylight']) {
       await chooseTheme(member, theme);
       await capture(member, `shared-project-${theme}`);
     }
@@ -1316,10 +1324,10 @@ test('slow navigation and requests show feedback until their response arrives', 
   await signIn(page);
   await expect(page.locator('#request-progress')).toBeHidden();
   await page.evaluate(() => window.liveSocket.enableLatencySim(700));
-  await page.locator('.yard-nav a').filter({ hasText: 'Home' }).click();
+  await page.locator('#topbar .topbar-nav').getByRole('link', { name: 'Projects', exact: true }).click();
   await expect(page.locator('#request-progress')).toBeVisible();
   await expect(page.locator('#request-progress')).toBeHidden();
-  await page.locator('.yard-nav button').filter({ hasText: 'Add a repository' }).click();
+  await page.locator('#home-add-repository, #home-quick-start-add-repository').click();
   await expect(page.locator('#request-progress')).toBeVisible();
   await expect(page.locator('#new-project-dialog')).toBeVisible();
   await expect(page.locator('#request-progress')).toBeHidden();
@@ -1347,10 +1355,17 @@ test('a slow first connect shows skeletons and no request toast, never an empty 
   try {
     await page.goto('/inbox');
     await expect(page.locator('#inbox-loading')).toBeVisible();
-    await expect(page.locator('#rail-loading .rail-row-skeleton').first()).toBeVisible();
     await expect(page.locator('.inbox-empty')).toHaveCount(0);
     await expect(page.locator('[data-phx-main].phx-connected')).toHaveCount(1, { timeout: 15000 });
     await expect(page.locator('#inbox-loading')).toHaveCount(0, { timeout: 15000 });
+    expect(await page.evaluate(() => window.__requestToast)).toBe(false);
+    // Home's projects are skeleton rows too, until the rail is read.
+    await page.goto('/home');
+    await expect(page.locator('#rail-loading .rail-row-skeleton').first()).toBeVisible();
+    await expect(page.locator('#home-projects')).toHaveCount(0);
+    await expect(page.locator('[data-phx-main].phx-connected')).toHaveCount(1, { timeout: 15000 });
+    await expect(page.locator('#rail-loading')).toHaveCount(0, { timeout: 15000 });
+    await expect(page.locator('#home-projects')).toBeVisible();
     expect(await page.evaluate(() => window.__requestToast)).toBe(false);
   } finally {
     await page.evaluate(() => window.liveSocket.disableLatencySim());
@@ -1378,4 +1393,84 @@ test('schedule Day appears only for weekly repetition without losing the draft',
   await expect(form.getByLabel('Name', { exact: true })).toHaveValue('Weekly review');
   await expect(form.getByLabel('Prompt', { exact: true })).toHaveValue('Review recent changes');
   await accessible(page);
+});
+
+// Sections (personal, and only ever Home's grouping since the sidebar went):
+// the Manage sections dialog files a project, Home's side filters by the
+// sections that hold projects, the sections survive a reload, and removing
+// the section being shown falls back to All and keeps its projects.
+test('Home sections file projects through the dialog and filter the list', async ({ page }) => {
+  test.setTimeout(90_000);
+  // Its own person, so the sections made here reach no other spec's Home.
+  await signInAs(page, 'sidebartree', '/home');
+  await connectClaude(page);
+  const ids = {};
+  for (const name of ['Sections filed', 'Sections loose']) {
+    await openAddRepository(page);
+    const dialog = page.getByRole('dialog', { name: 'Add a repository', exact: true });
+    await dialog.getByLabel('Project name', { exact: true }).fill(name);
+    await dialog.getByRole('button', { name: 'Create scratch project', exact: true }).click();
+    await expect(dialog).toHaveCount(0);
+    await expect(page).toHaveURL(/\/p\/[0-9a-f-]{36}$/);
+    await expect.poll(() => Object.values(ids).includes(new URL(page.url()).pathname.split('/')[2])).toBe(false);
+    ids[name] = new URL(page.url()).pathname.split('/')[2];
+  }
+  await page.locator('#topbar .topbar-home').click();
+  const filed = page.locator(`#home-project-${ids['Sections filed']}`);
+  const loose = page.locator(`#home-project-${ids['Sections loose']}`);
+  await expect(filed).toBeVisible();
+  await expect(loose).toBeVisible();
+  const side = page.locator('#home-side');
+  // One group, nothing to filter between yet.
+  await expect(side.locator('[id^="home-section-"]:not(#home-section-all)')).toHaveCount(0);
+
+  const sections = page.getByRole('dialog', { name: 'Project sections', exact: true });
+  await page.locator('#manage-sections').click();
+  for (const [index, name] of ['Filed', 'Empty shelf'].entries()) {
+    await sections.getByLabel('New section', { exact: true }).fill(name);
+    await sections.getByRole('button', { name: 'Create section', exact: true }).click();
+    await expect(sections.getByLabel('Section name', { exact: true })).toHaveCount(index + 1);
+  }
+  await sections.getByRole('combobox', { name: 'Section for Sections filed', exact: true }).selectOption({ label: 'Filed' });
+  await expect(sections.getByRole('combobox', { name: 'Section for Sections filed', exact: true }))
+    .toHaveValue(/^[0-9a-f-]{36}$/);
+  await accessible(page);
+  await page.keyboard.press('Escape');
+  await expect(sections).toHaveCount(0);
+  await expect(page.locator('#manage-sections')).toBeFocused();
+
+  // Only sections holding projects are filters; the empty one is not.
+  const filedFilter = side.getByRole('button', { name: /^Filed\b/ });
+  const all = page.locator('#home-section-all');
+  await expect(filedFilter).toBeVisible();
+  await expect(side.getByRole('button', { name: /^Empty shelf\b/ })).toHaveCount(0);
+  await expect(all).toHaveAttribute('aria-pressed', 'true');
+  await filedFilter.click();
+  await expect(filedFilter).toHaveAttribute('aria-pressed', 'true');
+  await expect(all).toHaveAttribute('aria-pressed', 'false');
+  await expect(filed).toBeVisible();
+  await expect(loose).toHaveCount(0);
+  await accessible(page);
+  await capture(page, 'home-sections');
+  await all.click();
+  await expect(loose).toBeVisible();
+
+  // Sections are kept by the server.
+  await page.reload();
+  await expect(page.locator('[data-phx-main]')).toHaveClass(/phx-connected/);
+  await expect(filedFilter).toBeVisible();
+  await filedFilter.click();
+  await expect(loose).toHaveCount(0);
+
+  // Removing the section on show falls back to All, and keeps its project.
+  await page.locator('#manage-sections').click();
+  await sections.locator('.section-editor', { has: page.locator('input[value="Filed"]') })
+    .getByRole('button', { name: 'Remove section', exact: true }).click();
+  await expect(sections.getByLabel('Section name', { exact: true })).toHaveCount(1);
+  await page.keyboard.press('Escape');
+  await expect(sections).toHaveCount(0);
+  await expect(filedFilter).toHaveCount(0);
+  await expect(all).toHaveAttribute('aria-pressed', 'true');
+  await expect(filed).toBeVisible();
+  await expect(loose).toBeVisible();
 });

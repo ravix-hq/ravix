@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { signIn, connectClaude } from './sign-in.js';
+import { openAddRepository } from './new-track.js';
 
 // The people dialog sits inside the track page, which re-renders whenever
 // the track changes: setup progress, a rename, a turn. A login typed into
@@ -11,17 +12,17 @@ test('a typed login survives the track re-rendering after the box loses focus', 
   test.setTimeout(120_000);
   await signIn(page, 'peopleowner');
   await connectClaude(page);
-  await page.getByRole('button', { name: 'Add a repository', exact: true }).first().click();
+  await openAddRepository(page);
   const project = page.getByRole('dialog', { name: 'Add a repository', exact: true });
   await project.getByLabel('Project name', { exact: true }).fill('People dialog project');
   await project.getByRole('button', { name: 'Create scratch project', exact: true }).click();
   await expect(project).toHaveCount(0);
-  await page.locator('#yard .workspace-project.current .project-add').click();
+  await page.locator('#top-new-track').click();
   const track = page.getByRole('dialog', { name: 'New track', exact: true });
   await track.getByRole('button', { name: 'Options', exact: true }).click();
   await track.getByLabel('Branch name', { exact: true }).fill('people-typing');
   await track.getByRole('button', { name: 'Create track', exact: true }).click();
-  await expect(page.locator('.track-crumbs')).toContainText('People typing');
+  await expect(page.locator('#track-header')).toContainText('People typing');
   // A rename is what re-renders the track below, and it waits for setup.
   await expect(page.locator('#track-machine-state')).toHaveText('Idle', { timeout: 60_000 });
   const trackPath = new URL(page.url()).pathname;
@@ -49,8 +50,8 @@ test('a typed login survives the track re-rendering after the box loses focus', 
   await expect(title).toHaveValue('people-renamed');
   await title.press('Enter');
   // The tab that renamed first, so a miss says which side lost it.
-  await expect(other.locator('.track-crumbs')).toContainText('people-renamed');
-  await expect(page.locator('.track-crumbs')).toContainText('people-renamed');
+  await expect(other.locator('#track-header')).toContainText('people-renamed');
+  await expect(page.locator('#track-header')).toContainText('people-renamed');
 
   await expect(login).toHaveValue('somebody');
 });
