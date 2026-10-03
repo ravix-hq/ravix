@@ -1,5 +1,7 @@
 defmodule Ravix.Schedules.Runner do
   @moduledoc "Dispatch recurring prompts through the same scoped track and durable prompt queue doors as a person."
+  require Logger
+
   alias Ravix.Accounts.Access
   alias Ravix.Schedules.Store
   alias Ravix.Tracks
@@ -44,6 +46,14 @@ defmodule Ravix.Schedules.Runner do
         )
     end
   rescue
-    _ -> Store.finish(schedule, "Dispatch interrupted; check tracks before trying again", nil)
+    # Silent to the person, not to whoever runs the service. The status below is
+    # all a person needs; an unexpected raise in here is a defect, and swallowing
+    # it without a line to find it by is how one survives a release.
+    error ->
+      Logger.warning(
+        "ravix: schedule #{schedule.id} dispatch raised: #{Exception.message(error)}"
+      )
+
+      Store.finish(schedule, "Dispatch interrupted; check tracks before trying again", nil)
   end
 end

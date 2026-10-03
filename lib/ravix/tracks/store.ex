@@ -652,16 +652,6 @@ defmodule Ravix.Tracks.Store do
     count == 1
   end
 
-  @doc "The opening turn reported back. Idempotent: the first time stands."
-  @spec mark_opened(String.t()) :: :ok
-  def mark_opened(track_id) do
-    Repo.update_all(from(t in Track, where: t.id == ^track_id and is_nil(t.opened_at)),
-      set: [opened_at: DateTime.utc_now()]
-    )
-
-    :ok
-  end
-
   @doc """
   Record that an open dedicated track's sandbox went to sleep (`true`) or woke
   (`false`). Only a change is written, so a burst of turn starts costs one

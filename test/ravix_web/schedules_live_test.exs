@@ -14,7 +14,7 @@ defmodule RavixWeb.SchedulesLiveTest do
     # The rail (and with it the project options) arrives after mount (#221).
     render_async(view)
     assert html =~ "No schedules yet"
-    assert has_element?(view, ".yard-nav a.on[href='/schedules']", "Schedules")
+    assert has_element?(view, ".yard-nav a.on[href='/schedules']", "Routines")
 
     view
     |> form("#schedule-form",

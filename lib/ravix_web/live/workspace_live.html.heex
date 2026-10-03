@@ -54,8 +54,9 @@
     >
     </div>
     <aside id="yard" class={["yard", @yard_open && "forced"]} aria-label="Projects">
-      <%!-- New track is the first tab stop (RAV-98): the nav comes first in
-        the document, and `.yard-top` is drawn above it with `order`. --%>
+      <%!-- Create stays the first tab stop (RAV-98): the nav comes first in
+        the document, `.yard-top` is drawn above it with `order`, and the
+        rows are ordered Home, Create, Routines, Inbox, Add a repository. --%>
       <div class="workspace-actions yard-nav">
         <button
           id="top-new-track"
@@ -66,14 +67,17 @@
           data-tip-kbd="Mod+N"
           phx-click={new_track_click(@rail_loaded, @projects)}
         >
-          <.icon name="plus" />New track
+          <.icon name="plus" />Create
         </button>
+        <.link patch="/home" class={["yard-item", @live_action == :projects && "on"]}>
+          <.icon name="home" />Home
+        </.link>
+        <.link patch="/schedules" class={["yard-item", @live_action == :schedules && "on"]}>
+          <.icon name="clock" />Routines
+        </.link>
         <.link patch="/inbox" class={["yard-item", @live_action in [:home, :inbox] && "on"]}>
           <.icon name="terminal" />Inbox<span class="spacer"></span>
           <span :if={@attention > 0} class="badge">{@attention}</span>
-        </.link>
-        <.link patch="/home" class={["yard-item", @live_action == :projects && "on"]}>
-          <.icon name="home" />Home
         </.link>
         <button
           class="yard-item"
@@ -82,10 +86,6 @@
         >
           <.icon name="folder" />Add a repository
         </button>
-
-        <.link patch="/schedules" class={["yard-item", @live_action == :schedules && "on"]}>
-          <.icon name="clock" />Schedules
-        </.link>
       </div>
       <%!-- Account preferences live in the sidebar footer; the native popover
         retains light dismiss, Escape and focus return. --%>
@@ -199,7 +199,7 @@
       </div>
       <div class="yard-scroll">
         <div class="section-label">
-          <strong>Projects</strong><span class="spacer"></span>
+          <strong>My workspaces</strong><span class="spacer"></span>
           <button
             type="button"
             id="manage-sections"
@@ -615,7 +615,7 @@
           <.icon name="chevron" size={13} open={@yard_open} class="ico" />Menu
         </button>
         <.link patch="/home" aria-current={@live_action == :projects && "page"}>Home</.link>
-        <.link patch="/schedules">Schedules</.link>
+        <.link patch="/schedules">Routines</.link>
         <.link patch="/inbox" aria-current={@live_action in [:home, :inbox] && "page"}>Inbox</.link>
         <button
           id="mobile-quick-jump-trigger"
