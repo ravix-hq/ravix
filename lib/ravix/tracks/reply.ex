@@ -18,6 +18,7 @@ defmodule Ravix.Tracks.Reply do
   """
 
   alias Ravix.{Cluster, Fountain, Hub, Trace}
+  alias Ravix.Search.Index, as: SearchIndex
   alias Ravix.Tracks.{Store, Transcript}
   alias Ravix.Tracks.Transcript.{Block, Event}
 
@@ -89,7 +90,7 @@ defmodule Ravix.Tracks.Reply do
   """
   @spec record(String.t(), [map() | Event.t()], String.t() | nil) :: :ok
   def record(conversation_id, events, runtime) do
-    Ravix.Search.Index.record(conversation_id, events, runtime)
+    SearchIndex.record(conversation_id, events, runtime)
     events = Enum.map(events, &Event.from/1)
 
     case settled_at(events) do

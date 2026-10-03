@@ -150,17 +150,49 @@ defmodule RavixWeb.SearchLiveTest do
     parent = self()
     stub(Access, :project_ids, fn user -> Mimic.call_original(Access, :project_ids, [user]) end)
 
-    expect(Access, :project_ids, fn user ->
-      send(parent, {:search_started, self()})
-
-      receive do
-        :complete_search -> Mimic.call_original(Access, :project_ids, [user])
+    expect(Access, :project_ids, 2, fn user ->
+      if self() == view.pid do
+        send(parent, {:search_started, self()})
+        receive do: (:complete_search -> :ok)
       end
+
+      Mimic.call_original(Access, :project_ids, [user])
     end)
 
     render_patch(view, "/search?q=searchable")
     assert_receive {:search_started, task}
     Repo.delete!(seat)
+    send(task, :complete_search)
+    render_async(view)
+    refute has_element?(view, "option[value='#{ctx.track.id}']")
+
+    refute has_element?(
+             view,
+             "a[href='/p/#{ctx.project.id}/t/#{ctx.track.id}?thread=#{ctx.track.id}']"
+           )
+  end
+
+  test "closing a track during async search hides completed text and filters from its guest",
+       ctx do
+    guest = insert_user()
+    insert_track_member(ctx.track, guest)
+    {:ok, view, _} = live(log_in_user(ctx.conn, guest), "/search")
+    render_async(view)
+    parent = self()
+    stub(Access, :project_ids, fn user -> Mimic.call_original(Access, :project_ids, [user]) end)
+
+    expect(Access, :project_ids, 2, fn user ->
+      if self() == view.pid do
+        send(parent, {:search_started, self()})
+        receive do: (:complete_search -> :ok)
+      end
+
+      Mimic.call_original(Access, :project_ids, [user])
+    end)
+
+    render_patch(view, "/search?q=searchable")
+    assert_receive {:search_started, task}
+    Repo.update!(Ecto.Changeset.change(ctx.track, closed_at: DateTime.utc_now()))
     send(task, :complete_search)
     render_async(view)
     refute has_element?(view, "option[value='#{ctx.track.id}']")
@@ -187,6 +219,71 @@ defmodule RavixWeb.SearchLiveTest do
              view,
              "a[href='/p/#{ctx.project.id}/t/#{ctx.track.id}?thread=#{ctx.track.id}']"
            )
+  end
+
+  test "unsent query and filter drafts survive periodic access checks and reply refresh", ctx do
+    second = insert_project(user: ctx.owner)
+    track = insert_track(project: second, title: "draft work")
+    {:ok, view, _} = live(log_in_user(ctx.conn, ctx.owner), "/search?q=searchable")
+    render_async(view)
+
+    view
+    |> form("#workspace-search-form", search: %{q: "unsent words", project: second.id})
+    |> render_change()
+
+    view
+    |> form("#workspace-search-form",
+      search: %{q: "unsent words", project: second.id, track: track.id}
+    )
+    |> render_change()
+
+    send(view.pid, :refresh_access)
+    render(view)
+    assert has_element?(view, "input[value='unsent words']")
+    assert has_element?(view, "option[value='#{second.id}'][selected]")
+    assert has_element?(view, "option[value='#{track.id}'][selected]")
+
+    assert has_element?(
+             view,
+             "a[href='/p/#{ctx.project.id}/t/#{ctx.track.id}?thread=#{ctx.track.id}']"
+           )
+
+    Hub.publish(ctx.project.id, :reply)
+    render(view)
+    render_async(view)
+    assert has_element?(view, "input[value='unsent words']")
+    assert has_element?(view, "option[value='#{track.id}'][selected]")
+  end
+
+  test "malformed URL fields render safe forms and predictable errors on mount and patch", ctx do
+    urls = [
+      "q[nested]=secretvalue",
+      "q[]=secretvalue",
+      "project[]=secretvalue",
+      "track[nested]=secretvalue",
+      "page[]=3",
+      "page=invalid",
+      "page=1001"
+    ]
+
+    for query <- urls do
+      {:ok, view, _} = live(log_in_user(ctx.conn, ctx.owner), "/search?q=searchable&" <> query)
+      html = render_async(view)
+      assert has_element?(view, "[role=alert]")
+      refute html =~ "secretvalue"
+
+      refute has_element?(
+               view,
+               "a[href='/p/#{ctx.project.id}/t/#{ctx.track.id}?thread=#{ctx.track.id}']"
+             )
+
+      render_patch(view, "/search?q=searchable")
+      render_async(view)
+      refute has_element?(view, "[role=alert]")
+      render_patch(view, "/search?" <> query)
+      render_async(view)
+      assert has_element?(view, "[role=alert]")
+    end
   end
 
   test "invalid query errors do not expose work and another user's URL ids yield no snippets",
