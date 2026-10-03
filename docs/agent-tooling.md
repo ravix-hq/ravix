@@ -65,6 +65,8 @@ grants for both resources. `/oauth/revoke` accepts `token` and `client_id`.
 | `plans:read` | Read project plans |
 | `plans:write` | Create/edit plans and append item notes; assignment also needs `tracks:write` |
 | `tracks:cancel` | Cancel this client's queued tasks |
+| `workspaces:read` | Read workspace metadata, members, invitations, repository catalogs and personal sidebar organization |
+| `workspaces:write` | Create/rename/select workspaces, manage members and connections, admit repository projects, organize personal sections |
 
 Scopes restrict existing membership; they never create membership. A track guest
 cannot inspect sibling tracks or change project settings. Grants currently cover
@@ -103,7 +105,7 @@ data is capped, with `truncated: true` on oversized events.
 
 Settings allow name, runtime, model, instructions, setup script and packages.
 Secret names can be read, but secret values are never returned. Secret writes,
-sharing changes and project deletion/rebuild are not exposed.
+project/track sharing changes and project deletion/rebuild are not exposed.
 Setup scripts and agent instructions can execute code, which the consent page
 explicitly explains.
 
@@ -381,3 +383,63 @@ For `create_track`, an origin such as `{"kind":"pr","number":261}` resolves the
 head branch from GitHub before provisioning. A lookup failure returns an error;
 it never falls back to `main`. Fork heads are refused because their branches are not in the project repository. The browser's explicit `origin.base` remains
 supported for an already selected PR head.
+
+## Workspace administration
+
+Workspace tools require explicit `workspaces:read` or `workspaces:write` consent.
+Existing grants keep their scopes, including after refresh; reconnect with new
+consent to add workspace permissions. Scopes never override role or membership
+checks. Tokens and provider credentials are never returned. Workspace invitations
+use GitHub logins and become memberships at sign-in; they have no invite secrets
+or links to reveal.
+
+| Operations | Tools and requirements |
+| --- | --- |
+| Metadata | `list_workspaces`, `get_workspace` (read); returns your role and `access_enabled` |
+| Workspace management | `create_workspace` (any signed-in person), `update_workspace` (owner/admin rename), `select_workspace` (save your sidebar choice) |
+| People | `list_workspace_members`, `list_workspace_invitations` (read, any member); `invite_workspace_member`, `revoke_workspace_invitation`, `remove_workspace_member` (owner/admin); `set_workspace_member_role` (owner); `leave_workspace` (self) |
+| Repository catalog | `list_workspace_connections`, `list_workspace_repositories` (read, cached); `refresh_workspace_repositories` (write, any member) |
+| Connections | `list_available_workspace_installations` (read, owner); `add_workspace_installation` (write, owner, rechecks your GitHub authority); `get_workspace_connect_url`, `get_workspace_configure_url` (write, owner/admin) |
+| Repository admission | `add_workspace_repository` (write); owner/admin may create a project using the existing provisioning/payer rules; any member may retrieve an existing canonical project |
+| Personal sidebar | `list_workspace_sections`, `list_workspace_placements` (read); `create_workspace_section`, `update_workspace_section`, `delete_workspace_section`, `move_workspace_placement` (write, any member, only your sections) |
+
+Except `list_workspaces` and `create_workspace`, tools require `workspace_id`.
+Creation takes `name`; update renames with `name`. Membership targets use `user_id`,
+invitations use `login`, and roles are `owner`, `admin`, or `member`. Only owners
+may grant elevated roles or withdraw protected invitations. The last owner cannot
+leave, be removed, or be demoted. Workspace deletion is not exposed.
+
+All mutations require `request_id` and follow the existing durable receipt
+convention. Retry identical arguments with the same ID. Authorization is checked
+again on every replay; removed members cannot retrieve old workspace receipts.
+For completed section deletion the caller's own receipt remains replayable while
+they still have workspace access. Local refusals release their claim. Repository
+refresh, installation binding, and repository admission retain claims on failure
+or uncertainty; inspect the outcome before choosing a new ID.
+
+Lists accept `after` and `limit` (default 50, maximum 100) and return `items` and
+`next_cursor`. Each list has its own cursor. Refresh reports independently bound
+failed installation IDs, renamed repositories and collisions to 100 entries,
+with `truncated` for each report; raw provider errors are not returned. Listings
+paginate the existing context snapshots in memory, not the underlying database
+or GitHub fetch. Refresh still reads the provider's complete catalog.
+
+`RAVIX_WORKSPACE_ACCESS` gates administration, repository tools, and scoped sidebar
+organization. Metadata remains readable with the switch off, and removing members
+or leaving remains allowed as in the browser's contexts. Workspace membership
+then grants no project access. Repository tools never substitute a personal token
+for a workspace installation. `add_workspace_installation` instead uses the
+existing owner-only proof of visibility with the owner's sign-in token.
+
+`get_workspace_connect_url` returns `/w/:workspace_id/github/connect` on the
+public Ravix host. Open it in a browser signed in as the same person. That existing
+route rechecks the session, role and flag and mints short-lived state bound to the
+browser session, workspace and user; the callback consumes it once and requires
+GitHub's authorization code. An MCP bearer token cannot complete that round trip.
+The configure URL connects nothing on return; refresh afterward.
+
+Section edits take `section_id`, optional `name` and `collapsed`. Placement edits
+take `project_id` and `section_id`; an empty section ID clears the placement. Both
+section and project must belong to the caller's sidebar workspace. These edits
+change personal organization only. Other people's sections and inaccessible
+project IDs are refused; stale inaccessible placements are omitted from reads.

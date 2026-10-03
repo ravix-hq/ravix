@@ -1,7 +1,7 @@
 defmodule Ravix.Tooling.Catalog do
   @moduledoc "The external tool schemas and their required scopes."
 
-  alias Ravix.Tooling.{PlanCatalog, PreviewCatalog}
+  alias Ravix.Tooling.{PlanCatalog, PreviewCatalog, WorkspaceCatalog}
 
   def tools do
     [
@@ -156,7 +156,7 @@ defmodule Ravix.Tooling.Catalog do
         },
         ["track_id"]
       )
-    ] ++ PlanCatalog.tools() ++ PreviewCatalog.tools()
+    ] ++ PlanCatalog.tools() ++ PreviewCatalog.tools() ++ WorkspaceCatalog.tools()
   end
 
   def find(name), do: Enum.find(tools(), &(&1.name == name))

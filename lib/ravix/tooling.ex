@@ -11,7 +11,9 @@ defmodule Ravix.Tooling do
     PreviewCatalog,
     PreviewTools,
     Tasks,
-    Wait
+    Wait,
+    WorkspaceCatalog,
+    WorkspaceTools
   }
 
   def call(principal, name, args) do
@@ -43,6 +45,9 @@ defmodule Ravix.Tooling do
       end
     end)
   end
+
+  @workspace_tools WorkspaceCatalog.names()
+  defp execute(p, name, a) when name in @workspace_tools, do: WorkspaceTools.execute(p, name, a)
 
   @plan_tools ~w(create_plan get_plan list_plans update_plan assign_items note_item)
   defp execute(p, name, a) when name in @plan_tools, do: PlanTools.execute(p, name, a)
@@ -210,6 +215,9 @@ defmodule Ravix.Tooling do
         public
     end
   end
+
+  defp recheck(p, name, args, result) when name in @workspace_tools,
+    do: WorkspaceTools.recheck(p, name, args, result)
 
   defp recheck(p, name, args, result) when name in @plan_tools,
     do: PlanTools.recheck(p, name, args, result)
