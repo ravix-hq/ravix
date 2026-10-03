@@ -5,9 +5,9 @@ defmodule Ravix.Projects.ConsolidationTest do
   setup :verify_on_exit!
   alias Ravix.Plans.Plan
   alias Ravix.Projects.{Consolidation, Project}
+  alias Ravix.Projects.Consolidation.Store
   alias Ravix.Routines.Routine
   alias Ravix.Schedules.Schedule
-  alias Ravix.Projects.Consolidation.Store
   alias Ravix.Tracks.Track
 
   setup do

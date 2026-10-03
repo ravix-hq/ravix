@@ -37,6 +37,8 @@ defmodule Ravix.Projects.Consolidation.Store do
     |> Enum.sort_by(& &1.repo)
   end
 
+  # Only the literal table allowlist below is interpolated; project IDs are bound parameters.
+  # sobelow_skip ["SQL.Query"]
   defp inventory(project) do
     tables =
       ~w(tracks plans schedules routines preview_defaults project_runtime_agents project_members project_invites project_links)
@@ -118,14 +120,14 @@ defmodule Ravix.Projects.Consolidation.Store do
 
   defp validate_pair!(_workspace_id, nil, _donor), do: Repo.rollback(:not_found)
   defp validate_pair!(_workspace_id, _canonical, nil), do: Repo.rollback(:not_found)
+  defp validate_pair!(nil, _canonical, _donor), do: Repo.rollback(:different_workspace)
 
   defp validate_pair!(workspace_id, canonical, donor) do
     cond do
       canonical.id == donor.id ->
         Repo.rollback(:same_project)
 
-      is_nil(workspace_id) or canonical.workspace_id != workspace_id or
-          donor.workspace_id != workspace_id ->
+      canonical.workspace_id != workspace_id or donor.workspace_id != workspace_id ->
         Repo.rollback(:different_workspace)
 
       canonical.deletion_requested_at || donor.deletion_requested_at ->
@@ -149,6 +151,8 @@ defmodule Ravix.Projects.Consolidation.Store do
       do: Repo.rollback(:different_repository)
   end
 
+  # Columns come only from @resource_fields; both project IDs are bound parameters.
+  # sobelow_skip ["SQL.Query"]
   defp preserve_resource(canonical, donor) do
     columns = Enum.join(@resource_fields, ", ")
 
@@ -161,6 +165,8 @@ defmodule Ravix.Projects.Consolidation.Store do
     )
   end
 
+  # Interpolated table names are literal constants; all row values are bound parameters.
+  # sobelow_skip ["SQL.Query"]
   defp preserve_sharing(canonical, donor) do
     for table <- ~w(project_invites project_links) do
       Repo.query!("UPDATE ravix.#{table} SET resource_scoped = true WHERE project_id = $1", [
@@ -224,6 +230,8 @@ defmodule Ravix.Projects.Consolidation.Store do
     )
   end
 
+  # Interpolated table names are literal constants; both project IDs are bound parameters.
+  # sobelow_skip ["SQL.Query"]
   defp move_references(canonical, donor) do
     for table <- ~w(tracks plans schedules routines project_runtime_agents preview_defaults) do
       Repo.query!(
