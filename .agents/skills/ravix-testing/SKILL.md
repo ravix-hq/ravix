@@ -38,26 +38,8 @@ After a regression is demonstrated, fix the cause and verify the focused test.
 Finish with `mix precommit`, and with `mix precommit.release` and the container
 smoke test if release/configuration changed. Raise sustainable coverage floors,
 retaining failure-path assertions.
-Document real-browser checks separately from DOM and LiveView tests; no single
-coverage percentage proves integration or visual parity.
-
-The Playwright browser smoke tests in `browser/` are deprecated and disabled by
-default. Do not spend change-review time updating these specs for literal copy,
-fixed strings, visual polish, or UI component structure. Prefer focused ExUnit
-or Happy DOM hook tests for regression coverage. If a real browser check is
-explicitly requested, use `bun run test:browser:deprecated` or
-`bun run test:browser:workspace-access:deprecated` after `MIX_ENV=prod mix
-assets.deploy`; keep any changes minimal and call out that this suite is
-deprecated.
-
-Tests whose main assertion is exact UI copy, literal strings, generated
-component markup/classes, tooltip/label wording, theme contrast, layout sizing,
-or visual positioning are deprecated. Do not add or update those tests during
-ordinary changes. ExUnit suites use `@moduletag :deprecated_literal_ui` or
-`@tag :deprecated_literal_ui`, which `test/test_helper.exs` excludes by default.
-Bun hook tests that fall into this category use `.deprecated.js` instead of
-`.test.js`, so `bun test` does not discover them, or `test.skip` when only
-individual cases in an otherwise behavioral file are deprecated.
+Do not add or update tests for exact UI copy, literal strings, component
+markup/classes, labels/tooltips, themes, layout, or other visual cosmetics.
 
 Use `ExUnitProperties` for event sequences. See `lifecycle_properties_test.exs`
 and the preview reconciler property. Synchronize pending work with messages and
