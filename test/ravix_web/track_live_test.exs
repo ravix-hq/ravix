@@ -2732,7 +2732,10 @@ defmodule RavixWeb.TrackLiveTest do
       reject(&Previews.run/2)
       reject(&Previews.run/3)
       reject(&Previews.open/3)
-      assert has_element?(ctx.view, "#inspector .workspace-tabs button.selected", "Files")
+      assert has_element?(
+               ctx.view,
+               "#inspector .workspace-tabs button.selected[phx-value-name='files']"
+             )
       refute has_element?(ctx.view, "#preview-empty")
 
       ctx.view |> element("#track-preview") |> render_click()
