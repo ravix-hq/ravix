@@ -1,5 +1,7 @@
 defmodule RavixWeb.PlanGraphTest do
   use ExUnit.Case, async: true
+  @moduletag :deprecated_literal_ui
+
   alias RavixWeb.Live.PlanGraph
 
   defp item(id, deps, status \\ :unassigned),

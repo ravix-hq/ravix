@@ -332,20 +332,11 @@ code they describe lives in Git history.
 
 ### Additional quality guards
 
-`bun run test:browser` runs Chromium against a disposable production-mode app,
-provider mocks, and a generated PostgreSQL database (ports 4103/8893/8894).
-On a shared machine, set `BROWSER_PORT`, `MOCK_PORT`, and `MOCK_SPRITES_PORT`
-to three unused ports; the harness still refuses collisions. Composer state
-fixtures use `psql` against only the harness's generated database and a
-browser-only mock endpoint. Failure traces remain under `test-results/`.
-CI splits the suite into three shards, each against its own app and database;
-`bun run test:browser -- --shard=2/3` reproduces one shard locally.
-The suite runs with `RAVIX_WORKSPACE_ACCESS` off, as production does;
-`bun run test:browser:workspace-access` starts the harness with it on and runs
-the specs that need it.
-Install Chromium once with `bunx playwright install chromium`, and build assets
-with `MIX_ENV=prod mix assets.deploy` first. Node is pinned alongside Elixir/OTP
-and Bun in `.tool-versions`.
+Browser smoke tests and tests for exact UI copy, literal strings, component
+markup/classes, labels/tooltips, themes, layout, or other visual cosmetics are
+deprecated and disabled by default. Prefer focused ExUnit and Happy DOM hook
+tests for behavior; use the `*:deprecated` browser scripts only when explicitly
+needed.
 
 CI also enforces architecture rules, secret/dependency scans, agent-guide and
 version consistency, generated lifecycle invariants, and negative fixtures for

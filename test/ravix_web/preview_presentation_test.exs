@@ -2,6 +2,7 @@ defmodule RavixWeb.PreviewPresentationTest do
   use ExUnit.Case, async: true
   alias RavixWeb.PreviewPresentation, as: Presentation
 
+  @tag :deprecated_literal_ui
   test "actual supervisor events and plain app logs render as readable text" do
     events = [
       ~s({"type":"started","timestamp":1790455143365}),
@@ -31,6 +32,7 @@ defmodule RavixWeb.PreviewPresentationTest do
     assert String.ends_with?(text, result)
   end
 
+  @tag :deprecated_literal_ui
   test "startup copy names the configured readiness path" do
     assert Presentation.loading_label(nil) == "Starting the process…"
     assert Presentation.loading_label(%{readiness_path: "/health"}) =~ "answer on /health."

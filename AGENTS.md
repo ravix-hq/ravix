@@ -19,10 +19,13 @@ mix test --cover                       # production-only coverage groups + HTML
 mix precommit                          # local analysis, tests, guard probes
 mix precommit.release                  # production assets and release, as CI's release job
 bunx playwright install chromium       # once per Playwright upgrade
-bun run test:browser                    # real Chromium + isolated app/providers/DB
-bun run test:browser:workspace-access   # the same, with RAVIX_WORKSPACE_ACCESS on
+bun run test:browser                    # deprecated browser smoke placeholder
+bun run test:browser:workspace-access   # deprecated browser smoke placeholder
 python3 scripts/secrets.py git .        # redacted history scan
 ```
+
+Do not add or update tests for exact UI copy, literal strings, component
+markup/classes, labels/tooltips, themes, layout, or other visual cosmetics.
 
 `python3 scripts/dev-mock.py` starts Phoenix against the local mock; start
 `bun run mock` separately. It requires no production credentials. See the

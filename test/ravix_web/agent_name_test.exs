@@ -1,5 +1,7 @@
 defmodule RavixWeb.AgentNameTest do
   use ExUnit.Case, async: true
+  @moduletag :deprecated_literal_ui
+
   alias RavixWeb.AgentName
 
   test "creation and settings share supported agent products" do
