@@ -97,6 +97,10 @@ installed on repositories outside the org.
 - Desktop notifications, switched on from the rail: when a track finishes or
   fails while the tab is in the background, the browser says so.
 
+Webhook-triggered project prompts are also managed from Schedules. See
+[webhook routines](docs/webhook-routines.md) for credentials, JSON delivery,
+idempotency, and dispatch outcomes.
+
 Schedules recheck the creator's project membership before opening each fresh
 track and use the durable prompt queue. A cluster singleton polls every 30 seconds;
 database claims prevent duplicate dispatches. Downtime coalesces missed occurrences
