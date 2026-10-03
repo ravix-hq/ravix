@@ -87,6 +87,7 @@ defmodule Ravix.FountainTest do
 
       assert {:error, {:unconfigured, :fountain}} = Fountain.prompt(client, "c", "hi")
       assert {:error, {:unconfigured, :fountain}} = Fountain.interrupt(client, "c")
+      assert {:error, {:unconfigured, :fountain}} = Fountain.wake(client, "c")
       assert {:error, {:unconfigured, :fountain}} = Fountain.terminate(client, "c")
       assert {:error, {:unconfigured, :fountain}} = Fountain.turns(client, "c")
       assert {:error, {:unconfigured, :fountain}} = Fountain.turn_image(client, "c", "t", 0)
@@ -764,6 +765,85 @@ defmodule Ravix.FountainTest do
       capture_log(fn ->
         assert {:error, %Error{status: 404, code: "not_found", kind: :not_found}} =
                  Fountain.terminate(client, "gone")
+      end)
+    end
+  end
+
+  describe "wake/2" do
+    test "awake and waking are the two answers, and nothing is sent with them" do
+      client =
+        fake([
+          {%{method: "POST", path: "/api/conversations/c%2F1/wake", body: nil},
+           {200, [], %{status: "awake"}}},
+          {%{method: "POST", path: "/api/conversations/c%2F1/wake", body: nil},
+           {200, [], %{status: "waking"}}}
+        ])
+
+      assert {:ok, :awake} = Fountain.wake(client, "c/1")
+      assert {:ok, :waking} = Fountain.wake(client, "c/1")
+    end
+
+    test "a status Fountain does not document is an error, not an atom" do
+      client =
+        fake([
+          {%{method: "POST", path: "/api/conversations/c1/wake"}, {200, [], %{status: "dozing"}}},
+          {%{method: "POST", path: "/api/conversations/c1/wake"}, {200, [], %{}}}
+        ])
+
+      capture_log(fn ->
+        for _ <- 1..2 do
+          assert {:error, %Error{status: 502, code: "wake_status_unknown"} = error} =
+                   Fountain.wake(client, "c1")
+
+          assert Error.as_http(error, "wake").status == 502
+        end
+      end)
+    end
+
+    for {status, body, code, words} <- [
+          {402, %{error: "insufficient_credits", upgrade_url: "/account/billing"},
+           "insufficient_credits", "out of credits"},
+          {409, %{error: "sandbox_reset_pending", message: "torn down"}, "sandbox_reset_pending",
+           "torn down or reset"},
+          {410, %{error: "conversation_terminated"}, "conversation_terminated", "has ended"},
+          {503, %{error: "sandbox_unavailable", message: "send it again shortly"},
+           "sandbox_unavailable", "not available right now"},
+          {503, %{error: "fleet_full", message: "Every sandbox slot is in use"}, "fleet_full",
+           "not available right now"}
+        ] do
+      @tag status: status, body: body, code: code, words: words
+      test "#{status} #{code} is refused with the copy a prompt's refusal uses", ctx do
+        client =
+          fake([
+            {%{method: "POST", path: "/api/conversations/c1/wake"}, {ctx.status, [], ctx.body}}
+          ])
+
+        capture_log(fn ->
+          assert {:error, %Error{status: status, code: code} = error} =
+                   Fountain.wake(client, "c1")
+
+          assert {status, code} == {ctx.status, ctx.code}
+          assert Error.as_http(error, "wake").message =~ ctx.words
+        end)
+      end
+    end
+
+    test "a 404 is a not-found like any other, whether the conversation or the route is missing" do
+      client =
+        fake([
+          {%{method: "POST", path: "/api/conversations/c1/wake"},
+           {404, [], %{error: "not_found"}}},
+          {%{method: "POST", path: "/api/conversations/c1/wake"},
+           {404, [], %{errors: %{detail: "Not Found"}}}}
+        ])
+
+      capture_log(fn ->
+        for _ <- 1..2 do
+          assert {:error, %Error{status: 404, kind: :not_found} = missing} =
+                   Fountain.wake(client, "c1")
+
+          assert Error.as_http(missing, "wake").status == 404
+        end
       end)
     end
   end

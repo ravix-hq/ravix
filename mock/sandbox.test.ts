@@ -288,6 +288,23 @@ test("a park that kept a snapshot answers disk reads from it, dated, until the s
     .toBeUndefined();
 });
 
+test("wake answers awake or waking, opens no turn, and is refused as a prompt's wake is", async () => {
+  const f = await fixture();
+  const wake = (id = f.first.id) => request("POST", `/api/conversations/${id}/wake`);
+  const turns = async () => (await request("GET", `/api/conversations/${f.first.id}/turns`)).body.data.length;
+  const before = await turns();
+
+  expect(await wake()).toEqual({ status: 200, body: { status: "awake" } });
+  setSandboxStatus(f.sandbox_id, "suspended");
+  expect(await wake()).toEqual({ status: 200, body: { status: "waking" } });
+  expect((await request("GET", `/api/sandboxes/${f.sandbox_id}`)).body.data.status).toBe("ready");
+  expect(await turns()).toBe(before);
+
+  expect(await wake("no-such-conversation")).toEqual({ status: 404, body: { error: "not_found" } });
+  await request("POST", `/api/conversations/${f.first.id}/terminate`);
+  expect(await wake()).toEqual({ status: 410, body: { error: "conversation_terminated" } });
+});
+
 test("environments retain readable variables, replace the map and allow clearing", async () => {
   const env = await create("environments");
   expect(env.env_vars).toEqual({});

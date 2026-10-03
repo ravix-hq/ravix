@@ -89,6 +89,9 @@ defmodule RavixWeb.Live.MachineDock do
        # Whether this dock is waking the machine for a terminal. One wake at
        # a time, whichever tabs are waiting on it.
        shell_waking?: false,
+       # Why the last wake was refused, in the words a prompt's refusal
+       # would use, until the next wake starts.
+       wake_error: nil,
        # Whether this person may open a shell (Write, ADR 0010). Hiding the
        # button is courtesy; `Ravix.Terminal` refuses a Read member anyway.
        can_write: true,
@@ -147,7 +150,7 @@ defmodule RavixWeb.Live.MachineDock do
         |> probe(nil)
         |> load_shells()
         |> scoped_async(:machine_status, fn ->
-          Terminal.status(user, id, passive: true)
+          Terminal.status(user, id)
         end)
       else
         socket
@@ -263,7 +266,7 @@ defmodule RavixWeb.Live.MachineDock do
 
         socket
         |> put_status(id, :waking)
-        |> assign(shell_waking?: true)
+        |> assign(shell_waking?: true, wake_error: nil)
         |> scoped_async(:shell_wake, fn -> Tracks.wake(user, track_id) end)
     end
   end
@@ -280,8 +283,8 @@ defmodule RavixWeb.Live.MachineDock do
     end)
   end
 
-  defp still_asleep(socket) do
-    socket = assign(socket, shell_waking?: false)
+  defp still_asleep(socket, reason) do
+    socket = assign(socket, shell_waking?: false, wake_error: RavixWeb.Error.from(reason).message)
 
     Enum.reduce(socket.assigns.shells, socket, fn
       %{status: :waking, tab: %{id: id}}, s -> put_status(s, id, :asleep)
@@ -391,7 +394,7 @@ defmodule RavixWeb.Live.MachineDock do
   end
 
   # Wake, on a tab held asleep, and Retry, on one the machine did not
-  # answer: both wake the machine (a probe, if it is already awake) and
+  # answer: both wake the machine (Fountain answers `awake` if it is up) and
   # attach once it answers. Only this page's own tabs, and only those.
   def handle_event("shell-wake", %{"id" => id}, socket) do
     case Enum.find(socket.assigns.shells, &(&1.tab.id == id)) do
@@ -460,7 +463,12 @@ defmodule RavixWeb.Live.MachineDock do
     do: {:noreply, probe(socket, :unavailable)}
 
   defp receive_async(:shell_wake, {:ok, :ok}, socket), do: {:noreply, woke(socket)}
-  defp receive_async(:shell_wake, _, socket), do: {:noreply, still_asleep(socket)}
+
+  defp receive_async(:shell_wake, {:ok, {:error, reason}}, socket),
+    do: {:noreply, still_asleep(socket, reason)}
+
+  defp receive_async(:shell_wake, {:exit, reason}, socket),
+    do: {:noreply, still_asleep(socket, {:async_exit, reason})}
 
   defp receive_async(:vitals, {:ok, response}, socket),
     do:
@@ -684,6 +692,7 @@ defmodule RavixWeb.Live.MachineDock do
             id={"shell-asleep-" <> shell.tab.id}
             icon="moon"
             title={if shell.status == :waking, do: "Waking the machine…", else: "Machine is asleep"}
+            because={if shell.status == :asleep, do: @wake_error}
           >
             <:action
               :if={shell.status == :asleep && @can_write}

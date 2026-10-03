@@ -2000,7 +2000,7 @@ defmodule Ravix.TracksTest do
       )
 
       # Nothing asks the machine: it is parked, which is why this is a snapshot.
-      reject(Ravix.Terminal, :status, 3)
+      reject(Ravix.Terminal, :status, 2)
 
       {:ok, snapshot_at, 0} = DateTime.from_iso8601(at)
 
@@ -2068,7 +2068,7 @@ defmodule Ravix.TracksTest do
       ])
 
       reject(Ravix.Terminal, :exec, 3)
-      reject(Ravix.Terminal, :status, 3)
+      reject(Ravix.Terminal, :status, 2)
 
       assert {:ok,
               %{
@@ -2091,7 +2091,7 @@ defmodule Ravix.TracksTest do
     test "metadata rejects outsiders and escaping paths before contacting the machine", ctx do
       listing = metadata_listing(ctx)
       reject(Ravix.Terminal, :exec, 3)
-      reject(Ravix.Terminal, :status, 3)
+      reject(Ravix.Terminal, :status, 2)
       assert {:error, :not_found} = Tracks.file_metadata(insert_user(), ctx.track.id, listing)
 
       assert {:ok, %{path: "/etc"}} =
@@ -2102,8 +2102,8 @@ defmodule Ravix.TracksTest do
       listing = metadata_listing(ctx)
       reject(Ravix.Terminal, :exec, 3)
 
-      expect(Ravix.Terminal, :status, fn user, id, opts ->
-        assert {user.id, id, opts} == {ctx.owner.id, ctx.track.id, [passive: true]}
+      expect(Ravix.Terminal, :status, fn user, id ->
+        assert {user.id, id} == {ctx.owner.id, ctx.track.id}
         {:ok, %{available: false}}
       end)
 
@@ -2113,7 +2113,7 @@ defmodule Ravix.TracksTest do
     test "running machines enrich the listing with a bounded metadata command", ctx do
       listing = metadata_listing(ctx)
 
-      expect(Ravix.Terminal, :status, fn _, _, [passive: true] ->
+      expect(Ravix.Terminal, :status, fn _, _ ->
         {:ok, %{available: true}}
       end)
 
@@ -2133,7 +2133,7 @@ defmodule Ravix.TracksTest do
     test "metadata times out without losing the listing or leaving its task running", ctx do
       listing = %Files.Listing{path: ctx.track.workdir, entries: [], truncated: false}
       parent = self()
-      expect(Ravix.Terminal, :status, fn _, _, _ -> {:ok, %{available: true}} end)
+      expect(Ravix.Terminal, :status, fn _, _ -> {:ok, %{available: true}} end)
 
       expect(Ravix.Terminal, :exec, fn _, _, _ ->
         send(parent, {:metadata_worker, self()})
@@ -2205,7 +2205,7 @@ defmodule Ravix.TracksTest do
 
     test "untracked files on a running machine join the diff through a bounded exec", ctx do
       machine_fountain(ctx.project, [diff_route(@edit)])
-      expect(Ravix.Terminal, :status, fn _, _, [passive: true] -> {:ok, %{available: true}} end)
+      expect(Ravix.Terminal, :status, fn _, _ -> {:ok, %{available: true}} end)
 
       expect(Ravix.Terminal, :exec, fn user, id, request ->
         assert {user.id, id} == {ctx.owner.id, ctx.track.id}
@@ -2230,7 +2230,7 @@ defmodule Ravix.TracksTest do
 
     test "an outsider's diff is refused before the machine is asked anything", ctx do
       reject(Ravix.Terminal, :exec, 3)
-      reject(Ravix.Terminal, :status, 3)
+      reject(Ravix.Terminal, :status, 2)
       assert {:error, :not_found} = Tracks.diff(insert_user(), ctx.track.id)
     end
 
@@ -2238,7 +2238,7 @@ defmodule Ravix.TracksTest do
       reject(Ravix.Terminal, :exec, 3)
       machine_fountain(ctx.project, [diff_route(@edit)])
 
-      expect(Ravix.Terminal, :status, fn _, _, [passive: true] ->
+      expect(Ravix.Terminal, :status, fn _, _ ->
         {:ok, %{available: false, why: :unreachable}}
       end)
 
@@ -2250,7 +2250,7 @@ defmodule Ravix.TracksTest do
       reject(Ravix.Terminal, :exec, 3)
       machine_fountain(ctx.project, [diff_route(@edit)])
 
-      expect(Ravix.Terminal, :status, fn _, _, _ ->
+      expect(Ravix.Terminal, :status, fn _, _ ->
         {:ok, %{available: false, why: :no_token}}
       end)
 
@@ -2260,7 +2260,7 @@ defmodule Ravix.TracksTest do
     test "a machine that hangs costs the untracked files, not the diff, and no task", ctx do
       machine_fountain(ctx.project, [diff_route(@edit)])
       parent = self()
-      expect(Ravix.Terminal, :status, fn _, _, _ -> {:ok, %{available: true}} end)
+      expect(Ravix.Terminal, :status, fn _, _ -> {:ok, %{available: true}} end)
 
       expect(Ravix.Terminal, :exec, fn _, _, _ ->
         send(parent, {:untracked_worker, self()})

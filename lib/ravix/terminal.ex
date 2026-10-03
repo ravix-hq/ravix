@@ -281,33 +281,29 @@ defmodule Ravix.Terminal do
   end
 
   @doc """
-  Whether the terminal will work. `passive: true` checks runtime state without exec.
+  Whether the terminal will work. A passive read of the machine's runtime
+  state: it runs nothing, so it never wakes a parked machine
+  (`Ravix.Tracks.wake/2` does that, through Fountain).
 
   Three distinct answers, and the panel renders a different empty state for
   each: no token on this deployment, no machine yet, or a machine that is
   asleep or unreachable. Collapsing them into one "unavailable" is how
   people end up filing a bug about a feature that is off by configuration.
   """
-  @spec status(User.t(), String.t(), keyword()) :: {:ok, Status.t()} | {:error, :not_found}
   @spec status(User.t(), String.t()) :: {:ok, Status.t()} | {:error, :not_found}
-  def status(%User{} = user, track_id, opts \\ []) do
+  def status(%User{} = user, track_id) do
     with {:ok, %{track: track, project: project}} <- Access.track_access(user, track_id) do
-      {:ok, status_of(Sprites.config(), track, project, Keyword.get(opts, :passive, false))}
+      {:ok, status_of(Sprites.config(), track, project)}
     end
   end
 
-  defp status_of(nil, track, _project, _passive),
+  defp status_of(nil, track, _project),
     do: %Status{available: false, why: :no_token, cwd: track.workdir}
 
-  defp status_of(sprites, track, project, passive) do
+  defp status_of(sprites, track, project) do
     case sprite_of(project, track) do
       {:ok, sprite} ->
-        available? =
-          if passive,
-            do: Sprites.running?(sprites, sprite),
-            else: Sprites.reachable?(sprites, sprite)
-
-        if available? do
+        if Sprites.running?(sprites, sprite) do
           woke(track)
           %Status{available: true, why: nil, cwd: track.workdir}
         else

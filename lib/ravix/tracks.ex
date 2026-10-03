@@ -1467,18 +1467,30 @@ defmodule Ravix.Tracks do
   Wake the track's machine now, rather than with the next message.
 
   Setup parked on a sleeping shared machine is woken the way `retry/3` wakes
-  it. Anything else is asked whether it is running with a probe that runs a
-  command (`Ravix.Terminal.status/3` without `passive`), which is what wakes
-  a suspended machine; its answer clears the asleep mark
-  (`Ravix.Tracks.Sleep`). Write access, like a message: a Read member
-  (ADR 0010) cannot wake a machine they could not prompt.
+  it. Anything else asks Fountain to wake the track's conversation
+  (`Ravix.Fountain.wake/2`), which resumes the machine without opening a
+  turn and is refused for the reasons a prompt would be, a 404 included.
+  Either answer clears the asleep mark (`Ravix.Tracks.Sleep`): `:awake` is a
+  machine already up, and `:waking` one Fountain has resumed or is replacing,
+  which no stream event will say again. A track with no conversation yet has
+  nothing to wake and is refused. Write access, like a message: a Read
+  member (ADR 0010) cannot wake a machine they could not prompt.
   """
   @spec wake(User.t(), String.t()) :: :ok | {:error, reason()}
   def wake(%User{} = user, track_id) do
     with {:ok, %{track: track}} <- Access.track_access(user, track_id, :write) do
-      if track.setup_state == "running" and track.setup_error_code == "sandbox_suspended",
-        do: retry(user, track_id),
-        else: probe_awake(user, track_id)
+      cond do
+        track.setup_state == "running" and track.setup_error_code == "sandbox_suspended" ->
+          retry(user, track_id)
+
+        track.conversation_id in [nil, ""] ->
+          {:error,
+           {:conflict, "no_conversation",
+            "This track has no agent session to wake yet. Send a message to start one."}}
+
+        true ->
+          wake_conversation(track)
+      end
     end
   end
 
@@ -1494,18 +1506,12 @@ defmodule Ravix.Tracks do
   def asleep?(%Track{setup_state: "running", setup_error_code: "sandbox_suspended"}), do: true
   def asleep?(%Track{}), do: false
 
-  defp probe_awake(user, track_id) do
-    case Ravix.Terminal.status(user, track_id) do
-      {:ok, %{available: true}} ->
-        :ok
-
-      {:ok, _} ->
-        {:error,
-         {:conflict, "machine_not_awake",
-          "This track's machine did not wake. Try again, or send a message."}}
-
-      {:error, _} = error ->
-        error
+  defp wake_conversation(track) do
+    with {:ok, client} <- fountain(),
+         {:ok, _awake_or_waking} <- Fountain.wake(client, track.conversation_id) do
+      # ownership: Access.track_access in wake/2 admitted this track with Write.
+      if asleep?(track), do: Sleep.record(track.id, false)
+      :ok
     end
   end
 
@@ -2492,7 +2498,7 @@ defmodule Ravix.Tracks do
   @spec git_status(User.t(), String.t()) ::
           {:ok, Git.Status.t()} | {:error, reason() | Ravix.Terminal.reason()}
   def git_status(%User{} = user, track_id) do
-    with {:ok, status} <- Ravix.Terminal.status(user, track_id, passive: true),
+    with {:ok, status} <- Ravix.Terminal.status(user, track_id),
          :ok <- check(status.why != :unreachable, :machine_asleep),
          {:ok, result} <-
            Ravix.Terminal.exec(user, track_id, %{command: Git.status_command(), timeout_sec: 15}) do
@@ -2778,7 +2784,7 @@ defmodule Ravix.Tracks do
   defp read_file_metadata(user, track, listing) do
     with nil <- listing.snapshot_at,
          true <- confine(track.workdir, listing.path) == listing.path,
-         {:ok, %{available: true}} <- Ravix.Terminal.status(user, track.id, passive: true) do
+         {:ok, %{available: true}} <- Ravix.Terminal.status(user, track.id) do
       metadata =
         Ravix.Terminal.exec(user, track.id, %Ravix.Terminal.Request{
           command: Files.metadata_command(track.workdir, listing),
@@ -2843,7 +2849,7 @@ defmodule Ravix.Tracks do
       Task.Supervisor.async_nolink(
         Ravix.TaskSupervisor,
         Ravix.Trace.link(fn ->
-          case Ravix.Terminal.status(user, track.id, passive: true) do
+          case Ravix.Terminal.status(user, track.id) do
             {:ok, %{available: true}} ->
               Ravix.Terminal.exec(user, track.id, %Ravix.Terminal.Request{
                 command: Diff.untracked_command(track.workdir),

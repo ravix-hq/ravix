@@ -31,6 +31,7 @@ import { WORKSPACE_ROOT, WORK_ROOT, RECEIPT_PATH, parseChannel } from "../shared
 let updateMockPreview = (_workdir: string): void => {};
 let setMockSpriteAsleep = (_sprite: string, _wake: (() => void) | null, _wakeMs?: number): void => {};
 let setMockPtySilent = (_sprite: string, _on: boolean): void => {};
+let wakeMockSprite = async (_sprite: string): Promise<void> => {};
 
 const PORT = Number(process.env.MOCK_PORT || 8793);
 const BASE = `http://localhost:${PORT}`;
@@ -1476,6 +1477,22 @@ export async function fountain(req: Request, url: URL): Promise<Response | null>
     return json({ data: withBox(conv) });
   }
 
+  // managoat/fountain#2551: bring the machine up without opening a turn.
+  // `waking` when this request resumed a suspended one, `awake` otherwise;
+  // refused as a prompt's wake is.
+  const convWake = /^\/api\/conversations\/([^/]+)\/wake$/.exec(p);
+  if (convWake && method === "POST") {
+    const conv = state.conversations.find((c) => c.id === convWake[1]);
+    if (!conv) return json({ error: "not_found" }, 404);
+    if (conv.status === "terminated") return json({ error: "conversation_terminated" }, 410);
+    const box = state.boxes.get(conv.sandbox_id!);
+    if (!box || box.status === "terminated") return json({ error: "sandbox_unavailable", message: "this sandbox cannot take that request right now; send it again shortly" }, 503);
+    if (box.status !== "suspended") return json({ status: "awake" });
+    await wakeMockSprite(box.sprite_name);
+    setSandboxStatus(box.id, "ready");
+    return json({ status: "waking" });
+  }
+
   const convAction = /^\/api\/conversations\/([^/]+)\/(interrupt|terminate)$/.exec(p);
   if (convAction && method === "POST") {
     const conv = state.conversations.find((c) => c.id === convAction[1]);
@@ -2013,7 +2030,7 @@ function githubWeb(req: Request, url: URL, webBody: Record<string, unknown> = {}
 // ── the port ───────────────────────────────────────────────────────────
 
 if (import.meta.main) {
-({ updateMockPreview, setMockSpriteAsleep, setMockPtySilent } = await import("./previews"));
+({ updateMockPreview, setMockSpriteAsleep, setMockPtySilent, wakeMockSprite } = await import("./previews"));
 Bun.serve({
   port: PORT,
   // A track's transcript stream stays open as long as its tab is; the default
