@@ -108,6 +108,21 @@ defmodule Ravix.Projects.ConductorSetup.ParserTest do
     end
   end
 
+  test "empty scripts mean no candidate and empty arguments retain their shell meaning" do
+    assert {:ok, %{setup: nil, runs: []}} =
+             Parser.parse(%{
+               @toml => "[scripts]\nsetup = ''\nrun = ''",
+               @json => "invalid ignored JSON"
+             })
+
+    assert {:ok, %{runs: [%{command: "echo ''"}]}} =
+             Parser.parse(%{@toml => "[scripts.run.dev]\ncommand = 'echo'\nargs = ['']"})
+
+    for value <- [false, nil] do
+      assert {:error, _} = Parser.parse(%{@json => Jason.encode!(%{scripts: value})})
+    end
+  end
+
   test "script limits and invalid schema values are refused" do
     for run <- [
           1,
