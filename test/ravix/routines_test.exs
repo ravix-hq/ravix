@@ -3,6 +3,7 @@ defmodule Ravix.RoutinesTest do
   import Mimic
   alias Ravix.{Crypto, Routines, Tracks}
   alias Ravix.Routines.{Dispatch, Store}
+  alias Ravix.Fountain.FakeTransport
 
   setup :verify_on_exit!
 
@@ -126,7 +127,7 @@ defmodule Ravix.RoutinesTest do
 
       [data, _] = String.split(envelope, "\nEND UNTRUSTED WEBHOOK EVENT DATA", parts: 2)
       assert data |> Jason.decode!() |> Jason.decode!() == event
-      assert payload["request_id"] =~ "routine:"
+      assert Regex.match?(~r/^[a-zA-Z0-9-]{16,80}$/, payload["request_id"])
       {:ok, %{}}
     end)
 
@@ -174,6 +175,31 @@ defmodule Ravix.RoutinesTest do
     for key <- ["open-fail", "queue-fail", "crash", "queue-crash"] do
       assert {:ok, _, :duplicate} = Routines.receive(row.id, token, key, %{})
     end
+  end
+
+  test "the real prompt queue persists webhook data without SQL logging its contents" do
+    user = insert_user()
+    project = insert_project(user: user, repo_full_name: nil, vault_id: nil, installation_id: nil)
+    {:ok, row, token} = Routines.create(user, project.id, attrs())
+    track = insert_track(project: project, conversation_id: "routine-conversation")
+    expect(Tracks, :open, fn _, _, _ -> {:ok, track} end)
+    client = FakeTransport.client([])
+    stub(Ravix.Fountain, :client, fn -> client end)
+    marker = "private-payload-#{Ecto.UUID.generate()}"
+
+    log =
+      ExUnit.CaptureLog.capture_log([level: :debug], fn ->
+        assert {:ok, %{status: "queued"} = dispatch, :new} =
+                 Routines.receive(row.id, token, "real-queue", %{"event" => marker})
+
+        item = Repo.get_by!(Ravix.PromptQueue.Item, id: "routine-#{dispatch.id}")
+        assert item.user_id == user.id
+        assert item.track_id == track.id
+        assert item.body["prompt"] =~ marker
+      end)
+
+    refute log =~ marker
+    refute log =~ token
   end
 
   test "claim remains inspectable if the process ends before dispatch and canonical data deduplicates" do

@@ -1,0 +1,5 @@
+#routines-panel { margin-top: 32px; padding-top: 24px; border-top: 1px solid var(--line); scroll-margin-top: 24px; }
+#routines-panel > p { margin: 12px 0 20px; color: var(--dim); }
+#routines-panel h2 { font-size: 18px; font-weight: 600; }
+#routines-panel h3 { font-size: 16px; margin: 0 0 12px; overflow-wrap: anywhere; }
+#routine-credential { margin-bottom: 20px; }
