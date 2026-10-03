@@ -24,6 +24,7 @@ defmodule Ravix.Projects.ProjectInvite do
     field :avatar_url, :string
     field :invited_by, :string
     field :created_at, :utc_datetime_usec
+    field :resource_scoped, :boolean, default: false
   end
 
   @fields ~w(project_id github_id login avatar_url invited_by created_at)a

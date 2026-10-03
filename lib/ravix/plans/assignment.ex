@@ -152,14 +152,19 @@ defmodule Ravix.Plans.Assignment do
 
   defp target(user, plan, item, _) do
     # No name: `Tracks` derives a valid, unreserved branch from the item.
-    Tracks.open(user, plan.project_id, %{
-      "origin" => %{
-        "kind" => "plan",
-        "plan_id" => plan.id,
-        "item_id" => item.id,
-        "title" => item.title
-      }
-    })
+    Tracks.open(
+      user,
+      plan.project_id,
+      %{
+        "origin" => %{
+          "kind" => "plan",
+          "plan_id" => plan.id,
+          "item_id" => item.id,
+          "title" => item.title
+        }
+      },
+      resource_id: plan.resource_id
+    )
   end
 
   # A reservation outlives a failure only while the failure leaves open

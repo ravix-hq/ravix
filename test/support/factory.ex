@@ -11,7 +11,7 @@ defmodule Ravix.Factory do
   """
   alias Ravix.Accounts.{OAuthState, Session, User}
   alias Ravix.Previews.{Preview, PreviewAgentGrant, PreviewDefault, PreviewGrant, Row}
-  alias Ravix.Projects.{Project, ProjectInvite, ProjectLink, ProjectMember}
+  alias Ravix.Projects.{Project, ProjectInvite, ProjectLink, ProjectMember, Resource}
   alias Ravix.PromptQueue.Item
   alias Ravix.Repo
   alias Ravix.Tracks.{Track, TrackInvite, TrackLink, TrackMember, TrackRead}
@@ -121,6 +121,27 @@ defmodule Ravix.Factory do
   def insert_project(attrs \\ []) do
     attrs = attrs |> normalize() |> ensure_owner("user", "user_id", fn -> insert_user().id end)
     Project.changeset(%Project{}, project_attrs(attrs)) |> Repo.insert!()
+  end
+
+  @doc "Retained machine settings attached to a surviving project."
+  def insert_project_resource(%Project{} = project, attrs \\ []) do
+    attrs =
+      attrs
+      |> normalize()
+      |> take_assoc("user", "user_id")
+      |> Map.put_new("user_id", project.user_id)
+
+    original =
+      %Project{}
+      |> Project.changeset(project_attrs(attrs))
+      |> Ecto.Changeset.apply_changes()
+      |> Map.from_struct()
+
+    fields = Map.take(original, Resource.__schema__(:fields))
+
+    %Resource{}
+    |> struct(Map.put(fields, :project_id, project.id))
+    |> Repo.insert!()
   end
 
   @doc "A project membership for `user` on `project`."

@@ -550,23 +550,107 @@ defmodule Ravix.People.Store do
     {:ok, joined} =
       Repo.transaction(fn ->
         projects = claim_project_invites(user_id, github_id)
-        tracks = claim_track_invites(user_id, github_id)
+
+        tracks =
+          claim_track_invites(user_id, github_id) ++ claim_resource_invites(user_id, github_id)
+
         %{tracks: tracks, projects: projects}
       end)
 
     joined
   end
 
+  defp claim_resource_invites(user_id, github_id) do
+    invitations =
+      Repo.all(
+        from i in "resource_invites",
+          where: i.github_id == ^github_id,
+          select: %{resource_id: i.resource_id, invited_by: i.invited_by}
+      )
+
+    tracks =
+      Enum.flat_map(invitations, fn invitation ->
+        # ownership: no door -- the persisted invitation is the sign-in authorization;
+        # the resource resolves its canonical project solely to check retirement.
+        with %Ravix.Projects.Resource{} = resource <-
+               Repo.get(Ravix.Projects.Resource, invitation.resource_id),
+             %Project{} = project <- Projects.live_project(resource.project_id),
+             false <- workspace_shared?(project) do
+          seat_resource(user_id, resource.id, invitation.invited_by)
+        else
+          _ -> []
+        end
+      end)
+
+    Repo.delete_all(from i in "resource_invites", where: i.github_id == ^github_id)
+    tracks
+  end
+
+  @doc "An original project's preserved invitation link and its canonical project."
+  def resource_for_link(hash) do
+    # ownership: no door -- the matched invitation hash authorizes these labels.
+    row =
+      Repo.one(
+        from l in "resource_links",
+          join: r in Ravix.Projects.Resource,
+          on: r.id == l.resource_id,
+          join: p in Project,
+          on: p.id == r.project_id,
+          join: u in User,
+          on: u.id == l.created_by,
+          where:
+            l.token_hash == ^hash and l.expires_at > fragment("now()") and
+              is_nil(p.archived_at) and is_nil(p.deletion_requested_at),
+          select: {p, r.id, u.login}
+      )
+
+    row
+  end
+
+  @doc "Seats granted by an original project's link/invite never include sibling resources."
+  def seat_resource(user_id, resource_id, invited_by) do
+    # ownership: no door -- People matched a persisted resource invitation or link.
+    tracks =
+      Repo.all(
+        from t in Track,
+          where:
+            t.resource_id == ^resource_id and
+              t.visibility == :project and is_nil(t.closed_at)
+      )
+
+    Enum.each(tracks, &add_member(&1.id, user_id, invited_by))
+    tracks
+  end
+
+  @doc "Seats on the original canonical machine, for pre-consolidation invitations."
+  def seat_default_resource(user_id, project_id, invited_by) do
+    # ownership: no door -- People matched an original canonical invitation or link.
+    tracks =
+      Repo.all(
+        from t in Track,
+          where:
+            t.project_id == ^project_id and
+              is_nil(t.resource_id) and t.visibility == :project and is_nil(t.closed_at)
+      )
+
+    Enum.each(tracks, &add_member(&1.id, user_id, invited_by))
+    tracks
+  end
+
+  def scoped_project_link?(hash) do
+    Repo.exists?(from l in ProjectLink, where: l.token_hash == ^hash and l.resource_scoped)
+  end
+
   defp claim_project_invites(user_id, github_id) do
     pending =
-      Repo.all(from(i in ProjectInvite, where: i.github_id == ^github_id, select: i.project_id))
+      Repo.all(from(i in ProjectInvite, where: i.github_id == ^github_id))
 
     projects =
-      for project_id <- pending,
+      for invitation <- pending,
           # ownership: no door yet -- this runs during sign-in for a person
           # whose invitation rows are the only claim they have. The project
           # is read to check it is still there, not to decide who may see it.
-          %Project{} = project <- [Projects.live_project(project_id)],
+          %Project{} = project <- [Projects.live_project(invitation.project_id)],
           # An archived project is not somewhere to arrive, and neither is
           # your own: ownership is the stronger claim and is a column, not a
           # row here.
@@ -574,7 +658,10 @@ defmodule Ravix.People.Store do
           # Retired with the links on a workspace project (RAV-32), as a
           # track invitation is below: dropped, never honoured.
           not workspace_shared?(project) do
-        add_project_member(project.id, user_id, "invite")
+        if invitation.resource_scoped,
+          do: seat_default_resource(user_id, project.id, "invite"),
+          else: add_project_member(project.id, user_id, "invite")
+
         project
       end
 
@@ -950,7 +1037,7 @@ defmodule Ravix.People.Store do
     %ProjectInvite{}
     |> ProjectInvite.changeset(attrs)
     |> Repo.insert!(
-      on_conflict: {:replace, [:login, :avatar_url]},
+      on_conflict: {:replace, [:login, :avatar_url, :resource_scoped]},
       conflict_target: [:project_id, :github_id]
     )
 
@@ -973,25 +1060,86 @@ defmodule Ravix.People.Store do
 
   @doc "The invitations waiting on a project, oldest first."
   @spec project_invites_of(String.t()) :: [invite()]
-  def project_invites_of(project_id), do: invites_on(ProjectInvite, :project_id, project_id)
+  def project_invites_of(project_id) do
+    resources =
+      from r in Ravix.Projects.Resource, where: r.project_id == ^project_id, select: r.id
+
+    preserved =
+      Repo.all(
+        from i in "resource_invites",
+          where: i.resource_id in subquery(resources),
+          select: %Invite{github_id: i.github_id, login: i.login, avatar_url: i.avatar_url}
+      )
+
+    invites_on(ProjectInvite, :project_id, project_id) ++ preserved
+  end
 
   @doc "Withdraw a project invitation by the login it was sent to. True when one was there to withdraw."
   @spec remove_project_invite_by_login(String.t(), String.t()) :: boolean()
-  def remove_project_invite_by_login(project_id, login),
-    do: withdraw_invite(ProjectInvite, :project_id, project_id, login)
+  def remove_project_invite_by_login(project_id, login) do
+    removed = withdraw_invite(ProjectInvite, :project_id, project_id, login)
+
+    resources =
+      from r in Ravix.Projects.Resource, where: r.project_id == ^project_id, select: r.id
+
+    lowered = String.downcase(login)
+
+    {count, _} =
+      Repo.delete_all(
+        from i in "resource_invites",
+          where:
+            i.resource_id in subquery(resources) and
+              fragment("lower(?)", i.login) == ^lowered
+      )
+
+    removed or count > 0
+  end
 
   @doc "Put a project's one link, replacing whatever was there. `ttl_ms` from now."
   @spec put_project_link(String.t(), String.t(), String.t(), integer()) :: :ok
-  def put_project_link(project_id, token_hash, created_by, ttl_ms),
-    do: put_link_row(ProjectLink, :project_id, project_id, token_hash, created_by, ttl_ms)
+  def put_project_link(project_id, token_hash, created_by, ttl_ms) do
+    {:ok, :ok} =
+      Repo.transaction(fn ->
+        drop_project_link(project_id)
+        put_link_row(ProjectLink, :project_id, project_id, token_hash, created_by, ttl_ms)
+      end)
+
+    :ok
+  end
 
   @doc "When a project's link was made and when it lapses, or nil. Never the hash."
   @spec project_link_of(String.t()) :: %{created_at: DateTime.t(), expires_at: DateTime.t()} | nil
-  def project_link_of(project_id), do: link_row(ProjectLink, :project_id, project_id)
+  def project_link_of(project_id) do
+    link_row(ProjectLink, :project_id, project_id) || preserved_link_of(project_id)
+  end
+
+  defp preserved_link_of(project_id) do
+    # ownership: Access.project_access admitted the canonical project's link settings.
+    Repo.one(
+      from l in "resource_links",
+        join: r in Ravix.Projects.Resource,
+        on: r.id == l.resource_id,
+        where: r.project_id == ^project_id,
+        order_by: [desc: l.created_at],
+        limit: 1,
+        select: %{
+          created_at: type(l.created_at, :utc_datetime_usec),
+          expires_at: type(l.expires_at, :utc_datetime_usec)
+        }
+    )
+  end
 
   @doc "Delete a project's link. Nobody who came in on it is touched."
   @spec drop_project_link(String.t()) :: :ok
-  def drop_project_link(project_id), do: drop_link_row(ProjectLink, :project_id, project_id)
+  def drop_project_link(project_id) do
+    drop_link_row(ProjectLink, :project_id, project_id)
+
+    resources =
+      from r in Ravix.Projects.Resource, where: r.project_id == ^project_id, select: r.id
+
+    Repo.delete_all(from l in "resource_links", where: l.resource_id in subquery(resources))
+    :ok
+  end
 
   @doc "The project a link opens, or nil if it is unknown, revoked, expired or archived."
   @spec project_for_link(String.t()) :: Project.t() | nil
@@ -1070,6 +1218,8 @@ defmodule Ravix.People.Store do
   # link *the* revoke rather than a second thing to remember.
   defp put_link_row(schema, key, id, token_hash, created_by, ttl_ms) do
     now = DateTime.utc_now()
+    fields = [:token_hash, :created_by, :created_at, :expires_at]
+    fields = if schema == ProjectLink, do: [:resource_scoped | fields], else: fields
 
     schema
     |> struct()
@@ -1081,7 +1231,7 @@ defmodule Ravix.People.Store do
       :expires_at => DateTime.add(now, ttl_ms, :millisecond)
     })
     |> Repo.insert!(
-      on_conflict: {:replace, [:token_hash, :created_by, :created_at, :expires_at]},
+      on_conflict: {:replace, fields},
       conflict_target: key
     )
 

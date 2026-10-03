@@ -296,7 +296,7 @@ defmodule Ravix.SchedulesTest do
     track = insert_track(project: project)
     parent = self()
 
-    expect(Tracks, :open, fn actor, project_id, attrs ->
+    expect(Tracks, :open, fn actor, project_id, attrs, _opts ->
       assert actor.id == user.id
       assert project_id == project.id
       assert Ravix.Ids.valid_branch_name?(attrs["title"])
@@ -327,7 +327,7 @@ defmodule Ravix.SchedulesTest do
     membership = insert_project_member(project, member)
     {:ok, row} = Schedules.create(member, project.id, attrs())
     Repo.delete!(membership)
-    reject(&Tracks.open/3)
+    reject(&Tracks.open/4)
     Runner.run(row.id, row.next_run_at)
     assert Schedules.list(member) == []
     assert Repo.get!(Schedule, row.id).last_status =~ "Could not open track"
@@ -338,7 +338,7 @@ defmodule Ravix.SchedulesTest do
     project = insert_project(user: user)
     {:ok, row} = Schedules.create(user, project.id, attrs())
     track = insert_track(project: project)
-    expect(Tracks, :open, fn _, _, _ -> {:ok, %{id: track.id}} end)
+    expect(Tracks, :open, fn _, _, _, _opts -> {:ok, %{id: track.id}} end)
     expect(Tracks, :prompt, fn _, _, _ -> {:error, :unavailable} end)
     Runner.run(row.id, row.next_run_at)
     Runner.run(row.id, row.next_run_at)
@@ -357,7 +357,7 @@ defmodule Ravix.SchedulesTest do
     |> Repo.update!()
 
     {:ok, future} = Schedules.create(user, project.id, attrs())
-    expect(Tracks, :open, fn _, _, _ -> {:error, :unavailable} end)
+    expect(Tracks, :open, fn _, _, _, _opts -> {:error, :unavailable} end)
     server = start_supervised!({Ravix.Schedules.Server, interval: false})
     Sandbox.allow(Repo, self(), server)
     allow(Tracks, self(), server)
@@ -371,7 +371,7 @@ defmodule Ravix.SchedulesTest do
     user = insert_user()
     project = insert_project(user: user)
     {:ok, row} = Schedules.create(user, project.id, attrs())
-    expect(Tracks, :open, fn _, _, _ -> raise "provider interrupted" end)
+    expect(Tracks, :open, fn _, _, _, _opts -> raise "provider interrupted" end)
     Runner.run(row.id, row.next_run_at)
     Runner.run(row.id, row.next_run_at)
 

@@ -178,8 +178,10 @@ defmodule Ravix.MachineCache do
   def machine_for_track(_client, _project, %{sandbox_layout: :dedicated, sandbox_id: id}, _opts),
     do: {:ok, if(is_binary(id) and id != "", do: %Machine{sandbox_id: id})}
 
-  def machine_for_track(client, project, %{sandbox_layout: :shared}, opts),
-    do: machine_of(client, project, opts)
+  def machine_for_track(client, project, %{sandbox_layout: :shared} = track, opts) do
+    # ownership: Access.track_access/2 admitted this track before resolving its provider binding.
+    machine_of(client, Ravix.Projects.Store.for_track(project, track), opts)
+  end
 
   @doc """
   The sprite behind a sandbox, or nil if it is not on Sprites at all.

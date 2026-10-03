@@ -519,7 +519,7 @@ defmodule Ravix.SchemasTest do
   end
 
   describe "PreviewDefault" do
-    test "one per project, holding the config as a map of three string keys" do
+    test "one per project resource, holding the config as a map of three string keys" do
       project = insert_project()
 
       insert_preview_default(project,
@@ -530,7 +530,10 @@ defmodule Ravix.SchemasTest do
       # what a read gives; the column itself still holds the three string
       # keys, which is what a release that has not been replaced reads.
       assert %PreviewDefault{config: %Ravix.Previews.Config{command: "bun dev"}} =
-               Repo.get!(PreviewDefault, project.id)
+               Repo.one!(
+                 from d in PreviewDefault,
+                   where: d.project_id == ^project.id and is_nil(d.resource_id)
+               )
 
       assert %{rows: [[raw]]} =
                Repo.query!("SELECT config FROM ravix.preview_defaults WHERE project_id = $1", [

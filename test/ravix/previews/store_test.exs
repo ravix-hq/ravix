@@ -345,6 +345,37 @@ defmodule Ravix.Previews.StoreTest do
     end
   end
 
+  test "retained resource defaults survive canonical updates and clear independently" do
+    owner = insert_user()
+    {:ok, workspace} = Ravix.Workspaces.Store.ensure_personal_workspace(owner)
+
+    canonical =
+      insert_project(user: owner, repo_full_name: "acme/app")
+
+    donor = insert_project(user: owner, repo_full_name: "acme/app")
+    Ravix.Workspaces.Store.move_project(canonical.id, workspace.id)
+    Ravix.Workspaces.Store.mark_legacy_duplicate(donor.id, canonical.id)
+    Ravix.Workspaces.Store.move_project(donor.id, workspace.id)
+    original = %Config{directory: "original", command: "original"}
+    retained = %Config{directory: "retained", command: "retained"}
+    Store.set_defaults(canonical.id, original)
+    Store.set_defaults(donor.id, retained)
+
+    assert {:ok, _} =
+             Ravix.Projects.Consolidation.Store.merge(workspace.id, canonical.id, donor.id)
+
+    assert Store.defaults(canonical.id) == original
+    assert Store.defaults(canonical.id, donor.id) == retained
+    assert :ok = Store.set_defaults(canonical.id, %{original | command: "updated"})
+    assert Store.defaults(canonical.id).command == "updated"
+    assert Store.defaults(canonical.id, donor.id) == retained
+    assert :ok = Store.set_defaults(canonical.id, nil)
+    assert Store.defaults(canonical.id) == nil
+    assert Store.defaults(canonical.id, donor.id) == retained
+    assert :ok = Store.set_defaults(canonical.id, nil, donor.id)
+    assert Store.defaults(canonical.id, donor.id) == nil
+  end
+
   test "defaults are per project and cleared with nil" do
     project = insert_project()
     assert Store.defaults(project.id) == nil

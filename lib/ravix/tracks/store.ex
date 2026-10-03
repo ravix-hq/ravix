@@ -44,8 +44,10 @@ defmodule Ravix.Tracks.Store do
       from t in Track,
         join: p in Ravix.Projects.Project,
         on: p.id == t.project_id,
+        left_join: r in Ravix.Projects.Resource,
+        on: r.id == t.resource_id,
         where: t.id == ^id,
-        select: p.runtime
+        select: coalesce(r.runtime, p.runtime)
     )
   end
 

@@ -110,6 +110,8 @@ defmodule Ravix.Previews.Agent do
       # to write the helper's instructions, and nothing is decided by them.
       track = Repo.get!(Track, track_id)
       project = Repo.get!(Project, track.project_id)
+      # ownership: Tracks admitted this track before preparing its preview helper.
+      project = Ravix.Projects.Store.for_track(project, track)
 
       case install(track, project, user_id, prompt_id) do
         {:ok, path} -> instructions(track, project, path)

@@ -5,7 +5,7 @@ defmodule Ravix.Plans do
 
   def create(user, project_id, attrs, actor \\ :person) do
     with {:ok, _} <- Access.project_access(user, project_id),
-         {:ok, track_id} <- actor_track(user, project_id, actor) do
+         {:ok, track} <- actor_track(user, project_id, actor) do
       Store.transaction(fn ->
         plan =
           save(
@@ -14,7 +14,8 @@ defmodule Ravix.Plans do
                 %Plan{
                   project_id: project_id,
                   created_by_login: user.login,
-                  created_by_track_id: track_id
+                  created_by_track_id: track && track.id,
+                  resource_id: track && track.resource_id
                 },
                 attrs
               )
@@ -54,7 +55,9 @@ defmodule Ravix.Plans do
   def access(user, id) do
     with %Plan{} = plan <- Store.get(id),
          {:ok, access} <- Access.project_access(user, plan.project_id) do
-      {:ok, plan, access.project}
+      # ownership: Access.project_access admitted this plan's surviving project.
+      project = Ravix.Projects.Store.for_resource(access.project, plan.resource_id)
+      {:ok, plan, project}
     else
       _ -> {:error, :not_found}
     end
@@ -170,8 +173,12 @@ defmodule Ravix.Plans do
 
   def note(user, item_id, body, actor \\ :person) do
     with {:ok, item, plan} <- item_access(user, item_id),
-         {:ok, track_id} <- actor_track(user, plan.project_id, actor) do
-      %Note{item_id: item.id, created_by_login: user.login, created_by_track_id: track_id}
+         {:ok, track} <- actor_track(user, plan.project_id, actor) do
+      %Note{
+        item_id: item.id,
+        created_by_login: user.login,
+        created_by_track_id: track && track.id
+      }
       |> Note.changeset(%{"body" => body})
       |> Store.insert()
     end
@@ -200,7 +207,7 @@ defmodule Ravix.Plans do
 
   defp actor_track(user, project_id, {:track_agent, track_id}) do
     case Access.track_access(user, track_id) do
-      {:ok, %{track: %{project_id: ^project_id}}} -> {:ok, track_id}
+      {:ok, %{track: %{project_id: ^project_id} = track}} -> {:ok, track}
       _ -> {:error, :not_found}
     end
   end

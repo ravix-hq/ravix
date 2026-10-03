@@ -70,7 +70,7 @@ defmodule Ravix.Tracks.Sandbox.Store do
   # ownership: Access.project_access admitted this dedicated open before reserving its project.
   def create(plan, selection, project, opts \\ []) do
     Repo.transaction(fn ->
-      current = Ravix.Projects.Store.lock_retirement(project.id)
+      current = Ravix.Projects.Store.lock_retirement(project)
       if current.deletion_requested_at || current.archived_at, do: Repo.rollback(:not_found)
       attrs = Opening.track_attrs(plan, nil)
 
@@ -102,7 +102,13 @@ defmodule Ravix.Tracks.Sandbox.Store do
           "source_vault_id" => project.vault_id,
           "runtime" => selection.runtime,
           "model" => selection.model,
-          "channel_id" => Ravix.Ids.track_channel(project.id, track.slug, track.rev, track.id)
+          "channel_id" =>
+            Ravix.Ids.track_channel(
+              project.resource_id || project.id,
+              track.slug,
+              track.rev,
+              track.id
+            )
         })
 
       {:ok, _} = update_operation(op, %{resource_ids: resources})
@@ -111,19 +117,29 @@ defmodule Ravix.Tracks.Sandbox.Store do
   end
 
   @doc "Serialize the opt-in fence check and allocation with last-shared retirement."
-  def shared_open(project_id, fun) do
+  def shared_open(project_id, fun) when is_binary(project_id) do
     # ownership: Access.project_access admitted this shared allocation.
-    maintenance? =
-      Ravix.Config.dedicated_rollout?() and
-        case Ravix.Projects.Store.live_project(project_id) do
-          nil -> false
-          project -> Project.maintenance?(project)
-        end
+    shared_open(Ravix.Projects.Store.live_project(project_id), fun)
+  end
 
-    if Ravix.Config.retire_shared_machines?() or maintenance? do
-      Ravix.Cluster.project_mutation(project_id, :shared_machine, fn ->
+  def shared_open(nil, _fun), do: {:error, :not_found}
+
+  def shared_open(%Project{} = project, fun) do
+    # ownership: Access.project_access admitted this shared allocation.
+    maintenance? = Ravix.Config.dedicated_rollout?() and Project.maintenance?(project)
+
+    merged? =
+      not is_nil(project.resource_id) or length(Ravix.Projects.Store.resources(project)) > 1
+
+    if Ravix.Config.retire_shared_machines?() or maintenance? or merged? do
+      Ravix.Cluster.project_mutation(project.id, :shared_machine, fn ->
         # ownership: Access.project_access admitted this shared allocation.
-        shared_available(Ravix.Projects.Store.live_project(project_id), fun)
+        current =
+          project.id
+          |> Ravix.Projects.Store.live_project()
+          |> Ravix.Projects.Store.for_resource(project.resource_id)
+
+        shared_available(current, fun)
       end)
     else
       fun.()
@@ -155,7 +171,7 @@ defmodule Ravix.Tracks.Sandbox.Store do
     # ownership: Access.track_access and require_owner_or_cutter admitted this retirement.
     Repo.transaction(fn ->
       # ownership: Access.track_access and require_owner_or_cutter admitted this close.
-      Ravix.Projects.Store.lock_retirement(track.project_id)
+      Ravix.Projects.Store.lock_retirement(project)
       row = Repo.one!(from t in Track, where: t.id == ^track.id, lock: "FOR UPDATE")
       if row.closed_at, do: Repo.rollback(:already_closed)
 
@@ -166,7 +182,8 @@ defmodule Ravix.Tracks.Sandbox.Store do
           from t in Track,
             where:
               t.project_id == ^track.project_id and
-                t.sandbox_layout == :shared and is_nil(t.closed_at)
+                t.sandbox_layout == :shared and is_nil(t.closed_at) and
+                fragment("? IS NOT DISTINCT FROM ?", t.resource_id, ^track.resource_id)
         )
 
       if not remaining do
@@ -188,7 +205,7 @@ defmodule Ravix.Tracks.Sandbox.Store do
         |> save!()
 
         # ownership: Access.track_access and require_owner_or_cutter admitted retirement.
-        Ravix.Projects.Store.set_retiring(track.project_id, true)
+        Ravix.Projects.Store.set_retiring(project, true)
       end
 
       :ok
@@ -205,7 +222,7 @@ defmodule Ravix.Tracks.Sandbox.Store do
       project.agent_id
     else
       # ownership: Access.track_access admitted closing this project's final shared track.
-      project.id
+      project
       |> Ravix.Projects.Store.runtime_agents()
       |> Enum.find_value(fn agent ->
         if agent.runtime == project.shared_home_runtime, do: agent.agent_id
@@ -225,7 +242,12 @@ defmodule Ravix.Tracks.Sandbox.Store do
       case progress(op, attrs) do
         {:ok, _} ->
           # ownership: the durable close was admitted by Access.track_access and require_owner_or_cutter.
-          Ravix.Projects.Store.finish_retirement(track.project_id, is_nil(error))
+          project =
+            track.project_id
+            |> Ravix.Projects.Store.get_project()
+            |> Ravix.Projects.Store.for_track(track)
+
+          Ravix.Projects.Store.finish_retirement(project, is_nil(error))
 
         {:error, reason} ->
           Repo.rollback(reason)
@@ -240,7 +262,12 @@ defmodule Ravix.Tracks.Sandbox.Store do
     track = get_track(op.track_id)
 
     # ownership: the durable operation was admitted by Access.track_access and require_owner_or_cutter.
-    {track, Ravix.Projects.Store.get_project(track.project_id)}
+    project =
+      track.project_id
+      |> Ravix.Projects.Store.get_project()
+      |> Ravix.Projects.Store.for_track(track)
+
+    {track, project}
   end
 
   def pending do
@@ -365,7 +392,11 @@ defmodule Ravix.Tracks.Sandbox.Store do
       unwrap!(request_close(track))
     end
 
-    unwrap!(retire_shared_tracks(project))
+    # ownership: Access.project_of admitted deletion of all retained machines.
+    for resource <- Ravix.Projects.Store.resources(project),
+        do: unwrap!(retire_shared_tracks(resource))
+
+    :ok
   end
 
   # ownership: Access.project_of admitted this project’s shared-only rebuild or deletion.
@@ -374,13 +405,14 @@ defmodule Ravix.Tracks.Sandbox.Store do
   # ownership: Access.project_of admitted this project’s shared-only rebuild or deletion.
   defp retire_shared_locked(project) do
     # ownership: Access.project_of admitted this shared-only rebuild or deletion.
-    Ravix.Projects.Store.lock_retirement(project.id)
+    Ravix.Projects.Store.lock_retirement(project)
 
     tracks =
       Repo.all(
         from t in Track,
           where:
-            t.project_id == ^project.id and t.sandbox_layout == :shared and is_nil(t.closed_at),
+            t.project_id == ^project.id and t.sandbox_layout == :shared and is_nil(t.closed_at) and
+              fragment("? IS NOT DISTINCT FROM ?", t.resource_id, ^project.resource_id),
           lock: "FOR UPDATE"
       )
 
@@ -415,20 +447,21 @@ defmodule Ravix.Tracks.Sandbox.Store do
       |> save!()
 
       # ownership: Access.project_of admitted the retirement fence before provider effects.
-      Ravix.Projects.Store.set_retiring(project.id, true)
+      Ravix.Projects.Store.set_retiring(project, true)
     end
 
     :ok
   end
 
-  def shared_retirements(project_id) do
+  def shared_retirements(project) do
     Repo.all(
       from o in Operation,
         join: t in Track,
         on: t.id == o.track_id,
         where:
-          t.project_id == ^project_id and t.sandbox_layout == :shared and is_nil(o.completed_at) and
-            o.phase != "failed"
+          t.project_id == ^project.id and t.sandbox_layout == :shared and is_nil(o.completed_at) and
+            o.phase != "failed" and
+            fragment("? IS NOT DISTINCT FROM ?", t.resource_id, ^project.resource_id)
     )
   end
 

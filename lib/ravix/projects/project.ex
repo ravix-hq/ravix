@@ -27,6 +27,8 @@ defmodule Ravix.Projects.Project do
 
   schema "projects" do
     belongs_to :user, Ravix.Accounts.User
+    field :resource_id, :string, virtual: true
+    field :resource_owner_id, :string, virtual: true
     field :name, :string
     field :repo_full_name, :string
     field :repo_private, :boolean, default: false
@@ -82,7 +84,10 @@ defmodule Ravix.Projects.Project do
 
   @doc "Maintenance rollout follows the project owner, including member-triggered work."
   def maintenance?(project),
-    do: Ravix.Config.dedicated_opens_enabled?(%Ravix.Accounts.User{id: project.user_id})
+    do:
+      Ravix.Config.dedicated_opens_enabled?(%Ravix.Accounts.User{
+        id: project.resource_owner_id || project.user_id
+      })
 
   @doc "A project with its three Fountain ids. Mints the id and `created_at` when absent."
   @spec changeset(t(), map()) :: Ecto.Changeset.t()

@@ -56,7 +56,7 @@ defmodule Ravix.RoutinesTest do
     assert {:error, :not_found} = Routines.create(guest, project.id, attrs())
     assert {:ok, row, token} = Routines.create(member, project.id, attrs())
     Repo.delete!(membership)
-    reject(&Tracks.open/3)
+    reject(&Tracks.open/4)
     assert {:error, :unauthorized} = Routines.receive(row.id, token, "event", %{})
     assert Routines.list(member) == []
     assert {:error, :not_found} = Routines.history(member, row.id)
@@ -71,7 +71,7 @@ defmodule Ravix.RoutinesTest do
     membership = insert_project_member(project, member)
     {:ok, row, token} = Routines.create(member, project.id, attrs())
     membership |> Ecto.Changeset.change(role: :read) |> Repo.update!()
-    reject(&Tracks.open/3)
+    reject(&Tracks.open/4)
     assert {:error, :unauthorized} = Routines.receive(row.id, token, "event", %{})
     assert Routines.list(member) == []
     assert {:error, :not_found} = Routines.rotate(member, row.id)
@@ -81,7 +81,7 @@ defmodule Ravix.RoutinesTest do
     user = insert_user()
     project = insert_project(user: user)
     {:ok, row, token} = Routines.create(user, project.id, attrs())
-    reject(&Tracks.open/3)
+    reject(&Tracks.open/4)
     assert {:error, :unauthorized} = Routines.receive(row.id, "bad", "event", %{})
     assert {:error, :invalid_request} = Routines.receive(row.id, token, "", %{})
     assert {:error, :invalid_request} = Routines.receive(row.id, token, "event", [])
@@ -108,7 +108,7 @@ defmodule Ravix.RoutinesTest do
       "nested" => %{"b" => 2, "a" => [1, true]}
     }
 
-    expect(Tracks, :open, fn actor, id, payload ->
+    expect(Tracks, :open, fn actor, id, payload, _opts ->
       assert actor.id == user.id
       assert id == project.id
       assert Ravix.Ids.valid_branch_name?(payload["title"])
@@ -150,27 +150,27 @@ defmodule Ravix.RoutinesTest do
     project = insert_project(user: user)
     {:ok, row, token} = Routines.create(user, project.id, attrs())
     track = insert_track(project: project)
-    expect(Tracks, :open, fn _, _, _ -> {:error, :unavailable} end)
+    expect(Tracks, :open, fn _, _, _, _opts -> {:error, :unavailable} end)
 
     assert {:ok, %{status: "open_failed"}, :new} =
              Routines.receive(row.id, token, "open-fail", %{})
 
-    expect(Tracks, :open, fn _, _, _ -> {:ok, track} end)
+    expect(Tracks, :open, fn _, _, _, _opts -> {:ok, track} end)
     expect(Tracks, :prompt, fn _, _, _ -> {:error, :unavailable} end)
 
     assert {:ok, %{status: "queue_failed", track_id: id}, :new} =
              Routines.receive(row.id, token, "queue-fail", %{})
 
     assert id == track.id
-    expect(Tracks, :open, fn _, _, _ -> raise "provider interrupted" end)
+    expect(Tracks, :open, fn _, _, _, _opts -> raise "provider interrupted" end)
     assert {:ok, %{status: "interrupted"}, :new} = Routines.receive(row.id, token, "crash", %{})
-    expect(Tracks, :open, fn _, _, _ -> {:ok, track} end)
+    expect(Tracks, :open, fn _, _, _, _opts -> {:ok, track} end)
     expect(Tracks, :prompt, fn _, _, _ -> raise "provider interrupted" end)
 
     assert {:ok, %{status: "interrupted", track_id: ^id}, :new} =
              Routines.receive(row.id, token, "queue-crash", %{})
 
-    reject(&Tracks.open/3)
+    reject(&Tracks.open/4)
 
     for key <- ["open-fail", "queue-fail", "crash", "queue-crash"] do
       assert {:ok, _, :duplicate} = Routines.receive(row.id, token, key, %{})
@@ -182,7 +182,7 @@ defmodule Ravix.RoutinesTest do
     project = insert_project(user: user, repo_full_name: nil, vault_id: nil, installation_id: nil)
     {:ok, row, token} = Routines.create(user, project.id, attrs())
     track = insert_track(project: project, conversation_id: "routine-conversation")
-    expect(Tracks, :open, fn _, _, _ -> {:ok, track} end)
+    expect(Tracks, :open, fn _, _, _, _opts -> {:ok, track} end)
     client = FakeTransport.client([])
     stub(Ravix.Fountain, :client, fn -> client end)
     marker = "private-payload-#{Ecto.UUID.generate()}"

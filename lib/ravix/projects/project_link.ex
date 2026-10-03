@@ -24,6 +24,7 @@ defmodule Ravix.Projects.ProjectLink do
     field :token_hash, :string, redact: true
     field :created_by, :string
     field :created_at, :utc_datetime_usec
+    field :resource_scoped, :boolean, default: false
     field :expires_at, :utc_datetime_usec
   end
 

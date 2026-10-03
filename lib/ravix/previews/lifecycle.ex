@@ -82,8 +82,11 @@ defmodule Ravix.Previews.Lifecycle do
 
     defaults =
       case track do
-        %Track{project_id: project_id} -> Store.defaults(project_id)
-        nil -> nil
+        %Track{project_id: project_id, resource_id: resource_id} ->
+          Store.defaults(project_id, resource_id)
+
+        nil ->
+          nil
       end
 
     config = row.config || defaults
@@ -134,7 +137,12 @@ defmodule Ravix.Previews.Lifecycle do
     # preview at all, and every caller goes on to check the person
     # separately (`Access.track_access/2`, or a grant bound to a session).
     track = Tracks.get_track(track_id)
-    project = track && Projects.live_project(track.project_id)
+
+    # ownership: no door yet; this resolves resources for the same existence
+    # check, before the caller checks Access.track_access or a session grant.
+    project =
+      track &&
+        track.project_id |> Projects.live_project() |> Projects.for_track(track)
 
     cond do
       track == nil or track.closed_at != nil -> closed()

@@ -99,7 +99,11 @@ defmodule Ravix.Previews.Reconciler do
 
     Enum.map(rows, fn row ->
       track = Map.get(tracks, row.track_id)
-      {row, track, track && Map.get(projects, track.project_id)}
+      project = track && Map.get(projects, track.project_id)
+      # ownership: no door -- this sweep has no caller; it follows only
+      # the preview tracks loaded above.
+      project = track && Ravix.Projects.Store.for_track(project, track)
+      {row, track, project}
     end)
   end
 

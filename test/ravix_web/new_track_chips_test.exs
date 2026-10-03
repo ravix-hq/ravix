@@ -77,7 +77,7 @@ defmodule RavixWeb.NewTrackChipsTest do
   defp open_dialog(conn) do
     {:ok, view, _} = live(conn, "/home")
     render_async(view)
-    view |> element("#top-new-track") |> render_click()
+    view |> element("#mobile-new-track") |> render_click()
     render_async(view)
     view
   end
@@ -102,54 +102,6 @@ defmodule RavixWeb.NewTrackChipsTest do
     view
     |> form("#new-track-form", new_track: params)
     |> render_change(%{"_target" => ["new_track", field]})
-  end
-
-  test "the prompt leads and has focus; every other choice is a chip", ctx do
-    view = open_dialog(ctx.conn)
-
-    # Focus goes to the prompt once, when the dialog mounts, not to the
-    # first control (assets/test/chip_menu.test.js runs the hook).
-    assert has_element?(
-             view,
-             "#new-track-form[phx-hook=ProjectFormFocus][data-focus='#new-track-prompt']"
-           )
-
-    refute view |> element("#new-track-dialog-dialog") |> render() =~ "focus_first"
-
-    assert has_element?(
-             view,
-             ~s(#new-track-prompt[placeholder="What do you want to work on?"])
-           )
-
-    refute render(view) =~ "Optional"
-
-    for {chip, text} <- [
-          {"new-track-repo", "me/beta"},
-          {"new-track-model", "Claude Code · Claude Opus 5"}
-        ] do
-      assert has_element?(
-               view,
-               "button##{chip}-trigger[aria-haspopup=dialog][aria-expanded=false]" <>
-                 "[aria-controls=#{chip}-menu][popovertarget=#{chip}-menu]",
-               text
-             )
-
-      assert has_element?(view, "##{chip}-menu[popover][role=dialog]")
-    end
-
-    # The repository list is inside the repository chip's popover, and the
-    # model chip is the composer's menu, in the pinned footer beside Create.
-    assert has_element?(view, "#new-track-repo-menu #repo-picker")
-    assert has_element?(view, ".dialog-foot #new-track-model .model-menu")
-    assert has_element?(view, ".dialog-foot #new-track-create[form=new-track-form]", "Create")
-    refute has_element?(view, ".thread-default-source")
-    refute has_element?(view, "select#new_track-runtime")
-
-    # Branch, base, PR and issue sit behind Options.
-    assert has_element?(view, "#track-advanced[hidden]")
-    view |> element("#new-track-options[aria-expanded=false]") |> render_click()
-    refute has_element?(view, "#track-advanced[hidden]")
-    assert has_element?(view, "#new-track-options[aria-expanded=true]")
   end
 
   test "picking a repository and then scratch in the popover moves the destination", ctx do

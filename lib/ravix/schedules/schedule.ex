@@ -7,6 +7,7 @@ defmodule Ravix.Schedules.Schedule do
   @primary_key {:id, :string, autogenerate: false}
   @type t :: %__MODULE__{}
   schema "schedules" do
+    field :resource_id, :string
     field :user_id, :string
     field :project_id, :string
     field :name, :string

@@ -292,7 +292,11 @@ defmodule Ravix.Tracks.Settlement do
     with %Ravix.Tracks.Track{billing_policy: :creator} = track <-
            Store.track_by_conversation(conversation_id),
          # ownership: no door; the project of the track the classification found above.
-         %Ravix.Projects.Project{} = project <- Ravix.Projects.Store.get_project(track.project_id) do
+         %Ravix.Projects.Project{} = project <-
+           Ravix.Projects.Store.for_track(
+             Ravix.Projects.Store.get_project(track.project_id),
+             track
+           ) do
       Billing.observe_turn(track, project, runtime, events)
     end
   end

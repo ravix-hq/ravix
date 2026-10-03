@@ -165,10 +165,12 @@ defmodule Ravix.Tooling.Store do
         on: track.id == thread.track_id,
         join: project in Ravix.Projects.Project,
         on: project.id == track.project_id,
+        left_join: resource in Ravix.Projects.Resource,
+        on: resource.id == track.resource_id,
         where: not t.reply_compacted,
         order_by: t.id,
         limit: 5,
-        select: {t.id, coalesce(thread.runtime, project.runtime)}
+        select: {t.id, coalesce(thread.runtime, coalesce(resource.runtime, project.runtime))}
     )
   end
 
@@ -213,6 +215,8 @@ defmodule Ravix.Tooling.Store do
       on: track.id == thread.track_id,
       join: project in Ravix.Projects.Project,
       on: project.id == track.project_id,
+      left_join: resource in Ravix.Projects.Resource,
+      on: resource.id == track.resource_id,
       where:
         t.state not in [
           "TASK_STATE_COMPLETED",
@@ -351,12 +355,12 @@ defmodule Ravix.Tooling.Store do
         else: query
 
     Repo.all(
-      from [t, q, thread, track, project] in query,
+      from [t, q, thread, track, project, resource] in query,
         select:
           {struct(t, ^@small),
            %{
              thread: map(thread, [:id, :conversation_id, :runtime]),
-             project: map(project, [:runtime])
+             project: %{runtime: coalesce(resource.runtime, project.runtime)}
            }}
     )
   end

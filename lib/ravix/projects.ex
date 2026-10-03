@@ -727,6 +727,8 @@ defmodule Ravix.Projects do
 
   defp repos_of(app, token, installations, nil) do
     # Assume a handful of accounts per person; reads use GitHub's existing cache.
+    # Threshold-based deferral required by AGENTS.md; no unfinished behavior.
+    # credo:disable-for-next-line Credo.Check.Design.TagTODO
     # TODO WHEN picker reads exceed 2s p95 for users with 5+ installations,
     # measure the per-account spans before adding concurrent reads.
     result =

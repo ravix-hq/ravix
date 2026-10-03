@@ -568,7 +568,7 @@ defmodule Ravix.Previews.Server do
   end
 
   defp config_for(row, project) do
-    case row.config || Store.defaults(project.id) do
+    case row.config || Store.defaults(project.id, project.resource_id) do
       nil ->
         {:error, "No run script configured. Save a startup command and app directory first.", row}
 

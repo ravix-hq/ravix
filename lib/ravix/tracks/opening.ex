@@ -45,7 +45,7 @@ defmodule Ravix.Tracks.Opening do
     :origin,
     :conversation
   ]
-  defstruct @enforce_keys ++ [created_by: nil, visibility: :project]
+  defstruct @enforce_keys ++ [resource_id: nil, created_by: nil, visibility: :project]
 
   @type t :: %__MODULE__{
           id: String.t(),
@@ -74,6 +74,7 @@ defmodule Ravix.Tracks.Opening do
       setup_started_at: if(plan.conversation.prompt, do: DateTime.utc_now()),
       id: plan.id,
       project_id: plan.project_id,
+      resource_id: plan.resource_id,
       conversation_id: conversation_id,
       slug: plan.slug,
       title: plan.title,

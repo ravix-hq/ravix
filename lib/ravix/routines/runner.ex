@@ -53,7 +53,8 @@ defmodule Ravix.Routines.Runner do
     title = "#{Ravix.Ids.slugify(row.name)}-#{String.slice(dispatch.id, 0, 8)}"
 
     with {:ok, _} <- Access.project_access(user, row.project_id, :write),
-         {:ok, track} <- Tracks.open(user, row.project_id, %{"title" => title}) do
+         {:ok, track} <-
+           Tracks.open(user, row.project_id, %{"title" => title}, resource_id: row.resource_id) do
       queue(row, user, dispatch, body, track)
     else
       _ -> Store.finish(dispatch, "open_failed", nil)
