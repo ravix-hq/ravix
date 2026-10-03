@@ -13,7 +13,9 @@ defmodule RavixWeb.ToolingOAuthHTML do
         </p>
         <p>Return to: <code>{@request.redirect_uri}</code></p>
         <p>Resource: <code>{@request.resource}</code></p>
-        <p>This connection can act on projects and tracks you can access, including future ones:</p>
+        <p>
+          This connection can act on workspaces, projects and tracks you can access, including future ones:
+        </p>
         <ul>
           <li :for={scope <- @request.scopes}>{description(scope)}</li>
         </ul>
@@ -36,7 +38,7 @@ defmodule RavixWeb.ToolingOAuthHTML do
     <div id="connections-panel" class={["connections-page", !assigns[:framed] && "inbox"]}>
       <header>
         <h1 :if={!assigns[:framed]}>Connected applications</h1>
-        <p>Review applications with access to your projects and tracks.</p>
+        <p>Review applications with access to your workspaces, projects and tracks.</p>
         <p>
           Each is named by its client and when it connected, in your time. Last use updates about once a minute; older use may not be recorded.
         </p>
@@ -99,6 +101,13 @@ defmodule RavixWeb.ToolingOAuthHTML do
     </div>
     """
   end
+
+  defp description("workspaces:read"),
+    do: "Read workspace memberships, repository catalogs and your personal sidebar sections."
+
+  defp description("workspaces:write"),
+    do:
+      "Create and rename workspaces, manage members and GitHub connections, add repository projects, and organize your sidebar. Adding repository projects uses the project payer's subscription. Your workspace role still limits each action."
 
   defp description("projects:read"), do: "List accessible projects and repositories."
 
