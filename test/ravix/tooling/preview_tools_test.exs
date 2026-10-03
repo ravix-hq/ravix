@@ -208,8 +208,13 @@ defmodule Ravix.Tooling.PreviewToolsTest do
     configure(c)
     assert {:ok, _} = call(c, "run_preview")
     await_background()
-    logs = "a" <> String.duplicate("\u0301", 20_000) <> String.duplicate("😀", 4001)
+    logs = String.duplicate("😀", 4001) <> "a" <> String.duplicate("\u0301", 20_000)
     stub(Ravix.Sprites, :service_logs, fn _, _, _ -> {:ok, logs} end)
+    assert {:ok, %{logs: tail, logs_truncated: true}} = call(c, "preview_logs")
+    assert tail == String.duplicate("\u0301", 4000)
+    assert byte_size(tail) == 8000
+
+    stub(Ravix.Sprites, :service_logs, fn _, _, _ -> {:ok, String.duplicate("😀", 4001)} end)
     assert {:ok, %{logs: tail, logs_truncated: true}} = call(c, "preview_logs")
     assert tail == String.duplicate("😀", 4000)
     assert byte_size(tail) == 16_000
