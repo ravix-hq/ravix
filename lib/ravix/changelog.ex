@@ -2,6 +2,15 @@ defmodule Ravix.Changelog do
   @moduledoc "Curated user-facing changes shipped with Ravix."
   @entries [
     %{
+      id: "2026-10-03-routines-search-review-tools",
+      date: ~D[2026-10-03],
+      kind: :new,
+      title: "Webhook routines, search and diff discussions",
+      body:
+        "Create webhook routines in Schedules, search projects and saved conversation text, and discuss changed lines in Changes. Connected tools can also manage workspaces and preview runs.",
+      action: nil
+    },
+    %{
       id: "2026-10-03-conductor-setup-import",
       date: ~D[2026-10-03],
       kind: :new,
