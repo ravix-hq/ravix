@@ -83,6 +83,9 @@
           <.icon name="folder" />Add a repository
         </button>
 
+        <.link navigate="/search" class="yard-item">
+          <.icon name="search" />Search conversations
+        </.link>
         <.link patch="/schedules" class={["yard-item", @live_action == :schedules && "on"]}>
           <.icon name="clock" />Schedules
         </.link>
@@ -615,6 +618,7 @@
           <.icon name="chevron" size={13} open={@yard_open} class="ico" />Menu
         </button>
         <.link patch="/home" aria-current={@live_action == :projects && "page"}>Home</.link>
+        <.link navigate="/search">Search conversations</.link>
         <.link patch="/schedules">Schedules</.link>
         <.link patch="/inbox" aria-current={@live_action in [:home, :inbox] && "page"}>Inbox</.link>
         <button
