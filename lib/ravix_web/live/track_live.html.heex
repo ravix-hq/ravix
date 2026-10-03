@@ -387,8 +387,14 @@
           aria-label="Queued prompts"
         >
           <li :for={item <- @queue} class="queue-item said">
+            <%!-- RAV-131: alive while it waits or goes. The dot is the
+              Starting chip's, and keeps still under prefers-reduced-motion. --%>
             <p class="speaker queue-label">
-              <span class="queue-state">{queue_label(item.status)}</span><span :if={
+              <span
+                :if={item.status in [:queued, :sending]}
+                class={"dot " <> queue_dot(item.status)}
+                aria-hidden="true"
+              ></span><span class="queue-state">{queue_label(item.status)}</span><span :if={
                 item.status == :queued and @track.setup_state == "ready" and
                   is_nil(queue_feedback(item, @track.runtime || @project.runtime))
               }> · sends when the agent is free</span><span
@@ -408,6 +414,26 @@
             >
               {queue_feedback(item, @track.runtime || @project.runtime)}
             </p>
+            <%!-- RAV-131: waited long on nothing but the queue; say so. --%>
+            <p
+              :if={
+                queue_stale_feedback(
+                  item,
+                  @track.runtime || @project.runtime,
+                  @queue_wait,
+                  @queue_stale?
+                )
+              }
+              class="queue-feedback queue-stale"
+              role="status"
+            >
+              {queue_stale_feedback(
+                item,
+                @track.runtime || @project.runtime,
+                @queue_wait,
+                @queue_stale?
+              )}
+            </p>
             <p :if={item.error && item.status != :queued} class="queue-error">{item.error}</p>
             <div :if={item.can_cancel} class="queue-actions">
               <button
@@ -420,7 +446,11 @@
                 Edit
               </button>
               <button
-                :if={item.status in [:failed, :unconfirmed]}
+                :if={
+                  item.status in [:failed, :unconfirmed] or
+                    (item.status == :queued and @queue_stale? and
+                       match?(%{id: id} when id == item.id, @queue_wait))
+                }
                 class="ghost"
                 phx-click="queue"
                 phx-value-action="retry"
@@ -446,50 +476,66 @@
           {@announcement}
         </div>
         <.loading_status :if={:interrupt in @pending}>Stopping agent…</.loading_status>
+        <%!-- RAV-132: the card stays past setup's own ready until its last
+          step, the first prompt reaching the agent, is done; then it folds
+          to one line, and a moment later goes. See `assign_setup_card/1`. --%>
         <div
-          :if={@track.setup_state != "ready"}
+          :if={@setup_card not in [nil, :gone]}
           id="track-setup-status"
+          class={[@setup_card == :collapsed && "setup-finished"]}
+          data-state={@setup_card}
           role={if @track.status == :setup_failed, do: "alert", else: "status"}
         >
-          <strong>{setup_label(@track, @setup_now)}</strong>
+          <strong>{setup_heading(@setup_card, @track, @setup_now, @queue)}</strong>
+          <span :if={@setup_card == :collapsed and setup_duration(@track)} class="setup-duration">
+            · {setup_duration(@track)}
+          </span>
           <span :if={
-            @track.sandbox_layout == :dedicated ||
-              Ravix.Config.dedicated_opens_enabled?(@current_user)
+            @setup_card != :collapsed and
+              (@track.sandbox_layout == :dedicated ||
+                 Ravix.Config.dedicated_opens_enabled?(@current_user))
           }>{if @track.sandbox_layout == :dedicated,
             do: "Own machine",
             else: "Shared project machine"}</span>
-          <span :if={@track.setup_error}>{@track.setup_error}</span>
+          <span :if={@setup_card == :setup and @track.setup_error}>{@track.setup_error}</span>
           <ol
             :if={
-              @track.setup_state in ["pending", "running", "retry", "failed"] and
-                not parked?(@track)
+              (@setup_card == :setup and
+                 @track.setup_state in ["pending", "running", "retry", "failed"] and
+                 not parked?(@track)) or @setup_card in [:handoff, :finished]
             }
             id="track-setup-steps"
             class="setup-steps"
             aria-label="Setup steps"
           >
             <li
-              :for={step <- setup_steps(@track, @project)}
+              :for={step <- setup_steps(@track, @project, @setup_handoff)}
               class={"setup-step " <> Atom.to_string(step.state)}
               aria-current={step.state == :now && "step"}
             >
               <span class="setup-step-mark" aria-hidden="true">
                 <.icon :if={step.state == :done} name="check" size={12} />
               </span>
-              <span>{step.label}</span>
+              <span>{step.label}<span :if={step.state == :skipped} class="setup-step-note"> · not needed</span></span>
               <span :if={step.state == :failed} class="sr-only">(failed)</span>
             </li>
           </ol>
-          <p :if={@track.setup_state in ["pending", "running", "retry"] and not parked?(@track)}>
+          <p :if={
+            @setup_card == :setup and @track.setup_state in ["pending", "running", "retry"] and
+              not parked?(@track)
+          }>
             Prompts will wait until setup is ready.
           </p>
 
-          <p :if={@track.status == :setup_failed && @track.setup_error_code != "secrets_changed"}>
+          <p :if={
+            (@setup_card == :setup and @track.status == :setup_failed) &&
+              @track.setup_error_code != "secrets_changed"
+          }>
             Retry setup, then retry your saved prompts.
           </p>
           <button
             :if={
-              @track.setup_error_code == "secrets_changed" &&
+              (@setup_card == :setup and @track.setup_error_code == "secrets_changed") &&
                 rebuildable?(@current_user, @track)
             }
             id="secrets-changed-rebuild"

@@ -1201,8 +1201,13 @@ html[data-yard="closed"] .workspace-trigger-skeleton { flex: none; width: 28px; 
   max-height: 180px; overflow: auto; list-style: none;
 }
 .workspace-queue .queue-item { margin: 0; }
-.queue-label { margin: 0; }
+.queue-label { margin: 0; display: flex; align-items: center; justify-content: flex-end; gap: 0; }
+/* RAV-131: alive while it waits. The dot is the Starting chip's, pulsing
+   orange while queued and blue once it is going; both keep still under
+   prefers-reduced-motion with every other `.dot`. */
+.queue-label .dot { margin-right: 6px; }
 .queue-state { color: var(--dim); }
+.queue-feedback.queue-stale { color: var(--ink); }
 .queue-item .queue-prompt {
   color: var(--dim); background: transparent; border-style: dashed; border-color: var(--line-strong);
   overflow: hidden; overflow-wrap: anywhere;
@@ -1238,6 +1243,14 @@ html[data-yard="closed"] .workspace-trigger-skeleton { flex: none; width: 28px; 
 .setup-step.now .setup-step-mark { border-color: var(--accent); border-top-color: transparent; animation: request-spin 900ms linear infinite; }
 .setup-step.failed { color: var(--bad); }
 .setup-step.failed .setup-step-mark { border-color: var(--bad); background: var(--bad-soft); }
+/* RAV-132: a step there was nothing to do for (no first prompt to hand). */
+.setup-step.skipped { color: var(--dimmer); }
+.setup-step.skipped .setup-step-mark { border-style: dashed; }
+.setup-step-note { color: var(--dimmer); }
+/* RAV-132: the finished card folded to its one line, "Setup finished · 42s". */
+#track-setup-status.setup-finished { padding: 5px 12px; color: var(--dim); }
+#track-setup-status.setup-finished strong { font-weight: 500; }
+#track-setup-status.setup-finished .setup-duration { margin-left: -6px; }
 @media (prefers-reduced-motion: reduce) { .setup-step.now .setup-step-mark { animation: none; border-top-color: var(--accent); } }
 
 /* ── the composer ──────────────────────────────────────────────────────── */

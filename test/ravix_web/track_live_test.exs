@@ -476,6 +476,13 @@ defmodule RavixWeb.TrackLiveTest do
     assert_receive :transcript_refreshed
     assert_receive :files_refreshed
     assert_receive :dock_refreshed
+    # The page watched setup finish with nothing queued: the card says so
+    # and folds (RAV-132), rather than vanishing a step short, then goes.
+    assert has_element?(ctx.view, "#track-setup-status[data-state=finished]", "Setup finished")
+    refute has_element?(ctx.view, "#track-setup-status", "Prompts will wait")
+    send(ctx.view.pid, :collapse_setup_card)
+    assert has_element?(ctx.view, "#track-setup-status.setup-finished")
+    send(ctx.view.pid, :remove_setup_card)
     refute has_element?(ctx.view, "#track-setup-status")
   end
 
@@ -8237,6 +8244,289 @@ defmodule RavixWeb.TrackLiveTest do
 
     refute has_element?(ctx.view, ".workspace-queue", "retry_setup")
     refute has_element?(ctx.view, ".workspace-queue", "retry_task")
+  end
+
+  # RAV-131/132: the first prompt, queued during setup, is handed to the agent
+  # once setup reports ready. The card stays for that last step, the queued
+  # prompt reads as alive, and a long wait says so rather than sitting still.
+  describe "the first prompt after setup" do
+    setup ctx do
+      # A track still setting up with its first prompt waiting, as the page
+      # finds it when opened from the New track dialog.
+      created = DateTime.add(DateTime.utc_now(), -100, :second)
+
+      ctx.track
+      |> Ecto.Changeset.change(
+        setup_state: "running",
+        setup_attempts: 1,
+        setup_started_at: created,
+        created_at: created,
+        opened_at: nil
+      )
+      |> Repo.update!()
+
+      id = Ecto.UUID.generate()
+
+      {:ok, _} =
+        PromptQueue.Store.enqueue(ctx.track.id, ctx.user.id, ctx.user.login, id, %{
+          prompt: "Add a health check",
+          images: []
+        })
+
+      refresh = fn ->
+        send(ctx.view.pid, {:hub, Event.new(:turn, ctx.project.id, track_id: ctx.track.id)})
+        settle(ctx.view)
+      end
+
+      ready = fn ->
+        ctx.track.id
+        |> then(&Repo.get!(Track, &1))
+        |> Ecto.Changeset.change(
+          setup_state: "ready",
+          setup_retry_at: nil,
+          opened_at: DateTime.add(created, 42, :second)
+        )
+        |> Repo.update!()
+
+        refresh.()
+      end
+
+      refresh.()
+      %{id: id, refresh: refresh, ready: ready}
+    end
+
+    test "the card keeps its last step until the first turn starts, then folds to one line",
+         ctx do
+      # Setting up: the hand-off is still to do, and the prompt waits on setup.
+      assert has_element?(ctx.view, "#track-setup-status[data-state=setup]")
+
+      assert has_element?(
+               ctx.view,
+               "#track-setup-steps li.setup-step.todo",
+               "Hand your first prompt to the agent"
+             )
+
+      assert has_element?(ctx.view, ".workspace-queue .queue-label .dot.queued[aria-hidden=true]")
+
+      assert has_element?(
+               ctx.view,
+               ".workspace-queue .queue-label",
+               "Queued · starts when setup is ready"
+             )
+
+      # Setup ready: the card stays, its last step under way, and the prompt
+      # now waits on the agent alone.
+      ctx.ready.()
+
+      assert has_element?(
+               ctx.view,
+               "#track-setup-status[data-state=handoff]",
+               "Starting your first turn…"
+             )
+
+      assert has_element?(ctx.view, "#track-setup-steps li.setup-step.done", "Run setup")
+
+      assert has_element?(
+               ctx.view,
+               "#track-setup-steps li.setup-step.now[aria-current=step]",
+               "Hand your first prompt to the agent"
+             )
+
+      refute has_element?(ctx.view, "#track-setup-status", "Prompts will wait")
+
+      assert has_element?(
+               ctx.view,
+               ".workspace-queue .queue-label",
+               "Queued · sends when the agent is free"
+             )
+
+      assert has_element?(ctx.view, ".workspace-queue .queue-label .dot.queued")
+
+      # Claimed by the worker: "Sending…", still alive.
+      assert PromptQueue.Store.claim(ctx.id)
+      send(ctx.view.pid, {:hub, Event.new(:queue, ctx.project.id, track_id: ctx.track.id)})
+      settle(ctx.view)
+      assert has_element?(ctx.view, ".workspace-queue .queue-state", "Sending…")
+      assert has_element?(ctx.view, ".workspace-queue .queue-label .dot.working")
+      assert has_element?(ctx.view, "#track-setup-status[data-state=handoff] li.setup-step.now")
+
+      # Delivered and its turn started: the step is checked...
+      PromptQueue.Store.mark_delivered(ctx.id, "live-conversation")
+
+      send(
+        ctx.view.pid,
+        {:transcript, ctx.track.id,
+         %Transcript.Event{
+           id: 1,
+           turn_id: "first",
+           stream: nil,
+           data: nil,
+           ts: nil,
+           kind: :stage,
+           stage: "turn",
+           state: "started"
+         }}
+      )
+
+      ctx.refresh.()
+      refute has_element?(ctx.view, ".workspace-queue")
+
+      assert has_element?(
+               ctx.view,
+               "#track-setup-status[data-state=finished]",
+               "Setup finished"
+             )
+
+      assert has_element?(
+               ctx.view,
+               "#track-setup-steps li.setup-step.done",
+               "Hand your first prompt to the agent"
+             )
+
+      refute has_element?(ctx.view, "#track-setup-steps li.setup-step.now")
+
+      # ...and a moment later the card folds to its one line, with how long
+      # setup took...
+      send(ctx.view.pid, :collapse_setup_card)
+
+      assert has_element?(
+               ctx.view,
+               "#track-setup-status.setup-finished[data-state=collapsed]",
+               "Setup finished"
+             )
+
+      assert has_element?(ctx.view, "#track-setup-status .setup-duration", "42s")
+      refute has_element?(ctx.view, "#track-setup-steps")
+      ctx.refresh.()
+      assert has_element?(ctx.view, "#track-setup-status[data-state=collapsed]")
+
+      # ...and then goes, and stays gone through the page's later reads.
+      send(ctx.view.pid, :remove_setup_card)
+      refute has_element?(ctx.view, "#track-setup-status")
+      ctx.refresh.()
+      refute has_element?(ctx.view, "#track-setup-status")
+    end
+
+    test "with no first prompt to hand, the last step reads as not needed", ctx do
+      assert :ok = PromptQueue.cancel(ctx.user, ctx.track.id, ctx.id)
+      ctx.refresh.()
+      assert has_element?(ctx.view, "#track-setup-status[data-state=setup]")
+      refute has_element?(ctx.view, ".workspace-queue")
+
+      ctx.ready.()
+      assert has_element?(ctx.view, "#track-setup-status[data-state=finished]", "Setup finished")
+
+      assert has_element?(
+               ctx.view,
+               "#track-setup-steps li.setup-step.skipped",
+               "Hand your first prompt to the agent · not needed"
+             )
+
+      send(ctx.view.pid, :collapse_setup_card)
+      assert has_element?(ctx.view, "#track-setup-status.setup-finished", "Setup finished")
+
+      # The card goes, with nothing pending to keep it, and a prompt queued
+      # afterwards does not bring it back: the queue's own row says what
+      # that prompt is doing.
+      send(ctx.view.pid, :remove_setup_card)
+      refute has_element?(ctx.view, "#track-setup-status")
+
+      {:ok, _} =
+        PromptQueue.Store.enqueue(
+          ctx.track.id,
+          ctx.user.id,
+          ctx.user.login,
+          Ecto.UUID.generate(),
+          %{
+            prompt: "Now add a readiness check",
+            images: []
+          }
+        )
+
+      send(ctx.view.pid, {:hub, Event.new(:queue, ctx.project.id, track_id: ctx.track.id)})
+      ctx.refresh.()
+      assert has_element?(ctx.view, ".workspace-queue .queue-label .dot.queued")
+      refute has_element?(ctx.view, "#track-setup-status")
+      ctx.refresh.()
+      refute has_element?(ctx.view, "#track-setup-status")
+    end
+
+    test "a page that never saw setup run draws no card for a ready track", ctx do
+      assert :ok = PromptQueue.cancel(ctx.user, ctx.track.id, ctx.id)
+      ctx.ready.()
+
+      {:ok, parent, _} = live(ctx.conn, "/p/#{ctx.project.id}/t/#{ctx.track.id}")
+      view = find_live_child(parent, "track-host")
+      settle(view)
+      refute has_element?(view, "#track-setup-status")
+    end
+
+    test "a prompt that waits long on nothing but the queue says so and offers Retry", ctx do
+      ctx.ready.()
+      refute has_element?(ctx.view, ".workspace-queue .queue-stale")
+      refute has_element?(ctx.view, ".workspace-queue [phx-value-action=retry]")
+
+      # Not long yet: the check re-arms itself and says nothing.
+      send(ctx.view.pid, :queue_wait_check)
+      refute has_element?(ctx.view, ".workspace-queue .queue-stale")
+
+      # Twenty seconds on, with the agent idle.
+      age_wait = fn ->
+        :sys.replace_state(ctx.view.pid, fn state ->
+          update_in(state.socket.assigns.queue_wait.since, &(&1 - 20_000))
+        end)
+
+        send(ctx.view.pid, :queue_wait_check)
+      end
+
+      age_wait.()
+
+      assert has_element?(
+               ctx.view,
+               ".workspace-queue .queue-stale[role=status]",
+               "Still waiting for the agent to take this prompt."
+             )
+
+      assert has_element?(ctx.view, ".workspace-queue .queue-label .dot.queued")
+
+      # Retry nudges the row: still queued, the worker woken, the wait begun again.
+      Phoenix.PubSub.subscribe(Ravix.PubSub, PromptQueue.Server.wake_topic())
+      ctx.view |> element(".workspace-queue [phx-value-action=retry]", "Retry") |> render_click()
+      settle(ctx.view)
+      assert_receive :prompt_queued
+      assert PromptQueue.Store.get(ctx.id).status == :queued
+      refute has_element?(ctx.view, ".workspace-queue .queue-stale")
+      refute has_element?(ctx.view, ".workspace-queue [phx-value-action=retry]")
+
+      # What the worker last said about the wait is what the long wait says.
+      PromptQueue.Store.annotate(ctx.id, :queued, PromptQueue.busy_wait())
+      send(ctx.view.pid, {:hub, Event.new(:queue, ctx.project.id, track_id: ctx.track.id)})
+      settle(ctx.view)
+      refute has_element?(ctx.view, ".workspace-queue .queue-feedback")
+      age_wait.()
+      assert has_element?(ctx.view, ".workspace-queue .queue-stale", PromptQueue.busy_wait())
+
+      # A turn running is not a wait on the queue: no hint while the agent works.
+      send(
+        ctx.view.pid,
+        {:transcript, ctx.track.id,
+         %Transcript.Event{
+           id: 1,
+           turn_id: "busy",
+           stream: nil,
+           data: nil,
+           ts: nil,
+           kind: :stage,
+           stage: "turn",
+           state: "started"
+         }}
+      )
+
+      render(ctx.view)
+      refute has_element?(ctx.view, ".workspace-queue .queue-stale")
+      send(ctx.view.pid, :queue_wait_check)
+      refute has_element?(ctx.view, ".workspace-queue .queue-stale")
+    end
   end
 
   test "saved prompts explain statuses, busy waits and a held head", ctx do

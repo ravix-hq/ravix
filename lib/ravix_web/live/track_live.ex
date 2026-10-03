@@ -33,6 +33,14 @@ defmodule RavixWeb.TrackLive do
   # four times a minute. `RavixWeb.Live.Guard` keeps its own fifteen because
   # what it backstops is somebody's access being revoked.
   @refresh_ms 60_000
+  # How long the finished setup card stays whole, its last step checked,
+  # before folding to its one line (RAV-132).
+  @setup_card_collapse_ms 1_500
+  # How long that one line stays before the card goes for good.
+  @setup_card_remove_ms 6_000
+  # How long the first prompt may wait on nothing but the queue before the
+  # page says so and offers to send it again (RAV-131).
+  @queue_stale_ms 20_000
 
   # How long the page lets transcript events pile up before it draws them.
   #
@@ -220,7 +228,20 @@ defmodule RavixWeb.TrackLive do
         # The `{track_id, thread_id}` this page last woke on open, so that a
         # refresh or a patch does not wake it again. See `wake_on_open/1`.
         open_wake: nil,
-        setup_now: DateTime.utc_now()
+        setup_now: DateTime.utc_now(),
+        # The setup card past setup itself (RAV-132): nil, `:setup`,
+        # `:handoff`, `:finished` or `:collapsed`; whether this page saw
+        # setup in progress at all, and whether it saw a first prompt handed
+        # over. See `assign_setup_card/1`.
+        setup_card: nil,
+        setup_seen?: false,
+        setup_handed?: false,
+        setup_handoff: nil,
+        # The first queued prompt's wait while the agent is idle (RAV-131):
+        # `%{id:, since:, timer:}` once the queue is all it waits on, and
+        # whether that wait has grown long. See `watch_queue_wait/1`.
+        queue_wait: nil,
+        queue_stale?: false
       )
 
     if authorized?(socket) do
@@ -632,8 +653,11 @@ defmodule RavixWeb.TrackLive do
   def handle_event("queue", %{"action" => "cancel", "id" => id}, socket),
     do: {:noreply, queued(socket, &PromptQueue.cancel/3, id)}
 
+  # A refused prompt sent again, or a waiting one nudged (RAV-131): either
+  # way the wait starts over, so the long-wait hint goes until it has earned
+  # itself again.
   def handle_event("queue", %{"action" => "retry", "id" => id}, socket),
-    do: {:noreply, queued(socket, &PromptQueue.retry/3, id)}
+    do: {:noreply, queued(socket, &PromptQueue.retry/3, id, &reset_queue_wait/1)}
 
   # RAV-94: Edit is Cancel, then the words back in the box to change and send
   # again. Only a waiting, text-only prompt this page is showing; the cancel
@@ -1066,6 +1090,45 @@ defmodule RavixWeb.TrackLive do
   end
 
   def handle_info(:refresh_plan_items, socket), do: {:noreply, refresh_plan_items(socket)}
+
+  # The finished card has been read; fold it to its one line (RAV-132).
+  # Nothing is read for it, so no guard: a page that lost the track meanwhile
+  # has been redirected by the hub or the next async result.
+  def handle_info(:collapse_setup_card, socket) do
+    if socket.assigns.setup_card == :finished do
+      Process.send_after(self(), :remove_setup_card, @setup_card_remove_ms)
+      {:noreply, assign(socket, setup_card: :collapsed)}
+    else
+      {:noreply, socket}
+    end
+  end
+
+  # The folded line has been read: the card goes, and stays gone for this
+  # page (`setup_card/1`), so the composer's column is the conversation's.
+  def handle_info(:remove_setup_card, socket) do
+    if socket.assigns.setup_card == :collapsed,
+      do: {:noreply, assign(socket, setup_card: :gone)},
+      else: {:noreply, socket}
+  end
+
+  # The first prompt has waited on nothing but the queue for a while now
+  # (RAV-131): say so, and offer to send it again. Local state only.
+  def handle_info(:queue_wait_check, socket) do
+    case socket.assigns.queue_wait do
+      %{since: since} ->
+        elapsed = System.monotonic_time(:millisecond) - since
+
+        if elapsed >= @queue_stale_ms do
+          {:noreply, assign(socket, queue_stale?: true)}
+        else
+          timer = Process.send_after(self(), :queue_wait_check, @queue_stale_ms - elapsed)
+          {:noreply, update(socket, :queue_wait, &%{&1 | timer: timer})}
+        end
+
+      nil ->
+        {:noreply, socket}
+    end
+  end
 
   def handle_info(:refresh, socket) do
     Process.send_after(self(), :refresh, @refresh_ms)
@@ -2995,7 +3058,12 @@ defmodule RavixWeb.TrackLive do
   # makes Asleep too, rather than only the pane that asked saying so under
   # an Idle chip. A working turn outranks such a refusal: the machine is
   # awake for it, and the pane reads again (`after_turn/2`).
-  defp assign_turn(socket), do: assign(socket, turn: turn(socket.assigns))
+  defp assign_turn(socket),
+    do:
+      socket
+      |> assign(turn: turn(socket.assigns))
+      |> assign_setup_card()
+      |> watch_queue_wait()
 
   defp turn(%{threads: threads, thread_states: states, thread_id: thread_id, track: track} = a) do
     labels = Map.new(threads, &{&1.id, thread_status(&1, states)})
@@ -3537,8 +3605,13 @@ defmodule RavixWeb.TrackLive do
   # step under way is the machine's stage where it reports one (a dedicated
   # machine does) and otherwise follows `setup_state`. Each step is `:done`,
   # `:now`, `:failed` or `:todo`.
+  #
+  # `handoff` is the last step's own state once setup is ready (RAV-132):
+  # `:now` while the first prompt is being handed over, `:done` once its turn
+  # has started, `:skipped` when there was none to hand, `:failed` when it
+  # needs a person; nil leaves it to the sequence, as before.
   @doc false
-  def setup_steps(track, project) do
+  def setup_steps(track, project, handoff \\ nil) do
     current = setup_step_now(track.sandbox_stage, track.setup_state)
     failed = track.setup_state == "failed"
 
@@ -3546,9 +3619,174 @@ defmodule RavixWeb.TrackLive do
     |> setup_step_labels(project && project.repo)
     |> Enum.with_index()
     |> Enum.map(fn {{key, label}, index} ->
-      %{key: key, label: label, state: setup_step_state(index, current, failed)}
+      state =
+        if key == :agent and handoff,
+          do: handoff,
+          else: setup_step_state(index, current, failed)
+
+      %{key: key, label: label, state: state}
     end)
   end
+
+  # RAV-132: the setup card stays until its last step is really done. Setup
+  # reporting ready is three steps of four; the fourth is the first prompt
+  # reaching the agent, which the queue does afterwards and which used to
+  # take the card away with it. So the card is `:setup` while setup runs,
+  # `:handoff` while a first prompt waits to go or is going, `:finished`
+  # once its turn has started (or there was none to hand), `:collapsed`
+  # -- one line, "Setup finished · 42s" -- a moment later, and `:gone` a
+  # few seconds after that: nothing drawn, and nothing drawn again for this
+  # page unless setup itself runs again. Once finished the card does not
+  # reopen for a prompt queued later: its last step was the first prompt
+  # *during* setup, and a later one has the queue's own dot and words. A
+  # page opened on a track that was ready before it looked draws nothing
+  # at any point: there was no setup to watch. The card sits in the
+  # conversation column's flow above the composer, which the scroller's
+  # own growth absorbs, so the composer does not move when it goes.
+  defp assign_setup_card(%{assigns: %{track: nil}} = socket), do: socket
+
+  defp assign_setup_card(socket) do
+    was = socket.assigns.setup_card
+    card = setup_card(socket.assigns)
+
+    if card == :finished and was != :finished,
+      do: Process.send_after(self(), :collapse_setup_card, @setup_card_collapse_ms)
+
+    handed? = socket.assigns.setup_handed? or card == :handoff
+
+    assign(socket,
+      setup_card: card,
+      setup_seen?: socket.assigns.setup_seen? or card in [:setup, :handoff],
+      setup_handed?: handed?,
+      setup_handoff: handoff_step(card, socket.assigns.queue, handed?)
+    )
+  end
+
+  defp setup_card(%{track: track} = a) do
+    cond do
+      track.setup_state != "ready" -> :setup
+      not a.setup_seen? -> nil
+      a.setup_card in [:finished, :collapsed, :gone] -> a.setup_card
+      handoff_pending?(a) -> :handoff
+      not a.transcript_loading -> :finished
+      true -> nil
+    end
+  end
+
+  # A first prompt waiting to go, going, or needing a person, on a track
+  # whose transcript has been read and shows no turn of anybody's yet.
+  defp handoff_pending?(a) do
+    not a.transcript_loading and not first_turn?(a) and
+      match?(
+        %{status: status} when status in [:queued, :sending, :failed, :unconfirmed],
+        List.first(a.queue)
+      )
+  end
+
+  # The opening turn is not drawn (`Transcript.visible_turns/1`), so a turn
+  # on the page is somebody's; a thread the stream says is working has one
+  # the page has not drawn yet.
+  defp first_turn?(%{page: page, turn: turn}),
+    do: Transcript.visible_turns(page) != [] or turn.working?
+
+  defp handoff_step(:handoff, queue, _handed?) do
+    case List.first(queue) do
+      %{status: status} when status in [:failed, :unconfirmed] -> :failed
+      _ -> :now
+    end
+  end
+
+  defp handoff_step(card, _queue, handed?) when card in [:finished, :collapsed],
+    do: if(handed?, do: :done, else: :skipped)
+
+  defp handoff_step(_card, _queue, _handed?), do: nil
+
+  # The card's heading in each state; `:collapsed` is the whole line.
+  defp setup_heading(:setup, track, now, _queue), do: setup_label(track, now)
+
+  defp setup_heading(:handoff, _track, _now, queue) do
+    case List.first(queue) do
+      %{status: status} when status in [:failed, :unconfirmed] ->
+        "Your first prompt needs attention"
+
+      _ ->
+        "Starting your first turn…"
+    end
+  end
+
+  defp setup_heading(_card, _track, _now, _queue), do: "Setup finished"
+
+  # How long setup took, from the track's creation to its opening turn
+  # verified, as "42s" or "1m 12s"; nil where the row cannot say.
+  @doc false
+  def setup_duration(%{created_at: %DateTime{} = from, opened_at: %DateTime{} = to}) do
+    case DateTime.diff(to, from) do
+      seconds when seconds < 0 -> nil
+      seconds when seconds < 60 -> "#{seconds}s"
+      seconds when rem(seconds, 60) == 0 -> "#{div(seconds, 60)}m"
+      seconds -> "#{div(seconds, 60)}m #{rem(seconds, 60)}s"
+    end
+  end
+
+  def setup_duration(_track), do: nil
+
+  # RAV-131: a queued prompt's label gets a pulsing dot while it is alive
+  # (the Starting chip's, `.dot.queued`; `.dot.working` once it is going),
+  # and once the first prompt has waited `@queue_stale_ms` on nothing but
+  # the queue -- setup ready, the machine too, no turn running -- the page
+  # says what it waits for and offers Retry. The wait is this page's clock,
+  # started when the head first meets those conditions and dropped the
+  # moment it stops meeting them, so a prompt behind a running turn never
+  # reads as stuck.
+  defp watch_queue_wait(%{assigns: %{track: nil}} = socket), do: socket
+
+  defp watch_queue_wait(socket) do
+    a = socket.assigns
+    head = List.first(a.queue)
+
+    cond do
+      not queue_waiting?(a, head) ->
+        reset_queue_wait(socket)
+
+      match?(%{id: id} when id == head.id, a.queue_wait) ->
+        socket
+
+      true ->
+        socket = reset_queue_wait(socket)
+        timer = Process.send_after(self(), :queue_wait_check, @queue_stale_ms)
+        since = System.monotonic_time(:millisecond)
+        assign(socket, queue_wait: %{id: head.id, since: since, timer: timer})
+    end
+  end
+
+  defp reset_queue_wait(socket) do
+    case socket.assigns.queue_wait do
+      %{timer: timer} -> Process.cancel_timer(timer)
+      nil -> :ok
+    end
+
+    assign(socket, queue_wait: nil, queue_stale?: false)
+  end
+
+  defp queue_waiting?(%{track: track, turn: turn}, head) do
+    match?(%PromptQueue.View{status: :queued}, head) and track.setup_state == "ready" and
+      machine_ready?(track) and not turn.working?
+  end
+
+  defp machine_ready?(%{sandbox_layout: :dedicated, sandbox_state: state}), do: state == :ready
+  defp machine_ready?(_track), do: true
+
+  # The long wait, said under the one item it is about, unless the item
+  # already carries a line of its own (`queue_feedback/2`).
+  defp queue_stale_feedback(item, runtime, wait, stale?) do
+    if stale? and match?(%{id: id} when id == item.id, wait) and
+         is_nil(queue_feedback(item, runtime)),
+       do: item.wait_reason || "Still waiting for the agent to take this prompt.",
+       else: nil
+  end
+
+  defp queue_dot(:queued), do: "queued"
+  defp queue_dot(:sending), do: "working"
 
   defp setup_step_labels(track, repo) do
     machine =

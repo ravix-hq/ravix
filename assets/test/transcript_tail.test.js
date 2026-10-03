@@ -26,6 +26,38 @@ test("older pages preserve scroll position and requests coalesce until their pat
   expect(hook.el.classList.contains("unpinned")).toBe(false)
 })
 
+test("a patch that rewrites the scroller's class attribute does not take the pill away", () => {
+  // LiveView morphs `class` back to the server's value on every patch that
+  // reaches the element; the classes this hook sets are its own state and
+  // come back with the patch, not with the next scroll.
+  document.body.innerHTML = `<div id="transcript-scroll" class="transcript-scroll" data-track="one">
+    <div id="transcript-turns">turns</div>
+    <button type="button" class="jump-latest" data-jump-latest>Jump to latest</button>
+  </div>`
+  const el = document.querySelector("#transcript-scroll")
+  dimensions(el, {scrollHeight: 1000, clientHeight: 200})
+  const {hook} = mountHook(TranscriptTail, "#transcript-scroll")
+
+  el.scrollTop = 300
+  el.dispatchEvent(new Event("scroll"))
+  expect(el.className).toBe("transcript-scroll unpinned scrolled")
+
+  // The patch: the server's class attribute, the hook's additions gone.
+  hook.beforeUpdate()
+  el.className = "transcript-scroll"
+  hook.updated()
+  expect(el.scrollTop).toBe(300)
+  expect(el.matches(".transcript-scroll.unpinned.scrolled")).toBe(true)
+
+  // Pinned at the bottom, a patch leaves the pill off; the bottom is still
+  // scrolled away from the top.
+  el.querySelector("[data-jump-latest]").click()
+  hook.beforeUpdate()
+  el.className = "transcript-scroll unpinned"
+  hook.updated()
+  expect(el.className).toBe("transcript-scroll scrolled")
+})
+
 test("scrolling up shows the way back on the scroller itself, and taking it re-pins", () => {
   // The button is drawn hidden and the stylesheet shows it only under the
   // class this hook toggles on the scroller it is mounted on --- so the
