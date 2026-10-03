@@ -1678,6 +1678,7 @@ const PEOPLE = [
     { id: 9193, login: "untracked", name: "Untracked Files", avatar_url: `${BASE}/ghweb/avatar.svg` },
     { id: 9194, login: "inspectorpolish", name: "Inspector Polish", avatar_url: `${BASE}/ghweb/avatar.svg` },
     { id: 9100, login: "stagepages", name: "Stage Pages", avatar_url: `${BASE}/ghweb/avatar.svg` },
+    { id: 9130, login: "sectionkeeper", name: "Section Keeper", avatar_url: `${BASE}/ghweb/avatar.svg` },
     { id: 9101, login: "homerecent", name: "Home Recent", avatar_url: `${BASE}/ghweb/avatar.svg` },
     { id: 9237, login: "addrepository", name: "Add Repository", avatar_url: `${BASE}/ghweb/avatar.svg` },
     { id: 9298, login: "tooltipfocus", name: "Tooltip Focus", avatar_url: `${BASE}/ghweb/avatar.svg` },
