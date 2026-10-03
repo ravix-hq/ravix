@@ -42,6 +42,22 @@ defmodule RavixWeb.RoutineWebhookControllerTest do
     assert deliver(ctx.routine, ctx.token, "{}") |> json_response(409)
   end
 
+  test "bearer and event contents never enter request logs", ctx do
+    marker = "private-event-#{Ecto.UUID.generate()}"
+    track = insert_track(project: ctx.project)
+    expect(Tracks, :open, fn _, _, _ -> {:ok, track} end)
+    expect(Tracks, :prompt, fn _, _, _ -> {:ok, %{}} end)
+
+    log =
+      ExUnit.CaptureLog.capture_log([level: :debug], fn ->
+        assert deliver(ctx.routine, ctx.token, Jason.encode!(%{secret_event: marker}))
+               |> json_response(202)
+      end)
+
+    refute log =~ marker
+    refute log =~ ctx.token
+  end
+
   test "malformed, oversized and non-JSON requests are refused before track effects", ctx do
     reject(&Tracks.open/3)
 

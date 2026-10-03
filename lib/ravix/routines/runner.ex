@@ -71,7 +71,7 @@ defmodule Ravix.Routines.Runner do
 
     case Tracks.prompt(user, track.id, %{
            "prompt" => prompt,
-           "request_id" => "routine:#{dispatch.id}"
+           "request_id" => "routine-#{dispatch.id}"
          }) do
       {:ok, _} -> Store.finish(dispatch, "queued", track.id)
       {:error, _} -> Store.finish(dispatch, "queue_failed", track.id)

@@ -3,6 +3,7 @@ defmodule RavixWeb.Live.RoutinesPanel do
   use RavixWeb, :live_component
   alias Ravix.Routines
   alias Ravix.Routines.Routine
+  alias RavixWeb.Live.RoutineCredential
 
   @impl true
   def mount(socket),
@@ -24,7 +25,7 @@ defmodule RavixWeb.Live.RoutinesPanel do
 
     case result do
       {:ok, row, token} ->
-        saved(socket, {row.id, token})
+        saved(socket, {row.id, %RoutineCredential{value: token}})
 
       {:ok, _} ->
         saved(socket, nil)
@@ -65,7 +66,10 @@ defmodule RavixWeb.Live.RoutinesPanel do
   def handle_event("rotate", %{"id" => id}, socket) do
     case Routines.rotate(socket.assigns.current_user, id) do
       {:ok, row, token} ->
-        {:noreply, socket |> assign(credential: {row.id, token}, error: nil) |> load()}
+        {:noreply,
+         socket
+         |> assign(credential: {row.id, %RoutineCredential{value: token}}, error: nil)
+         |> load()}
 
       {:error, reason} ->
         refuse(socket, reason)
@@ -151,7 +155,7 @@ defmodule RavixWeb.Live.RoutinesPanel do
       <p :if={@error} role="alert">{@error}</p>
       <div :if={@credential} id="routine-credential" class="schedule-card">
         <p>Save this credential now. It is shown once; rotation revokes the previous credential.</p>
-        <code style="overflow-wrap:anywhere">{elem(@credential, 1)}</code>
+        <code style="overflow-wrap:anywhere">{elem(@credential, 1).value}</code>
         <p>POST {Ravix.Config.public_url()}/api/routines/{elem(@credential, 0)}/webhook</p>
         <p>
           Use Authorization: Bearer &lt;credential&gt;, Content-Type: application/json and a unique Idempotency-Key header. JSON objects up to 32 KiB.
@@ -217,7 +221,11 @@ defmodule RavixWeb.Live.RoutinesPanel do
               <p :if={elem(@history, 1) == []}>No deliveries yet.</p>
               <p :for={dispatch <- elem(@history, 1)}>
                 {Calendar.strftime(dispatch.inserted_at, "%b %d %H:%M UTC")} · {dispatch.request_id} · {dispatch.status}
-                <.link :if={dispatch.track_id} patch={"/p/#{row.project_id}/t/#{dispatch.track_id}"}>Open track</.link>
+                <.link
+                  :if={dispatch.track_id}
+                  patch={"/p/#{row.project_id}/t/#{dispatch.track_id}"}
+                  style="text-decoration:underline"
+                >Open track</.link>
               </p>
             </div>
           </article>

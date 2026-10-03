@@ -154,6 +154,7 @@ defmodule RavixWeb.Live.SchedulesPanel do
           </details>
         </:subtitle>
         <:actions>
+          <a href="#routines-panel">Webhook routines</a>
           <button
             class="ghost"
             phx-click="refresh"

@@ -111,5 +111,10 @@ defmodule RavixWeb.RoutinesPanelTest do
     assert Routines.list(stranger) == []
   end
 
+  test "one-time credentials are redacted during socket inspection" do
+    token = Crypto.random_token()
+    refute inspect(%RavixWeb.Live.RoutineCredential{value: token}) =~ token
+  end
+
   defp credential(html), do: html |> LazyHTML.from_fragment() |> LazyHTML.text() |> String.trim()
 end

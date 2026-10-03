@@ -668,7 +668,8 @@ defmodule Ravix.PromptQueue.Store do
       image_count: length(document["images"]),
       payload: encoded
     })
-    |> Repo.insert!()
+    # Prompts can carry webhook event data; SQL debug logs must omit the body.
+    |> Repo.insert!(log: false)
   end
 
   # Literal, not a parameter: see `@live`.
