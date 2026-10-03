@@ -37,6 +37,32 @@ defmodule Ravix.Tooling.WorkspaceCatalog do
         ~w(workspace_id)
       ),
       read(
+        "list_workspace_projects",
+        "List live workspace projects, their owners and your closed-track sidebar preference.",
+        workspace(),
+        ~w(workspace_id),
+        true
+      ),
+      read(
+        "list_workspace_move_targets",
+        "List workspaces into which you can move your owned project as owner/admin. No project ownership transfers.",
+        %{"project_id" => string()},
+        ~w(project_id),
+        true
+      ),
+      write(
+        "move_workspace_project",
+        "Move your owned project into a workspace you manage, preserving tracks. Changes which workspace members can access it; private tracks stay private. Repository collisions and legacy duplicates are refused.",
+        Map.put(workspace(), "project_id", string()),
+        ~w(workspace_id project_id)
+      ),
+      write(
+        "set_workspace_closed_visibility",
+        "Show or hide an accessible project's closed tracks in your personal sidebar. Track-only guests are refused.",
+        Map.merge(workspace(), %{"project_id" => string(), "show" => %{"type" => "boolean"}}),
+        ~w(workspace_id project_id show)
+      ),
+      read(
         "list_workspace_members",
         "List workspace members and roles.",
         workspace(),
@@ -204,7 +230,7 @@ defmodule Ravix.Tooling.WorkspaceCatalog do
       annotations: %{
         readOnlyHint: read_only,
         destructiveHint:
-          name in ~w(remove_workspace_member leave_workspace revoke_workspace_invitation delete_workspace_section set_workspace_member_role),
+          name in ~w(remove_workspace_member leave_workspace revoke_workspace_invitation delete_workspace_section set_workspace_member_role move_workspace_project),
         openWorldHint: true
       }
     }

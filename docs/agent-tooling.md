@@ -66,7 +66,7 @@ grants for both resources. `/oauth/revoke` accepts `token` and `client_id`.
 | `plans:write` | Create/edit plans and append item notes; assignment also needs `tracks:write` |
 | `tracks:cancel` | Cancel this client's queued tasks |
 | `workspaces:read` | Read workspace metadata, members, invitations, repository catalogs and personal sidebar organization |
-| `workspaces:write` | Create/rename/select workspaces, manage members and connections, admit repository projects, organize personal sections |
+| `workspaces:write` | Create/rename/select workspaces, manage members and connections, admit repository projects, move owned projects, organize personal sections |
 
 Scopes restrict existing membership; they never create membership. A track guest
 cannot inspect sibling tracks or change project settings. Grants currently cover
@@ -401,9 +401,10 @@ or links to reveal.
 | Repository catalog | `list_workspace_connections`, `list_workspace_repositories` (read, cached); `refresh_workspace_repositories` (write, any member) |
 | Connections | `list_available_workspace_installations` (read, owner); `add_workspace_installation` (write, owner, rechecks your GitHub authority); `get_workspace_connect_url`, `get_workspace_configure_url` (write, owner/admin) |
 | Repository admission | `add_workspace_repository` (write); owner/admin may create a project using the existing provisioning/payer rules; any member may retrieve an existing canonical project |
-| Personal sidebar | `list_workspace_sections`, `list_workspace_placements` (read); `create_workspace_section`, `update_workspace_section`, `delete_workspace_section`, `move_workspace_placement` (write, any member, only your sections) |
+| Workspace projects | `list_workspace_projects`, `list_workspace_move_targets` (read); `move_workspace_project` (write, project owner and owner/admin of target) |
+| Personal sidebar | `list_workspace_sections`, `list_workspace_placements` (read); `create_workspace_section`, `update_workspace_section`, `delete_workspace_section`, `move_workspace_placement`, `set_workspace_closed_visibility` (write, any member, only your preferences/sections) |
 
-Except `list_workspaces` and `create_workspace`, tools require `workspace_id`.
+Except `list_workspaces`, `create_workspace`, and `list_workspace_move_targets`, tools require `workspace_id`. Move targets require `project_id`.
 Creation takes `name`; update renames with `name`. Membership targets use `user_id`,
 invitations use `login`, and roles are `owner`, `admin`, or `member`. Only owners
 may grant elevated roles or withdraw protected invitations. The last owner cannot
@@ -411,7 +412,10 @@ leave, be removed, or be demoted. Workspace deletion is not exposed.
 
 All mutations require `request_id` and follow the existing durable receipt
 convention. Retry identical arguments with the same ID. Authorization is checked
-again on every replay; removed members cannot retrieve old workspace receipts.
+again on every replay; removed members cannot retrieve old workspace data receipts.
+Completed leave/self-removal may replay only their own success receipt with a
+valid OAuth grant after membership disappears. Self-demotion may replay its own
+success while the caller remains a member; a new role change still requires owner.
 For completed section deletion the caller's own receipt remains replayable while
 they still have workspace access. Local refusals release their claim. Repository
 refresh, installation binding, and repository admission retain claims on failure
@@ -443,3 +447,11 @@ take `project_id` and `section_id`; an empty section ID clears the placement. Bo
 section and project must belong to the caller's sidebar workspace. These edits
 change personal organization only. Other people's sections and inaccessible
 project IDs are refused; stale inaccessible placements are omitted from reads.
+`set_workspace_closed_visibility` takes `project_id` and boolean `show`; it refuses
+track-only guests and changes only the caller's preference. `list_workspace_projects`
+includes `closed_tracks_visible` for the caller.
+
+`move_workspace_project` takes an owned `project_id` and target `workspace_id`; it
+preserves ownership and tracks, but changes workspace access. Target owner/admin
+role, repository uniqueness, and legacy-duplicate restrictions are enforced by
+the existing context. Use `list_workspace_move_targets` to discover targets.
