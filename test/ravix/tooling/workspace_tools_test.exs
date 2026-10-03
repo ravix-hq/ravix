@@ -707,6 +707,56 @@ defmodule Ravix.Tooling.WorkspaceToolsTest do
     assert {:error, :not_found} = Tooling.call(member, "list_workspace_projects", args(c.team))
   end
 
+  test "closed visibility receipts require current project membership after a track-only invitation",
+       c do
+    {:ok, personal} = Store.ensure_personal_workspace(c.owner)
+    project = insert_project(user: insert_user())
+    track = insert_track(project: project)
+    membership = insert_project_member(project, c.owner)
+    input = write(personal, %{"project_id" => project.id, "show" => true})
+
+    assert {:ok, result} = Tooling.call(c.p, "set_workspace_closed_visibility", input)
+    assert project.id in Sections.closed_shown(c.owner)
+    assert :ok = WorkspaceTools.recheck(c.p, "set_workspace_closed_visibility", input, result)
+
+    assert {:error, :not_found} =
+             Tooling.call(
+               c.p,
+               "set_workspace_closed_visibility",
+               write(c.team, %{"project_id" => project.id, "show" => false})
+             )
+
+    Repo.delete!(membership)
+    insert_track_member(track, c.owner)
+    assert {:ok, %{access: :tracks}} = Projects.get(c.owner, project.id)
+    assert {:error, :not_found} = Sections.show_closed(c.owner, project.id, false)
+    assert {:error, :not_found} = Tooling.call(c.p, "set_workspace_closed_visibility", input)
+
+    assert {:error, :not_found} =
+             WorkspaceTools.recheck(c.p, "set_workspace_closed_visibility", input, result)
+
+    assert {:error, :not_found} =
+             Tooling.call(
+               c.p,
+               "set_workspace_closed_visibility",
+               write(personal, %{"project_id" => project.id, "show" => false})
+             )
+
+    assert project.id in Sections.closed_shown(c.owner)
+
+    insert_project_member(project, c.owner)
+    assert {:ok, %{"show" => true}} = Tooling.call(c.p, "set_workspace_closed_visibility", input)
+
+    assert {:ok, %{show: false}} =
+             Tooling.call(
+               c.p,
+               "set_workspace_closed_visibility",
+               write(personal, %{"project_id" => project.id, "show" => false})
+             )
+
+    refute project.id in Sections.closed_shown(c.owner)
+  end
+
   test "membership removed during a provider read is denied before results return", c do
     other_owner = insert_user()
     :ok = Store.add_member(c.team.id, other_owner.id, :owner, c.owner.id)
