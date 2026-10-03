@@ -478,9 +478,9 @@
         <.loading_status :if={:interrupt in @pending}>Stopping agent…</.loading_status>
         <%!-- RAV-132: the card stays past setup's own ready until its last
           step, the first prompt reaching the agent, is done; then it folds
-          to one line. See `assign_setup_card/1`. --%>
+          to one line, and a moment later goes. See `assign_setup_card/1`. --%>
         <div
-          :if={@setup_card}
+          :if={@setup_card not in [nil, :gone]}
           id="track-setup-status"
           class={[@setup_card == :collapsed && "setup-finished"]}
           data-state={@setup_card}

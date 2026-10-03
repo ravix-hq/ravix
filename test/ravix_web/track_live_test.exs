@@ -477,11 +477,13 @@ defmodule RavixWeb.TrackLiveTest do
     assert_receive :files_refreshed
     assert_receive :dock_refreshed
     # The page watched setup finish with nothing queued: the card says so
-    # and folds (RAV-132), rather than vanishing a step short.
+    # and folds (RAV-132), rather than vanishing a step short, then goes.
     assert has_element?(ctx.view, "#track-setup-status[data-state=finished]", "Setup finished")
     refute has_element?(ctx.view, "#track-setup-status", "Prompts will wait")
     send(ctx.view.pid, :collapse_setup_card)
     assert has_element?(ctx.view, "#track-setup-status.setup-finished")
+    send(ctx.view.pid, :remove_setup_card)
+    refute has_element?(ctx.view, "#track-setup-status")
   end
 
   test "uncertain allocation shows ongoing checks and saved prompts without a retry button",
@@ -8384,7 +8386,7 @@ defmodule RavixWeb.TrackLiveTest do
       refute has_element?(ctx.view, "#track-setup-steps li.setup-step.now")
 
       # ...and a moment later the card folds to its one line, with how long
-      # setup took, and stays folded.
+      # setup took...
       send(ctx.view.pid, :collapse_setup_card)
 
       assert has_element?(
@@ -8397,6 +8399,12 @@ defmodule RavixWeb.TrackLiveTest do
       refute has_element?(ctx.view, "#track-setup-steps")
       ctx.refresh.()
       assert has_element?(ctx.view, "#track-setup-status[data-state=collapsed]")
+
+      # ...and then goes, and stays gone through the page's later reads.
+      send(ctx.view.pid, :remove_setup_card)
+      refute has_element?(ctx.view, "#track-setup-status")
+      ctx.refresh.()
+      refute has_element?(ctx.view, "#track-setup-status")
     end
 
     test "with no first prompt to hand, the last step reads as not needed", ctx do
@@ -8416,6 +8424,31 @@ defmodule RavixWeb.TrackLiveTest do
 
       send(ctx.view.pid, :collapse_setup_card)
       assert has_element?(ctx.view, "#track-setup-status.setup-finished", "Setup finished")
+
+      # The card goes, with nothing pending to keep it, and a prompt queued
+      # afterwards does not bring it back: the queue's own row says what
+      # that prompt is doing.
+      send(ctx.view.pid, :remove_setup_card)
+      refute has_element?(ctx.view, "#track-setup-status")
+
+      {:ok, _} =
+        PromptQueue.Store.enqueue(
+          ctx.track.id,
+          ctx.user.id,
+          ctx.user.login,
+          Ecto.UUID.generate(),
+          %{
+            prompt: "Now add a readiness check",
+            images: []
+          }
+        )
+
+      send(ctx.view.pid, {:hub, Event.new(:queue, ctx.project.id, track_id: ctx.track.id)})
+      ctx.refresh.()
+      assert has_element?(ctx.view, ".workspace-queue .queue-label .dot.queued")
+      refute has_element?(ctx.view, "#track-setup-status")
+      ctx.refresh.()
+      refute has_element?(ctx.view, "#track-setup-status")
     end
 
     test "a page that never saw setup run draws no card for a ready track", ctx do

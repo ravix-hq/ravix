@@ -36,6 +36,8 @@ defmodule RavixWeb.TrackLive do
   # How long the finished setup card stays whole, its last step checked,
   # before folding to its one line (RAV-132).
   @setup_card_collapse_ms 1_500
+  # How long that one line stays before the card goes for good.
+  @setup_card_remove_ms 6_000
   # How long the first prompt may wait on nothing but the queue before the
   # page says so and offers to send it again (RAV-131).
   @queue_stale_ms 20_000
@@ -1093,8 +1095,19 @@ defmodule RavixWeb.TrackLive do
   # Nothing is read for it, so no guard: a page that lost the track meanwhile
   # has been redirected by the hub or the next async result.
   def handle_info(:collapse_setup_card, socket) do
-    if socket.assigns.setup_card == :finished,
-      do: {:noreply, assign(socket, setup_card: :collapsed)},
+    if socket.assigns.setup_card == :finished do
+      Process.send_after(self(), :remove_setup_card, @setup_card_remove_ms)
+      {:noreply, assign(socket, setup_card: :collapsed)}
+    else
+      {:noreply, socket}
+    end
+  end
+
+  # The folded line has been read: the card goes, and stays gone for this
+  # page (`setup_card/1`), so the composer's column is the conversation's.
+  def handle_info(:remove_setup_card, socket) do
+    if socket.assigns.setup_card == :collapsed,
+      do: {:noreply, assign(socket, setup_card: :gone)},
       else: {:noreply, socket}
   end
 
@@ -3620,12 +3633,16 @@ defmodule RavixWeb.TrackLive do
   # reaching the agent, which the queue does afterwards and which used to
   # take the card away with it. So the card is `:setup` while setup runs,
   # `:handoff` while a first prompt waits to go or is going, `:finished`
-  # once its turn has started (or there was none to hand), and `:collapsed`
-  # -- one line, "Setup finished · 42s" -- a moment later. A page opened on
-  # a track that was ready before it looked draws nothing: there was no
-  # setup to watch. The card sits in the conversation column's flow above
-  # the composer, which the scroller's own growth absorbs, so the composer
-  # does not move when it goes.
+  # once its turn has started (or there was none to hand), `:collapsed`
+  # -- one line, "Setup finished · 42s" -- a moment later, and `:gone` a
+  # few seconds after that: nothing drawn, and nothing drawn again for this
+  # page unless setup itself runs again. Once finished the card does not
+  # reopen for a prompt queued later: its last step was the first prompt
+  # *during* setup, and a later one has the queue's own dot and words. A
+  # page opened on a track that was ready before it looked draws nothing
+  # at any point: there was no setup to watch. The card sits in the
+  # conversation column's flow above the composer, which the scroller's
+  # own growth absorbs, so the composer does not move when it goes.
   defp assign_setup_card(%{assigns: %{track: nil}} = socket), do: socket
 
   defp assign_setup_card(socket) do
@@ -3648,9 +3665,10 @@ defmodule RavixWeb.TrackLive do
   defp setup_card(%{track: track} = a) do
     cond do
       track.setup_state != "ready" -> :setup
+      not a.setup_seen? -> nil
+      a.setup_card in [:finished, :collapsed, :gone] -> a.setup_card
       handoff_pending?(a) -> :handoff
-      a.setup_card in [:finished, :collapsed] -> a.setup_card
-      a.setup_seen? and not a.transcript_loading -> :finished
+      not a.transcript_loading -> :finished
       true -> nil
     end
   end
