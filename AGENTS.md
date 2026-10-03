@@ -24,12 +24,8 @@ bun run test:browser:workspace-access   # deprecated browser smoke placeholder
 python3 scripts/secrets.py git .        # redacted history scan
 ```
 
-Tests whose main assertion is exact UI copy, literal strings, generated
-component markup/classes, tooltip or label wording, theme contrast, layout
-sizing, or visual positioning are deprecated. ExUnit marks them with
-`:deprecated_literal_ui`, excluded by default, and Bun hook tests in this
-category are named `*.deprecated.js` rather than `*.test.js`, or use
-`test.skip` for individual cases in otherwise behavioral files.
+Do not add or update tests for exact UI copy, literal strings, component
+markup/classes, labels/tooltips, themes, layout, or other visual cosmetics.
 
 `python3 scripts/dev-mock.py` starts Phoenix against the local mock; start
 `bun run mock` separately. It requires no production credentials. See the
