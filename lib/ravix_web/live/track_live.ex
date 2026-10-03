@@ -217,6 +217,9 @@ defmodule RavixWeb.TrackLive do
         # (`Ravix.Terminal.status/3`), with the sleep the row recorded when it
         # answered, or nil before it does. See `probed/2`.
         machine_probe: nil,
+        # The `{track_id, thread_id}` this page last woke on open, so that a
+        # refresh or a patch does not wake it again. See `wake_on_open/1`.
+        open_wake: nil,
         setup_now: DateTime.utc_now()
       )
 
@@ -234,6 +237,7 @@ defmodule RavixWeb.TrackLive do
         |> attach_hook(:track_event_access, :handle_event, fn _, _, s -> guard(s) end)
         |> attach_hook(:track_message_access, :handle_info, &guard(&2, &1))
         |> attach_hook(:track_async_access, :handle_async, fn _, _, s -> guard(s) end)
+        |> rejoined()
 
       if connected?(socket) do
         Hub.subscribe(socket.assigns.project_id)
@@ -1211,6 +1215,7 @@ defmodule RavixWeb.TrackLive do
     |> keep_shown_thread()
     |> assign_turn()
     |> billing_notice(detail.track)
+    |> wake_on_open()
     # This render is the one that puts `#transcript-turns` on the page, and a
     # stream's pending inserts are consumed by whichever render comes next
     # whether or not that render contains the container. So a transcript that
@@ -1519,6 +1524,27 @@ defmodule RavixWeb.TrackLive do
       result(settle(socket, :wake), response, fn s, _ ->
         s |> refresh_detail() |> reload_panel()
       end)
+
+  # The wake on open, for the track and thread still shown. Woken is what the
+  # Wake button's answer is, minus re-reading a tab that was not refused; an
+  # already awake machine changes nothing, unless the chip said Asleep. A
+  # refusal or a crash says nothing: nobody pressed anything, and Wake and
+  # send still give the reason.
+  defp async_result(
+         {:open_wake, track_id, thread_id},
+         {:ok, {:ok, state}},
+         %{assigns: %{track_id: track_id, thread_id: thread_id}} = socket
+       )
+       when state in [:awake, :waking] do
+    socket =
+      if state == :waking or match?(%{machine: %{state: :asleep}}, socket.assigns.turn),
+        do: refresh_detail(socket),
+        else: socket
+
+    reread_refused(socket, %{available: true})
+  end
+
+  defp async_result({:open_wake, _track_id, _thread_id}, _response, socket), do: socket
 
   # The hub event `set_model/4` publishes refreshes every page on the track,
   # this one included; the refresh here is so this page does not wait on it.
@@ -1938,6 +1964,42 @@ defmodule RavixWeb.TrackLive do
   # is no route that renders this LiveView on its own today --- says nothing.
   defp announce(%{parent_pid: pid}) when is_pid(pid), do: send(pid, {:track_host, self()})
   defp announce(_socket), do: :ok
+
+  # RAV-141: somebody opening a track is about to type into it, so the shown
+  # thread is woken in the background once the page has read it, without
+  # waiting for the answer. Once per open: a mount, a switch of track or of
+  # thread. The refresh tick and the reads after a Wake or a retry are the
+  # same track and thread, and wake nothing again. `Tracks.wake_on_open/3`
+  # holds the access check and every other reason not to.
+  defp wake_on_open(%{assigns: %{open_wake: key}} = socket)
+       when key == {socket.assigns.track_id, socket.assigns.thread_id},
+       do: socket
+
+  defp wake_on_open(socket) do
+    %{current_user: user, track_id: track_id, thread_id: thread_id} = socket.assigns
+    rejoined? = socket.assigns.open_wake == {:rejoined, track_id}
+    socket = assign(socket, open_wake: {track_id, thread_id})
+
+    if rejoined?,
+      do: socket,
+      else:
+        traced_async(socket, {:open_wake, track_id, thread_id}, fn ->
+          Tracks.wake_on_open(user, track_id, thread_id)
+        end)
+  end
+
+  # A LiveView that reconnects mounts again, and its client counts the joins
+  # (`_mounts`): the first read after a rejoin is the track already open, not
+  # an open. A second thread or track after it is.
+  defp rejoined(socket) do
+    case connected?(socket) && get_connect_params(socket) do
+      %{"_mounts" => mounts} when is_integer(mounts) and mounts > 0 ->
+        assign(socket, open_wake: {:rejoined, socket.assigns.track_id})
+
+      _ ->
+        socket
+    end
+  end
 
   # Hand this page over to another track, keeping only what belongs to the
   # person looking at it: the session, the guard's hash and expiry, the upload
