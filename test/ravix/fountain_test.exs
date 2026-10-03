@@ -823,13 +823,12 @@ defmodule Ravix.FountainTest do
                    Fountain.wake(client, "c1")
 
           assert {status, code} == {ctx.status, ctx.code}
-          refute Error.route_missing?(error)
           assert Error.as_http(error, "wake").message =~ ctx.words
         end)
       end
     end
 
-    test "a missing conversation names itself; a Fountain without the route does not" do
+    test "a 404 is a not-found like any other, whether the conversation or the route is missing" do
       client =
         fake([
           {%{method: "POST", path: "/api/conversations/c1/wake"},
@@ -839,14 +838,12 @@ defmodule Ravix.FountainTest do
         ])
 
       capture_log(fn ->
-        assert {:error, %Error{status: 404, code: "not_found"} = missing} =
-                 Fountain.wake(client, "c1")
+        for _ <- 1..2 do
+          assert {:error, %Error{status: 404, kind: :not_found} = missing} =
+                   Fountain.wake(client, "c1")
 
-        refute Error.route_missing?(missing)
-
-        assert {:error, %Error{status: 404, code: nil} = no_route} = Fountain.wake(client, "c1")
-        assert Error.route_missing?(no_route)
-        refute Error.route_missing?({:unconfigured, :fountain})
+          assert Error.as_http(missing, "wake").status == 404
+        end
       end)
     end
   end

@@ -150,7 +150,7 @@ defmodule RavixWeb.Live.MachineDock do
         |> probe(nil)
         |> load_shells()
         |> scoped_async(:machine_status, fn ->
-          Terminal.status(user, id, passive: true)
+          Terminal.status(user, id)
         end)
       else
         socket
@@ -394,7 +394,7 @@ defmodule RavixWeb.Live.MachineDock do
   end
 
   # Wake, on a tab held asleep, and Retry, on one the machine did not
-  # answer: both wake the machine (a probe, if it is already awake) and
+  # answer: both wake the machine (Fountain answers `awake` if it is up) and
   # attach once it answers. Only this page's own tabs, and only those.
   def handle_event("shell-wake", %{"id" => id}, socket) do
     case Enum.find(socket.assigns.shells, &(&1.tab.id == id)) do

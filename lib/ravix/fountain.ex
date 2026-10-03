@@ -522,9 +522,9 @@ defmodule Ravix.Fountain do
   `sandbox_reset_pending`, 410 `conversation_terminated`, 503 while the
   machine or fleet is unavailable. Any other `status` is not one Fountain
   documents and is an error rather than an atom made from it: a 502, since
-  it was upstream that answered something Ravix cannot read. A Fountain
-  older than #2551 answers its router's 404, which has no `error` code; a
-  missing conversation's 404 has one.
+  it was upstream that answered something Ravix cannot read. There is no
+  fallback for a Fountain older than #2551: its 404 is a refusal like any
+  other.
   """
   @spec wake(Client.t(), id()) :: result(:awake | :waking)
   def wake(client, id) do

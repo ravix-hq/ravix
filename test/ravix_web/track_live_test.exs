@@ -453,8 +453,8 @@ defmodule RavixWeb.TrackLiveTest do
       {:ok, %Files.Listing{path: ctx.track.workdir, truncated: false, entries: []}}
     end)
 
-    stub(Terminal, :status, fn _, _, opts ->
-      if opts == [passive: true], do: send(caller, :dock_refreshed)
+    stub(Terminal, :status, fn _, _ ->
+      send(caller, :dock_refreshed)
       {:ok, %Terminal.Status{available: true, why: nil, cwd: ctx.track.workdir}}
     end)
 
@@ -2247,7 +2247,7 @@ defmodule RavixWeb.TrackLiveTest do
     # A probe that finds the machine running, so the chip says only what the
     # row does; what a probe adds has its own tests.
     setup ctx do
-      stub(Terminal, :status, fn _, _, _ ->
+      stub(Terminal, :status, fn _, _ ->
         {:ok, %Terminal.Status{available: true, why: nil, cwd: ctx.track.workdir}}
       end)
 
@@ -2371,7 +2371,7 @@ defmodule RavixWeb.TrackLiveTest do
     end
 
     test "a machine the probe finds running is not called asleep in the header", ctx do
-      stub(Terminal, :status, fn _, _, _ ->
+      stub(Terminal, :status, fn _, _ ->
         {:ok, %Terminal.Status{available: true, why: nil, cwd: ctx.track.workdir}}
       end)
 
@@ -2416,7 +2416,7 @@ defmodule RavixWeb.TrackLiveTest do
     end
 
     test "an unanswered probe on an asleep machine leaves the header's words alone", ctx do
-      stub(Terminal, :status, fn _, _, _ ->
+      stub(Terminal, :status, fn _, _ ->
         {:ok, %Terminal.Status{available: false, why: :no_sprite, cwd: ctx.track.workdir}}
       end)
 
@@ -2954,12 +2954,12 @@ defmodule RavixWeb.TrackLiveTest do
 
       expect(Tracks, :wake, fn _, _ ->
         {:error,
-         {:conflict, "machine_not_awake",
-          "This track's machine did not wake. Try again, or send a message."}}
+         {:conflict, "no_conversation",
+          "This track has no agent session to wake yet. Send a message to start one."}}
       end)
 
       ctx.view |> element("#panel-wake") |> render_click()
-      assert toasted(ctx) =~ "did not wake"
+      assert toasted(ctx) =~ "no agent session to wake"
       assert has_element?(ctx.view, "#panel-wake:not([disabled])", "Wake")
     end
 
@@ -5825,7 +5825,7 @@ defmodule RavixWeb.TrackLiveTest do
        }}
     end)
 
-    expect(Terminal, :status, fn _, _, [passive: true] -> {:ok, %{available: true}} end)
+    expect(Terminal, :status, fn _, _ -> {:ok, %{available: true}} end)
 
     expect(Terminal, :exec, fn _, _, _ ->
       send(owner, {:metadata_exec, self()})
@@ -6058,7 +6058,7 @@ defmodule RavixWeb.TrackLiveTest do
         Ecto.Changeset.change(ctx.track, sandbox_layout: @layout, opened_at: DateTime.utc_now())
       )
 
-      stub(Terminal, :status, fn _, _, _ ->
+      stub(Terminal, :status, fn _, _ ->
         {:ok, %Terminal.Status{available: true, why: nil, cwd: ctx.track.workdir}}
       end)
 
@@ -6106,7 +6106,7 @@ defmodule RavixWeb.TrackLiveTest do
     test "machine status explains #{@status_reason} in plain language", ctx do
       Repo.update!(Ecto.Changeset.change(ctx.track, opened_at: DateTime.utc_now()))
 
-      stub(Terminal, :status, fn _, _, _ ->
+      stub(Terminal, :status, fn _, _ ->
         if @status_reason == :error,
           do: {:error, :not_found},
           else:
@@ -6154,7 +6154,7 @@ defmodule RavixWeb.TrackLiveTest do
   end
 
   test "the header says a shared track runs on the whole project's machine", ctx do
-    stub(Ravix.Terminal, :status, fn _, _, _ ->
+    stub(Ravix.Terminal, :status, fn _, _ ->
       {:ok, %Ravix.Terminal.Status{available: true, why: nil, cwd: ctx.track.workdir}}
     end)
 

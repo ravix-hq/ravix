@@ -125,14 +125,6 @@ defmodule Ravix.Fountain.Error do
 
   def sandbox_suspended?(%__MODULE__{}), do: false
 
-  @doc """
-  A 404 from Fountain's router rather than from a resource: Phoenix's own
-  body carries no `error` code, while every missing record names one.
-  """
-  @spec route_missing?(term()) :: boolean()
-  def route_missing?(%__MODULE__{status: 404, code: nil}), do: true
-  def route_missing?(_), do: false
-
   @doc "The vault endpoints deliberately conflate malformed, foreign and missing IDs."
   def vault_gone?(%__MODULE__{status: status}), do: status in [404, 410]
 

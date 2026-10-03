@@ -290,14 +290,6 @@ defmodule Ravix.SpritesTest do
              Sprites.shell(@cfg, "s", "sleep 100", "/w", 1)
   end
 
-  test "reachable? is true only for a zero exit, and false for any failure" do
-    Fake.install(fn conn, _call -> send_resp(conn, 200, <<3, 0>>) end)
-    assert Sprites.reachable?(@cfg, "s")
-
-    Fake.install(fn conn, _call -> send_resp(conn, 404, "") end)
-    refute Sprites.reachable?(@cfg, "s")
-  end
-
   test "without a token every call names Sprites as the missing integration instead of trying" do
     refused = {:error, {:unconfigured, :sprites}}
     assert refused == Sprites.exec(nil, "s", ["true"], 5)
@@ -307,6 +299,5 @@ defmodule Ravix.SpritesTest do
     assert refused == Sprites.service_action(nil, "s", "sy", :stop)
     assert refused == Sprites.service_logs(nil, "s", "sy")
     assert refused == Sprites.activity(nil, "s", "sy")
-    refute Sprites.reachable?(nil, "s")
   end
 end

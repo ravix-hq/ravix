@@ -30,7 +30,14 @@ defmodule RavixWeb.Live.MachineDockShellTest do
   setup do
     owner = insert_user()
     project = insert_project(user: owner)
-    track = insert_track(project: project, slug: "kyoto", created_by_login: owner.login)
+
+    track =
+      insert_track(
+        project: project,
+        slug: "kyoto",
+        created_by_login: owner.login,
+        conversation_id: "c1"
+      )
 
     cfg = SpritesFake.start_proxy()
     stub(Ravix.Config, :sprites, fn -> cfg end)
@@ -40,6 +47,13 @@ defmodule RavixWeb.Live.MachineDockShellTest do
     end)
 
     fountain(project)
+    test = self()
+
+    # `Ravix.Tracks.wake/2` asks Fountain; an awake machine is `awake`.
+    stub(Ravix.Fountain, :wake, fn _client, "c1" ->
+      send(test, :fountain_wake)
+      {:ok, :awake}
+    end)
 
     stub(Tracks, :get, fn _, id, _opts ->
       row = Repo.get!(Track, id)
@@ -356,21 +370,26 @@ defmodule RavixWeb.Live.MachineDockShellTest do
   end
 
   describe "on a machine that is asleep (RAV-81)" do
-    # The machine sleeps until something runs a command on it: the dock's
-    # passive status read says it is not running, and the wake's probe (an
-    # exec) wakes it, as Sprites does. `wakes?: false` is a machine that does
-    # not come up for it.
+    # The machine sleeps until Fountain wakes it: the dock's passive status
+    # read says it is not running, and `Ravix.Fountain.wake/2` brings it up,
+    # as Fountain does. `wakes?: false` is a machine Fountain refuses to wake.
     defp asleep(ctx, wakes? \\ true, gate \\ nil) do
       {:ok, machine} = Agent.start_link(fn -> %{awake: false, wakes: wakes?, gate: gate} end)
+      test = self()
 
       SpritesFake.install(fn conn, call ->
         SpritesFake.kill_exec(conn, ctx.cfg) || machine_call(conn, call, machine)
       end)
 
+      stub(Ravix.Fountain, :wake, fn _client, "c1" ->
+        send(test, :fountain_wake)
+        fountain_wake(machine)
+      end)
+
       machine
     end
 
-    defp machine_call(conn, %{method: "POST", argv: ["true"]}, machine) do
+    defp fountain_wake(machine) do
       # A gated wake waits for the test to let it answer, so the test can
       # see the tab while the machine is waking.
       if gate = Agent.get(machine, & &1.gate) do
@@ -384,8 +403,8 @@ defmodule RavixWeb.Live.MachineDockShellTest do
       end
 
       if Agent.get_and_update(machine, &{&1.wakes, %{&1 | awake: &1.awake or &1.wakes}}),
-        do: SpritesFake.exec_response(conn, ""),
-        else: Plug.Conn.send_resp(conn, 404, "asleep")
+        do: {:ok, :waking},
+        else: {:error, %Ravix.Fountain.Error{status: 503, code: "sandbox_unavailable"}}
     end
 
     defp machine_call(conn, _call, machine) do
@@ -452,7 +471,7 @@ defmodule RavixWeb.Live.MachineDockShellTest do
       |> render_hook("shell-attach", %{id: id, cols: 90, rows: 25})
 
       render_async(view, 5_000)
-      assert Enum.any?(SpritesFake.calls(), &(&1.argv == ["true"]))
+      assert_received :fountain_wake
       assert_receive {SpritesFake, :exec, {:spawn, %{"cols" => "90", "rows" => "25"}}}, 2_000
     end
 
@@ -592,21 +611,17 @@ defmodule RavixWeb.Live.MachineDockShellTest do
     refute has_element?(view, "#{pane} button", "Close tab")
     refute render(view) =~ "Sprites"
 
-    # Retry wakes the machine (a probe, since it is up) and attaches again,
-    # at the size the pane last asked for.
+    # Retry wakes the machine (Fountain answers awake, since it is up) and
+    # attaches again, at the size the pane last asked for.
     test = self()
 
-    SpritesFake.install(fn conn, call ->
-      if call.method == "POST" do
-        send(test, {:waking, self()})
+    stub(Ravix.Fountain, :wake, fn _client, "c1" ->
+      send(test, {:waking, self()})
 
-        receive do
-          :go -> SpritesFake.exec_response(conn, "")
-        after
-          5_000 -> SpritesFake.exec_response(conn, "")
-        end
-      else
-        status(conn, call)
+      receive do
+        :go -> {:ok, :awake}
+      after
+        5_000 -> {:ok, :awake}
       end
     end)
 
@@ -636,20 +651,12 @@ defmodule RavixWeb.Live.MachineDockShellTest do
     end
 
     render_async(view)
-    refute Enum.any?(SpritesFake.calls(), &(&1.argv == ["true"]))
+    refute_received :fountain_wake
     refute has_element?(view, "#shell-asleep-#{id}")
   end
 
   test "a signed-out page's Wake is refused before it reaches the machine", ctx do
-    # A track with a conversation, so a wake that got through would ask Fountain.
-    Repo.update!(Ecto.Changeset.change(ctx.track, conversation_id: "conv-signed-out"))
-    test = self()
-
-    stub(Ravix.Fountain, :wake, fn _, _ ->
-      send(test, :fountain_wake)
-      {:error, %Ravix.Fountain.Error{status: 503, code: "sandbox_unavailable"}}
-    end)
-
+    # The first wake reaches Fountain, which refuses it (503).
     asleep(ctx, false)
     %{view: view, hash: hash} = open(ctx, ctx.owner)
     id = new_terminal(view)
@@ -657,7 +664,6 @@ defmodule RavixWeb.Live.MachineDockShellTest do
     assert has_element?(view, "#shell-asleep-#{id}", "Machine is asleep")
     assert has_element?(view, "#shell-asleep-#{id} .dimmer", "not available right now")
     assert_received :fountain_wake
-    SpritesFake.calls()
 
     Accounts.end_session(hash)
 
@@ -673,7 +679,6 @@ defmodule RavixWeb.Live.MachineDockShellTest do
     assert_receive {:EXIT, _pid, {:shutdown, {:redirect, %{to: "/login"}}}}, 2_000
 
     refute_received :fountain_wake
-    refute Enum.any?(SpritesFake.calls(), &(&1.argv == ["true"]))
   end
 
   test "+ is a menu: New terminal with its shortcut, and Run script; tabs carry icons", ctx do
@@ -729,7 +734,7 @@ defmodule RavixWeb.Live.MachineDockShellTest do
     # Nor may they wake the machine through somebody else's tab id.
     view |> element("#track-terminal") |> render_hook("shell-wake", %{id: tab.id})
     render_async(view)
-    refute Enum.any?(SpritesFake.calls(), &(&1.argv == ["true"]))
+    refute_received :fountain_wake
     refute_received {SpritesFake, :exec, {:spawn, _}}
     assert {:ok, []} = Terminal.tabs(reader, ctx.track.id)
   end
