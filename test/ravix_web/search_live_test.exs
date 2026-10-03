@@ -221,6 +221,88 @@ defmodule RavixWeb.SearchLiveTest do
            )
   end
 
+  test "access notices and periodic checks clear displayed content during held reloads", ctx do
+    guest = insert_user()
+    seat = insert_track_member(ctx.track, guest)
+    {:ok, view, _} = live(log_in_user(ctx.conn, guest), "/search?q=searchable")
+    render_async(view)
+    parent = self()
+
+    stub(Access, :project_ids, fn user ->
+      if self() != view.pid do
+        send(parent, {:held_search, self()})
+        receive do: (:finish -> :ok)
+      end
+
+      Mimic.call_original(Access, :project_ids, [user])
+    end)
+
+    Hub.publish(ctx.project.id, :reply)
+    render(view)
+    assert_receive {:held_search, _old_task}
+    Repo.delete!(seat)
+    Hub.publish(ctx.project.id, :people, track_id: ctx.track.id)
+    render(view)
+    assert_receive {:held_search, task}
+
+    refute has_element?(
+             view,
+             "a[href='/p/#{ctx.project.id}/t/#{ctx.track.id}?thread=#{ctx.track.id}']"
+           )
+
+    refute has_element?(view, "option[value='#{ctx.track.id}']")
+    send(view.pid, :refresh_access)
+    render(view)
+    refute has_element?(view, "option[value='#{ctx.project.id}']")
+    send(task, :finish)
+    render_async(view)
+
+    refute has_element?(
+             view,
+             "a[href='/p/#{ctx.project.id}/t/#{ctx.track.id}?thread=#{ctx.track.id}']"
+           )
+  end
+
+  test "invalid patches invalidate the prior query even for already queued project notices",
+       ctx do
+    {:ok, view, _} = live(log_in_user(ctx.conn, ctx.owner), "/search?q=searchable")
+    render_async(view)
+    render_patch(view, "/search?q=otherwords&page=0")
+    render_async(view)
+    parent = self()
+    id = "rejected-query-#{ctx.track.id}"
+
+    :telemetry.attach(
+      id,
+      [:ravix, :repo, :query],
+      fn _, _, metadata, _ ->
+        if String.contains?(metadata.query, "to_tsvector") and
+             (self() == view.pid or view.pid in Process.get(:"$callers", [])),
+           do: send(parent, :stale_query_ran)
+      end,
+      nil
+    )
+
+    on_exit(fn -> :telemetry.detach(id) end)
+
+    for name <- [:people, :reply],
+        do: send(view.pid, {:hub, Hub.Event.new(name, ctx.project.id, [])})
+
+    send(view.pid, :refresh_access)
+    render(view)
+    render_async(view)
+    refute_received :stale_query_ran
+    assert has_element?(view, "[role=alert]")
+    assert has_element?(view, "input[value='otherwords']")
+
+    refute has_element?(
+             view,
+             "a[href='/p/#{ctx.project.id}/t/#{ctx.track.id}?thread=#{ctx.track.id}']"
+           )
+
+    refute has_element?(view, "option[value='#{ctx.project.id}']")
+  end
+
   test "unsent query and filter drafts survive periodic access checks and reply refresh", ctx do
     second = insert_project(user: ctx.owner)
     track = insert_track(project: second, title: "draft work")
