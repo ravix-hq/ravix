@@ -100,33 +100,7 @@ defmodule RavixWeb.Live.ProjectSettings do
   def update(%{conductor_selection: selection, conductor_repository: repository}, socket) do
     {:noreply, socket} =
       Hooks.component(socket, fn ->
-        case Access.project_of(user(socket), project_id(socket)) do
-          {:ok, project} ->
-            if repository == {project.repo_full_name, project.default_branch || "main"} and
-                 socket.assigns.section == "machine" and MapSet.size(socket.assigns.pending) == 0 do
-              environment = socket.assigns.environment_form.params
-              run = socket.assigns.defaults_form.params
-
-              environment =
-                if selection.setup,
-                  do: Map.put(environment, "setup_script", selection.setup),
-                  else: environment
-
-              run = if selection.run, do: Map.merge(run, selection.run), else: run
-
-              {:noreply,
-               assign(socket,
-                 environment_form: Form.new(:settings, environment),
-                 defaults_form: Form.new(:preview_defaults, run),
-                 machine_review: nil
-               )}
-            else
-              {:noreply, socket}
-            end
-
-          {:error, reason} ->
-            {:noreply, error(socket, reason)}
-        end
+        apply_conductor_selection(socket, selection, repository)
       end)
 
     {:ok, socket}
@@ -729,6 +703,32 @@ defmodule RavixWeb.Live.ProjectSettings do
          do: Enum.count(tracks, &(&1.sandbox_layout == :shared)),
          else: length(tracks)
        )}
+    end
+  end
+
+  defp apply_conductor_selection(socket, selection, repository) do
+    with {:ok, project} <- Access.project_of(user(socket), project_id(socket)),
+         true <- repository == {project.repo_full_name, project.default_branch || "main"},
+         true <- socket.assigns.section == "machine" and MapSet.size(socket.assigns.pending) == 0 do
+      environment = socket.assigns.environment_form.params
+      run = socket.assigns.defaults_form.params
+
+      environment =
+        if selection.setup,
+          do: Map.put(environment, "setup_script", selection.setup),
+          else: environment
+
+      run = if selection.run, do: Map.merge(run, selection.run), else: run
+
+      {:noreply,
+       assign(socket,
+         environment_form: Form.new(:settings, environment),
+         defaults_form: Form.new(:preview_defaults, run),
+         machine_review: nil
+       )}
+    else
+      {:error, reason} -> {:noreply, error(socket, reason)}
+      false -> {:noreply, socket}
     end
   end
 

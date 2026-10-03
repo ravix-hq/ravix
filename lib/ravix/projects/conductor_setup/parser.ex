@@ -27,22 +27,23 @@ defmodule Ravix.Projects.ConductorSetup.Parser do
     with :ok <- bounded(files),
          {:ok, toml} <- decode(files[@toml], :toml),
          {:ok, json} <- legacy(files, toml),
-         {:ok, report} <- report(toml, json, files[@include]) do
+         {:ok, report} <- report(toml, json, files[@include], files[@json] != nil) do
       {:ok, Map.put(report, :sources, Enum.filter(paths(), &is_binary(files[&1])))}
     end
   end
 
   defp bounded(files) do
-    if Enum.all?(paths(), fn path ->
-         case files[path] do
-           nil -> true
-           text when is_binary(text) -> byte_size(text) <= @max_bytes and String.valid?(text)
-           _ -> false
-         end
-       end),
-       do: :ok,
-       else: invalid("Files must be UTF-8 text of at most 64 KiB each.")
+    if Enum.all?(paths(), &valid_file?(files[&1])),
+      do: :ok,
+      else: invalid("Files must be UTF-8 text of at most 64 KiB each.")
   end
+
+  defp valid_file?(nil), do: true
+
+  defp valid_file?(text) when is_binary(text),
+    do: byte_size(text) <= @max_bytes and String.valid?(text)
+
+  defp valid_file?(_), do: false
 
   defp decode(nil, _format), do: {:ok, nil}
 
@@ -61,10 +62,10 @@ defmodule Ravix.Projects.ConductorSetup.Parser do
   defp legacy(files, _toml), do: decode(files[@json], :json)
   defp ignored_legacy(_files), do: {:ok, nil}
 
-  defp report(toml, json, include) do
+  defp report(toml, json, include, legacy_present?) do
     settings = toml || json || %{}
-    scripts = settings["scripts"] || %{}
-    legacy_scripts = (json || %{})["scripts"] || %{}
+    scripts = Map.get(settings, "scripts", %{})
+    legacy_scripts = Map.get(json || %{}, "scripts", %{})
 
     with true <- is_map(scripts) and is_map(legacy_scripts),
          {:ok, setup} <- setup(scripts, legacy_scripts),
@@ -76,7 +77,7 @@ defmodule Ravix.Projects.ConductorSetup.Parser do
          runs: runs,
          patterns: patterns,
          pattern_source: if(include != nil, do: @include, else: "file_include_globs / default"),
-         warnings: warnings(settings, scripts, toml, json)
+         warnings: warnings(settings, scripts, toml, legacy_present?)
        }}
     else
       false -> invalid("Scripts must be an object/table.")
@@ -86,12 +87,12 @@ defmodule Ravix.Projects.ConductorSetup.Parser do
 
   defp setup(scripts, legacy) do
     case Map.get(scripts, "setup", legacy["setup"]) do
-      nil -> {:ok, nil}
+      value when value in [nil, ""] -> {:ok, nil}
       command -> candidate("setup", %{"command" => command}, 20_000)
     end
   end
 
-  defp runs(nil), do: {:ok, []}
+  defp runs(value) when value in [nil, ""], do: {:ok, []}
   defp runs(command) when is_binary(command), do: runs(%{"run" => %{"command" => command}})
 
   defp runs(scripts) when is_map(scripts) and map_size(scripts) <= @max_scripts do
@@ -115,7 +116,7 @@ defmodule Ravix.Projects.ConductorSetup.Parser do
     available = if is_binary(available), do: [available], else: available
 
     with true <- valid_text?(id, 200) and valid_text?(command, limit),
-         true <- is_list(args) and Enum.all?(args, &valid_text?(&1, 1_000)),
+         true <- is_list(args) and Enum.all?(args, &valid_argument?/1),
          true <- is_map(options),
          true <- is_list(available) and Enum.all?(available, &(&1 in ["local", "cloud"])),
          true <- is_boolean(Map.get(attrs, "default", false)) do
@@ -160,6 +161,9 @@ defmodule Ravix.Projects.ConductorSetup.Parser do
   defp valid_text?(text, limit),
     do: is_binary(text) and byte_size(text) in 1..limit and not String.contains?(text, <<0>>)
 
+  defp valid_argument?(arg),
+    do: arg == "" or valid_text?(arg, 1_000)
+
   defp shell_quote(arg), do: "'" <> String.replace(arg, "'", "'\\''") <> "'"
 
   defp patterns(include, globs) do
@@ -177,7 +181,7 @@ defmodule Ravix.Projects.ConductorSetup.Parser do
     end
   end
 
-  defp warnings(settings, scripts, toml, json) do
+  defp warnings(settings, scripts, toml, legacy_present?) do
     []
     |> issue(
       scripts["archive"] != nil,
@@ -197,7 +201,7 @@ defmodule Ravix.Projects.ConductorSetup.Parser do
       "Repository environment values are not imported. Provision required variables and secrets explicitly in Machine settings."
     )
     |> issue(
-      toml != nil and json != nil,
+      toml != nil and legacy_present?,
       "TOML takes precedence; only a missing setup script falls back to legacy JSON for cloud compatibility."
     )
   end

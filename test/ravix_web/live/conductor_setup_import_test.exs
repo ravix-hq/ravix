@@ -165,6 +165,48 @@ defmodule RavixWeb.Live.ConductorSetupImportTest do
     assert Agent.get(ctx.env, & &1)["setup_script"] == "existing setup"
   end
 
+  test "repository changed after review cannot stage stale candidates", ctx do
+    discover(ctx.view)
+
+    ctx.project
+    |> Ecto.Changeset.change(repo_full_name: "org/replacement")
+    |> Ravix.Repo.update!()
+
+    apply_selection(ctx.view, %{setup: "true", run: "web"})
+    assert form_value(ctx.view, "#settings-setup") == "existing setup"
+    assert form_value(ctx.view, "#default-command") == "existing run --port $PORT"
+  end
+
+  test "session revoked during discovery rejects the async report", ctx do
+    Process.flag(:trap_exit, true)
+    test = self()
+
+    GH.install([
+      GH.token_route(ctx.app),
+      {"GET", ~r{/contents/},
+       fn conn ->
+         send(test, {:reading, self()})
+
+         receive do
+           :continue -> conn |> Plug.Conn.put_status(404) |> Req.Test.json(%{message: "missing"})
+         end
+       end}
+    ])
+
+    ctx.view |> element("#discover-conductor-setup") |> render_click()
+    assert_receive {:reading, task}
+    Ravix.Repo.delete_all(from(s in Ravix.Accounts.Session, where: s.user_id == ^ctx.user.id))
+    send(task, :continue)
+
+    for _ <- 1..2 do
+      assert_receive {:reading, ^task}
+      send(task, :continue)
+    end
+
+    assert_redirect(ctx.view, "/login", 2_000)
+    assert Agent.get(ctx.env, & &1)["setup_script"] == "existing setup"
+  end
+
   test "membership removal during async discovery refuses the result", ctx do
     test = self()
 

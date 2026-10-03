@@ -24,6 +24,7 @@
  *
  * and the startup log prints the exact command line for the server.
  */
+import { conductorSetupFile } from "./conductor_setup";
 import { generateKeyPairSync } from "node:crypto";
 import { existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -1884,6 +1885,12 @@ function githubApi(req: Request, url: URL, body: Record<string, unknown>): Respo
     const found = repoBody(repo[2]!);
     if (!found) return json({ message: "Not Found" }, 404);
     const rest = repo[3] ?? "";
+
+    if (rest.startsWith("/contents/")) {
+      const content = conductorSetupFile(rest.slice("/contents/".length));
+      if (content === undefined) return json({ message: "Not Found" }, 404);
+      return json({ type: "file", encoding: "base64", size: Buffer.byteLength(content), content: Buffer.from(content).toString("base64") });
+    }
 
     if (!rest) return json(found);
     if (rest === "/branches") return json(BRANCHES.map((b) => ({ name: b.name, commit: { sha: b.sha } })));
