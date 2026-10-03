@@ -1957,6 +1957,66 @@ defmodule Ravix.TracksTest do
       assert is_nil(Repo.get!(Track, ctx.track.id).sandbox_suspended_at)
     end
 
+    test "a dedicated read answered from Fountain's parked snapshot keeps the track asleep",
+         ctx do
+      sandbox_id = "snapshot-#{ctx.track.id}"
+      path = ctx.track.workdir
+      at = "2026-10-02T12:00:00.000000Z"
+
+      Repo.update!(
+        Ecto.Changeset.change(ctx.track, sandbox_layout: :dedicated, sandbox_id: sandbox_id)
+      )
+
+      disk_fountain(
+        :dedicated,
+        ctx.project,
+        [
+          {%{method: "GET", path: "/api/sandboxes/#{sandbox_id}/files"},
+           {200, [],
+            %{
+              data: %{
+                path: path,
+                entries: [%{name: "a.txt", type: "file", size: 3}],
+                snapshot_at: at
+              }
+            }}},
+          {%{method: "GET", path: "/api/sandboxes/#{sandbox_id}/file"},
+           {200, [],
+            %{
+              data: %{
+                path: path <> "/a.txt",
+                size: 3,
+                truncated: false,
+                encoding: "utf-8",
+                content: "two",
+                snapshot_at: at
+              }
+            }}},
+          {%{method: "GET", path: "/api/sandboxes/#{sandbox_id}/diff"},
+           {200, [],
+            %{data: %{path: path, repo_root: path, diff: "", truncated: false, snapshot_at: at}}}}
+        ],
+        sandbox_id
+      )
+
+      # Nothing asks the machine: it is parked, which is why this is a snapshot.
+      reject(Ravix.Terminal, :status, 3)
+
+      {:ok, snapshot_at, 0} = DateTime.from_iso8601(at)
+
+      assert {:ok, %Files.Listing{snapshot_at: ^snapshot_at, entries: [%{name: "a.txt"}]}} =
+               Tracks.files(ctx.owner, ctx.track.id, nil)
+
+      assert {:ok, %Files.Content{content: "two", snapshot_at: ^snapshot_at}} =
+               Tracks.file(ctx.owner, ctx.track.id, "a.txt")
+
+      assert {:ok, %Diff{snapshot_at: ^snapshot_at, untracked: :asleep}} =
+               Tracks.diff(ctx.owner, ctx.track.id)
+
+      # The snapshot is Fountain saying the machine is parked: the rail says Asleep.
+      assert %DateTime{} = Repo.get!(Track, ctx.track.id).sandbox_suspended_at
+    end
+
     test "a dedicated read preserves real provider failures", ctx do
       sandbox_id = "failed-#{ctx.track.id}"
 
