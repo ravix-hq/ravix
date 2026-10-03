@@ -261,6 +261,33 @@ test("suspended disk reads return Fountain's typed 409 and never wake the sandbo
   expect((await request("GET", `/api/sandboxes/${f.sandbox_id}/files?path=/workspace/repo`)).status).toBe(200);
 });
 
+test("a park that kept a snapshot answers disk reads from it, dated, until the sandbox wakes", async () => {
+  const f = await fixture();
+  const live = await request("GET", `/api/sandboxes/${f.sandbox_id}/files?path=/workspace/repo`);
+  const file = live.body.data.entries.find((e: any) => e.type === "file");
+  expect(file).toBeDefined();
+  expect(live.body.data.snapshot_at).toBeUndefined();
+
+  setSandboxStatus(f.sandbox_id, "suspended", { snapshot: true });
+  const listing = await request("GET", `/api/sandboxes/${f.sandbox_id}/files?path=/workspace/repo`);
+  expect(listing.status).toBe(200);
+  expect(listing.body.data.entries).toEqual(live.body.data.entries);
+  const at = listing.body.data.snapshot_at;
+  expect(Number.isNaN(Date.parse(at))).toBe(false);
+
+  const read = await request("GET", `/api/sandboxes/${f.sandbox_id}/file?path=/workspace/repo/${file.name}`);
+  expect(read).toMatchObject({ status: 200, body: { data: { snapshot_at: at } } });
+  expect((await request("GET", `/api/sandboxes/${f.sandbox_id}/diff?path=/workspace/repo`)).body.data.snapshot_at).toBe(at);
+  // A path the snapshot did not keep needs the machine, which is asleep.
+  expect(await request("GET", `/api/sandboxes/${f.sandbox_id}/file?path=/workspace/repo/not-kept`))
+    .toMatchObject({ status: 409, body: { error: "sandbox_not_ready", status: "suspended" } });
+  expect((await request("GET", `/api/sandboxes/${f.sandbox_id}`)).body.data).not.toHaveProperty("snapshot");
+
+  setSandboxStatus(f.sandbox_id, "ready");
+  expect((await request("GET", `/api/sandboxes/${f.sandbox_id}/files?path=/workspace/repo`)).body.data.snapshot_at)
+    .toBeUndefined();
+});
+
 test("environments retain readable variables, replace the map and allow clearing", async () => {
   const env = await create("environments");
   expect(env.env_vars).toEqual({});

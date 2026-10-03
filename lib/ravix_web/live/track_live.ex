@@ -1382,14 +1382,39 @@ defmodule RavixWeb.TrackLive do
       else: cache_result(tab, response, socket)
   end
 
+  @not_in_snapshot "This was not in the snapshot taken when the machine went to sleep."
+
+  # A file or a folder the snapshot does not hold, picked from a snapshot
+  # listing: the listing stays, and only the pick says it needs the machine.
+  defp async_result(:file, {:ok, {:error, :machine_asleep}}, socket)
+       when is_struct(socket.assigns.panel.data, Files.Listing) and
+              socket.assigns.panel.data.snapshot_at != nil,
+       do:
+         update_panel(
+           socket,
+           &Panel.failed(&1, @not_in_snapshot <> " Wake it to read this file.")
+         )
+
   defp async_result(name, {:ok, {:error, :machine_asleep}}, socket)
        when name in [:panel, :file],
        do: asleep_panel(socket)
 
   defp async_result({:directory, path, token}, {:ok, {:error, :machine_asleep}}, socket) do
-    if socket.assigns.panel.directories[path] == {:loading, token},
-      do: asleep_panel(socket),
-      else: socket
+    cond do
+      socket.assigns.panel.directories[path] != {:loading, token} ->
+        socket
+
+      snapshot_at(socket.assigns.panel.data) ->
+        message = @not_in_snapshot <> " Wake it to open this folder."
+
+        update_panel(
+          socket,
+          &%{&1 | directories: Map.put(&1.directories, path, {:error, message})}
+        )
+
+      true ->
+        asleep_panel(socket)
+    end
   end
 
   # The open file lands in the panel beside whatever the tab is listing, so
@@ -3023,15 +3048,17 @@ defmodule RavixWeb.TrackLive do
   end
 
   # Fountain's diff answered but the sprite was asleep, so files Git is not
-  # tracking yet could not be listed: "No changes" would be a guess.
+  # tracking yet could not be listed: "No changes" would be a guess. From a
+  # snapshot the bar above already says asleep; what is left to say is where
+  # those files are.
   defp panel_body(%{data: %Diff{diff: "", untracked: :asleep}} = assigns) do
     ~H"""
     <.empty
       pane
       id="changes-empty"
-      icon="moon"
+      icon={if @data.snapshot_at, do: "branch", else: "moon"}
       title="No tracked changes"
-      because="The machine is asleep, so new files Git is not tracking yet cannot be listed."
+      because={untracked_asleep(@data)}
     />
     """
   end
@@ -3075,7 +3102,7 @@ defmodule RavixWeb.TrackLive do
       </p>
       <p :if={@data.truncated} class="changes-note">Diff is truncated.</p>
       <p :if={@data.untracked == :asleep} id="changes-untracked-asleep" class="changes-note">
-        The machine is asleep, so new files Git is not tracking yet are not listed.
+        {untracked_asleep(@data)}
       </p>
       <div :if={!@selected}>
         <form id="diff-filter-form" phx-change="filter-diff" phx-submit="filter-diff">
@@ -3211,6 +3238,55 @@ defmodule RavixWeb.TrackLive do
     </.empty>
     """
   end
+
+  attr :at, DateTime, required: true
+  attr :zone, :string, default: nil
+  attr :tab, :atom, required: true
+  attr :can_wake, :boolean, required: true, doc: "Write access (ADR 0010)"
+  attr :waking, :boolean, default: false
+
+  # Files or Changes from the snapshot Fountain took as the machine parked:
+  # what it held then, said with when, and the Wake that brings the live tab
+  # back. Above the tab rather than in place of it, which is the whole point
+  # of the snapshot. A Read member gets the words and no button, as `asleep/1`.
+  defp snapshot_note(assigns) do
+    ~H"""
+    <p id="panel-snapshot" class="panel-snapshot" role="status">
+      <.icon name="moon" size={14} />
+      <span>
+        Asleep. Showing {if @tab == :changes, do: "changes", else: "files"} as of
+        <.local_time id="panel-snapshot-at" at={@at} zone={@zone} title_prefix="Snapshot taken " />.
+      </span>
+      <button
+        :if={@can_wake}
+        id="panel-snapshot-wake"
+        type="button"
+        class="ghost"
+        phx-click="wake"
+        disabled={@waking}
+      >
+        {cond do
+          @waking -> "Waking…"
+          @tab == :changes -> "Wake for live changes"
+          true -> "Wake for live files"
+        end}
+      </button>
+    </p>
+    """
+  end
+
+  defp untracked_asleep(%Diff{snapshot_at: nil}),
+    do: "The machine is asleep, so new files Git is not tracking yet are not listed."
+
+  defp untracked_asleep(%Diff{}),
+    do:
+      "New files Git is not tracking yet are not in this diff. Files shows them as of the snapshot."
+
+  # When what the panel is holding was answered from the parked machine's
+  # snapshot rather than by the machine.
+  defp snapshot_at(%Files.Listing{snapshot_at: at}), do: at
+  defp snapshot_at(%Diff{snapshot_at: at}), do: at
+  defp snapshot_at(_data), do: nil
 
   attr :git, :map,
     default: nil,
@@ -3485,7 +3561,12 @@ defmodule RavixWeb.TrackLive do
   # the chip there once the machine answers.
   defp reread_refused(socket, %{available: true}) do
     socket
-    |> then(&if(&1.assigns.panel.data == :machine_asleep, do: reload_panel(&1), else: &1))
+    |> then(
+      &if(&1.assigns.panel.data == :machine_asleep or snapshot_at(&1.assigns.panel.data),
+        do: reload_panel(&1),
+        else: &1
+      )
+    )
     |> then(&if(match?(%{asleep?: true}, &1.assigns.git), do: load_git(&1), else: &1))
   end
 

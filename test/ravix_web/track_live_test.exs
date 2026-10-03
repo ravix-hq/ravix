@@ -316,6 +316,113 @@ defmodule RavixWeb.TrackLiveTest do
     end
   end
 
+  describe "a parked machine's snapshot" do
+    setup ctx do
+      at = ~U[2026-10-02 12:00:00.000000Z]
+      caller = self()
+
+      stub(Tracks, :files, fn _, _, path ->
+        send(caller, {:listing_call, path})
+
+        if path in [nil, ctx.track.workdir] do
+          {:ok,
+           %Files.Listing{
+             path: ctx.track.workdir,
+             entries: [
+               %Files.Entry{name: "node_modules", type: "directory", size: nil},
+               %Files.Entry{name: "a.txt", type: "file", size: 4},
+               %Files.Entry{name: "big.bin", type: "file", size: 999_999}
+             ],
+             truncated: false,
+             snapshot_at: at
+           }}
+        else
+          {:error, :machine_asleep}
+        end
+      end)
+
+      render_click(ctx.view, "refresh-panel")
+      settle(ctx.view)
+      {:ok, at: at}
+    end
+
+    test "shows the files it holds, says when they are from, and offers the Wake", ctx do
+      assert has_element?(ctx.view, ".file-explorer", "a.txt")
+      refute has_element?(ctx.view, "#panel-asleep")
+      assert has_element?(ctx.view, "#panel-snapshot[role=status]", "Asleep. Showing files as of")
+
+      assert has_element?(
+               ctx.view,
+               "#panel-snapshot-at[datetime='#{DateTime.to_iso8601(ctx.at)}']"
+             )
+
+      assert has_element?(ctx.view, "#panel-snapshot-wake", "Wake for live files")
+    end
+
+    test "a file or folder it does not hold leaves the listing on screen", ctx do
+      expect(Tracks, :file, fn _, _, _ -> {:error, :machine_asleep} end)
+      render_click(ctx.view, "file", %{path: Path.join(ctx.track.workdir, "big.bin")})
+      settle(ctx.view)
+
+      assert has_element?(ctx.view, ".workspace-panel [role=alert]", "not in the snapshot")
+      assert has_element?(ctx.view, ".file-explorer", "a.txt")
+      refute has_element?(ctx.view, "#panel-asleep")
+
+      render_click(ctx.view, "directory", %{path: Path.join(ctx.track.workdir, "node_modules")})
+      settle(ctx.view)
+
+      assert has_element?(ctx.view, ".file-explorer [role=alert]", "Wake it to open this folder.")
+      assert has_element?(ctx.view, ".file-explorer", "a.txt")
+      refute has_element?(ctx.view, "#panel-asleep")
+    end
+
+    test "Changes says it is the snapshot's diff and where the untracked files are", ctx do
+      stub(Tracks, :diff, fn _, _ ->
+        {:ok,
+         %Ravix.Tracks.Diff{
+           path: ctx.track.workdir,
+           repo_root: ctx.track.workdir,
+           diff: "",
+           truncated: false,
+           changes: [],
+           files: [],
+           untracked: :asleep,
+           snapshot_at: ctx.at
+         }}
+      end)
+
+      render_click(ctx.view, "panel", %{name: "changes"})
+      settle(ctx.view)
+
+      assert has_element?(ctx.view, "#panel-snapshot", "Asleep. Showing changes as of")
+      assert has_element?(ctx.view, "#panel-snapshot-wake", "Wake for live changes")
+      assert has_element?(ctx.view, "#changes-empty", "Files shows them as of the snapshot.")
+      refute has_element?(ctx.view, "#changes-empty", "The machine is asleep")
+    end
+
+    test "a turn starting reads the live tab again", ctx do
+      assert_receive {:listing_call, _}
+
+      send(
+        ctx.view.pid,
+        {:transcript, ctx.track.id,
+         %Ravix.Tracks.Transcript.Event{
+           id: 9_001,
+           turn_id: "wake-turn",
+           stream: nil,
+           data: nil,
+           ts: nil,
+           kind: :stage,
+           stage: "turn",
+           state: "started"
+         }}
+      )
+
+      settle(ctx.view)
+      assert_receive {:listing_call, _}
+    end
+  end
+
   test "a dedicated binding refreshes mount reads and the dock without waiting for the backstop",
        ctx do
     row =

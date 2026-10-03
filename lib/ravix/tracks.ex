@@ -2703,8 +2703,10 @@ defmodule Ravix.Tracks do
 
   @doc """
   One directory, confined to the track's working directory. Reads never wake
-  a parked machine. Shared tracks retain the legacy provider result; dedicated
-  tracks return `{:error, :machine_asleep}` when Fountain reports suspension.
+  a parked machine. A parked machine's directory comes from the snapshot
+  Fountain took as it parked, where that snapshot has it, with `snapshot_at`
+  set; otherwise shared tracks retain the legacy provider result and
+  dedicated tracks return `{:error, :machine_asleep}`.
   """
   @spec files(User.t(), String.t(), String.t() | nil) ::
           {:ok, Files.Listing.t()} | {:error, reason()}
@@ -2772,8 +2774,10 @@ defmodule Ravix.Tracks do
     end
   end
 
+  # A snapshot listing is a parked machine's, so there is nothing to ask.
   defp read_file_metadata(user, track, listing) do
-    with true <- confine(track.workdir, listing.path) == listing.path,
+    with nil <- listing.snapshot_at,
+         true <- confine(track.workdir, listing.path) == listing.path,
          {:ok, %{available: true}} <- Ravix.Terminal.status(user, track.id, passive: true) do
       metadata =
         Ravix.Terminal.exec(user, track.id, %Ravix.Terminal.Request{
@@ -2821,10 +2825,14 @@ defmodule Ravix.Tracks do
         diff: diff,
         truncated: raw["truncated"] == true,
         changes: Enum.map(files, & &1.change),
-        files: files
+        files: files,
+        snapshot_at: Files.snapshot_at(raw)
       }
 
-      {:ok, Diff.with_untracked(tracked, read_untracked(user, track))}
+      # A snapshot is Fountain saying the machine is parked, so there is no
+      # machine to ask for the untracked files.
+      untracked = if tracked.snapshot_at, do: :asleep, else: read_untracked(user, track)
+      {:ok, Diff.with_untracked(tracked, untracked)}
     end
   end
 
@@ -2874,6 +2882,15 @@ defmodule Ravix.Tracks do
     else
       {:error, error}
     end
+  end
+
+  # An answer from the snapshot Fountain took as the machine parked is
+  # Fountain saying it is parked, as a refusal would have; only a row not yet
+  # marked asleep is written.
+  defp disk_result(%{sandbox_layout: :dedicated} = track, {:ok, %{"snapshot_at" => at}} = result)
+       when is_binary(at) do
+    if is_nil(track.sandbox_suspended_at), do: Sleep.record(track.id, true)
+    result
   end
 
   # A dedicated machine that answered a read is awake; only a row still
