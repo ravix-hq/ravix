@@ -1478,6 +1478,10 @@ defmodule Ravix.Tracks do
   """
   @spec wake(User.t(), String.t()) :: :ok | {:error, reason()}
   def wake(%User{} = user, track_id) do
+    Trace.span("tracks.wake", wake_reason(track_id, :button), fn -> press_wake(user, track_id) end)
+  end
+
+  defp press_wake(user, track_id) do
     with {:ok, %{track: track}} <- Access.track_access(user, track_id, :write) do
       cond do
         track.setup_state == "running" and track.setup_error_code == "sandbox_suspended" ->
@@ -1506,12 +1510,83 @@ defmodule Ravix.Tracks do
   def asleep?(%Track{setup_state: "running", setup_error_code: "sandbox_suspended"}), do: true
   def asleep?(%Track{}), do: false
 
+  @doc """
+  Wake the shown thread's machine because somebody opened it (RAV-141),
+  rather than because they pressed Wake.
+
+  Somebody who opens a track is usually about to type into it, so the
+  conversation is asked to wake (`Ravix.Fountain.wake/2`) while they read,
+  and the first prompt does not wait on the machine resuming. Only that
+  thread's conversation: a sibling tab is not what they opened.
+
+  The same Write rule as `wake/2` (ADR 0010), checked before Fountain is
+  asked. Nothing is asked, and `{:ok, :skipped}` answered, for a thread with
+  no conversation, a track whose setup has not finished (setup parked on a
+  sleeping machine included: that wake is `retry/3`'s, and an explicit
+  one), a closed track or thread, or a conversation the memo already says
+  has ended or is mid-turn. A refusal is returned as it is, for the caller to
+  keep to itself: nobody asked for this wake, so nobody is told it failed.
+  Either answer clears the asleep mark, as `wake/2`'s does.
+
+  Each open keeps the machine up for Fountain's idle period on the project
+  payer's compute (ADR 0005).
+  """
+  @spec wake_on_open(User.t(), String.t(), String.t() | nil) ::
+          {:ok, :awake | :waking | :skipped} | {:error, reason()}
+  def wake_on_open(%User{} = user, track_id, thread_id) do
+    Trace.span("tracks.wake", wake_reason(track_id, :open), fn ->
+      with {:ok, access} <- Access.thread_access(user, track_id, thread_id, :write),
+           do: open_wake(access)
+    end)
+  end
+
+  defp open_wake(%{track: track, project: project, thread: thread}) do
+    case open_skip(track, thread, project) do
+      nil ->
+        wake_machine(track, thread.conversation_id)
+
+      why ->
+        Trace.annotate(%{"ravix.wake_skipped" => Atom.to_string(why)})
+        {:ok, :skipped}
+    end
+  end
+
+  defp wake_reason(track_id, reason),
+    do: %{"ravix.track_id" => track_id, "ravix.wake_reason" => Atom.to_string(reason)}
+
+  defp open_skip(track, thread, project) do
+    cond do
+      thread.conversation_id in [nil, ""] -> :no_conversation
+      track.setup_state != "ready" -> :setup
+      track.closed_at != nil or track.sandbox_state in [:closing, :terminated] -> :closed
+      thread.closed_at != nil -> :closed
+      true -> conversation_skip(conversations_of(project, fresh: false)[thread.conversation_id])
+    end
+  end
+
+  # What the memo `get/3` just read says of the conversation. One it does not
+  # list is asked anyway: Fountain is the authority, and refuses an ended one.
+  defp conversation_skip(nil), do: nil
+
+  defp conversation_skip(conversation) do
+    cond do
+      Fountain.Shapes.ended?(conversation) -> :ended
+      Fountain.Shapes.busy?(conversation) -> :turn_running
+      true -> nil
+    end
+  end
+
   defp wake_conversation(track) do
+    with {:ok, _awake_or_waking} <- wake_machine(track, track.conversation_id), do: :ok
+  end
+
+  defp wake_machine(track, conversation_id) do
     with {:ok, client} <- fountain(),
-         {:ok, _awake_or_waking} <- Fountain.wake(client, track.conversation_id) do
-      # ownership: Access.track_access in wake/2 admitted this track with Write.
+         {:ok, state} <- Fountain.wake(client, conversation_id) do
+      Trace.annotate(%{"ravix.wake_state" => Atom.to_string(state)})
+      # ownership: wake/2 and wake_on_open/3 admitted this track with Write.
       if asleep?(track), do: Sleep.record(track.id, false)
-      :ok
+      {:ok, state}
     end
   end
 

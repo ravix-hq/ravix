@@ -6,7 +6,7 @@ defmodule Ravix.TracksWakeTest do
   import ExUnit.CaptureLog
   import Mimic
 
-  alias Ravix.Fountain.{Client, FakeTransport}
+  alias Ravix.Fountain.{Client, FakeTransport, Shapes}
   alias Ravix.Repo
   alias Ravix.Tracks
   alias Ravix.Tracks.Track
@@ -137,5 +137,134 @@ defmodule Ravix.TracksWakeTest do
     assert_received {:advanced, id}
     assert id == ctx.track.id
     assert Repo.get!(Track, ctx.track.id).setup_state == "retry"
+  end
+
+  describe "wake_on_open/3" do
+    # Somebody opened the track (RAV-141). Fountain is stubbed at its own
+    # functions, and the conversation list at the memo, which is shared
+    # between tests that run at once.
+    setup ctx do
+      track =
+        Repo.update!(
+          Ecto.Changeset.change(ctx.track,
+            conversation_id: "conv-#{ctx.track.id}",
+            sandbox_layout: :dedicated,
+            sandbox_suspended_at: DateTime.utc_now()
+          )
+        )
+
+      stub(Ravix.Fountain, :client, fn -> FakeTransport.client([], verify: false) end)
+      listed(%{})
+      Map.put(ctx, :track, track)
+    end
+
+    defp listed(statuses) do
+      stub(Ravix.MachineCache, :conversations, fn _, _, _ ->
+        {:ok,
+         for({id, status} <- statuses, do: Shapes.conversation(%{"id" => id, "status" => status}))}
+      end)
+    end
+
+    defp wakes(answer) do
+      test = self()
+
+      expect(Ravix.Fountain, :wake, fn _, id ->
+        send(test, {:woke, id})
+        answer
+      end)
+    end
+
+    defp sleeping?(track_id), do: Tracks.asleep?(Repo.get!(Track, track_id))
+
+    for state <- [:awake, :waking] do
+      test "#{state} is answered as it is and clears the asleep mark", ctx do
+        wakes({:ok, unquote(state)})
+
+        assert {:ok, unquote(state)} = Tracks.wake_on_open(ctx.owner, ctx.track.id, nil)
+        assert_received {:woke, conversation}
+        assert conversation == ctx.track.conversation_id
+        refute sleeping?(ctx.track.id)
+      end
+    end
+
+    test "only the thread opened is woken, not its siblings", ctx do
+      {:ok, review} =
+        Tracks.Store.create_thread(%{
+          track_id: ctx.track.id,
+          title: "Review",
+          conversation_id: "conv-review"
+        })
+
+      wakes({:ok, :waking})
+
+      assert {:ok, :waking} = Tracks.wake_on_open(ctx.owner, ctx.track.id, review.id)
+      assert_received {:woke, "conv-review"}
+      refute_received {:woke, _}
+    end
+
+    test "a refusal is returned for the caller to keep, and the mark stays", ctx do
+      refusal = %Ravix.Fountain.Error{status: 402, code: "insufficient_credits"}
+      wakes({:error, refusal})
+
+      assert {:error, ^refusal} = Tracks.wake_on_open(ctx.owner, ctx.track.id, nil)
+      assert sleeping?(ctx.track.id)
+    end
+
+    test "a Read member, a stranger and a removed member never reach Fountain", ctx do
+      reject(&Ravix.Fountain.wake/2)
+      reject(&Ravix.MachineCache.conversations/3)
+      reader = insert_user()
+      insert_track_member(ctx.track, reader, role: :read)
+      removed = insert_user()
+      Repo.delete!(insert_track_member(ctx.track, removed, role: :write))
+
+      assert {:error, {:forbidden, _}} = Tracks.wake_on_open(reader, ctx.track.id, nil)
+      assert {:error, :not_found} = Tracks.wake_on_open(insert_user(), ctx.track.id, nil)
+      assert {:error, :not_found} = Tracks.wake_on_open(removed, ctx.track.id, nil)
+      assert sleeping?(ctx.track.id)
+    end
+
+    for {name, attrs} <- [
+          {"no conversation", [conversation_id: nil]},
+          {"setup still running", [setup_state: "running"]},
+          {"setup parked on a sleeping machine",
+           [setup_state: "running", setup_error_code: "sandbox_suspended"]},
+          {"setup that failed", [setup_state: "failed"]},
+          {"a closed track", [closed_at: DateTime.utc_now()]},
+          {"a closing machine", [sandbox_state: :closing]}
+        ] do
+      test "#{name} is skipped without asking Fountain", ctx do
+        Repo.update!(Ecto.Changeset.change(ctx.track, unquote(Macro.escape(attrs))))
+        reject(&Ravix.Fountain.wake/2)
+        reject(&Tracks.Setup.advance/2)
+
+        assert {:ok, :skipped} = Tracks.wake_on_open(ctx.owner, ctx.track.id, nil)
+      end
+    end
+
+    test "a closed thread is skipped", ctx do
+      {:ok, review} =
+        Tracks.Store.create_thread(%{track_id: ctx.track.id, title: "Old", conversation_id: "c"})
+
+      Repo.update!(Ecto.Changeset.change(review, closed_at: DateTime.utc_now()))
+      reject(&Ravix.Fountain.wake/2)
+
+      assert {:ok, :skipped} = Tracks.wake_on_open(ctx.owner, ctx.track.id, review.id)
+    end
+
+    for status <- ["running", "pending", "terminated", "failed"] do
+      test "a conversation the list says is #{status} is skipped", ctx do
+        listed(%{ctx.track.conversation_id => unquote(status)})
+        reject(&Ravix.Fountain.wake/2)
+
+        assert {:ok, :skipped} = Tracks.wake_on_open(ctx.owner, ctx.track.id, nil)
+      end
+    end
+
+    test "a conversation the list says is idle is asked", ctx do
+      listed(%{ctx.track.conversation_id => "idle"})
+      wakes({:ok, :awake})
+      assert {:ok, :awake} = Tracks.wake_on_open(ctx.owner, ctx.track.id, nil)
+    end
   end
 end

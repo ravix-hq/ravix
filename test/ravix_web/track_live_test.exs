@@ -3052,6 +3052,303 @@ defmodule RavixWeb.TrackLiveTest do
     end
   end
 
+  describe "waking the shown thread on open (RAV-141)" do
+    # The page asks `Tracks.wake_on_open/3` once it has read the track. These
+    # stub it there, or stub Fountain beneath it where the context's own rules
+    # (access, and what is skipped) are the point.
+    defp open_track(ctx, conn \\ nil) do
+      {:ok, parent, _} = live(conn || ctx.conn, "/p/#{ctx.project.id}/t/#{ctx.track.id}")
+      view = find_live_child(parent, "track-host")
+      %{ctx | view: view, parent: parent}
+    end
+
+    defp asleep_row(ctx) do
+      Repo.update!(
+        Ecto.Changeset.change(Repo.get!(Track, ctx.track.id),
+          opened_at: DateTime.utc_now(),
+          sandbox_layout: :dedicated,
+          sandbox_state: :ready,
+          sandbox_suspended_at: DateTime.utc_now()
+        )
+      )
+
+      stub(Tracks, :files, fn _, _, _ -> {:error, :machine_asleep} end)
+    end
+
+    # A Fountain to ask, and a conversation list with nothing running on it.
+    defp fountain_reachable(conversations \\ []) do
+      stub(Ravix.Fountain, :client, fn -> FakeTransport.client([], verify: false) end)
+      stub(Ravix.MachineCache, :conversations, fn _, _, _ -> {:ok, conversations} end)
+    end
+
+    # Fountain's wake, held until the test lets it answer.
+    defp held_wake(answer) do
+      test = self()
+
+      expect(Ravix.Fountain, :wake, fn _, conversation ->
+        send(test, {:fountain_wake, self(), conversation})
+        assert_receive :go, 5_000
+        answer
+      end)
+    end
+
+    defp opens_counted do
+      test = self()
+
+      stub(Tracks, :wake_on_open, fn _, track_id, thread_id ->
+        send(test, {:open_wake, track_id, thread_id})
+        {:ok, :awake}
+      end)
+    end
+
+    test "an asleep track opened by a Write member wakes without a click", ctx do
+      asleep_row(ctx)
+      fountain_reachable()
+      held_wake({:ok, :waking})
+
+      ctx = open_track(ctx)
+      assert_receive {:fountain_wake, worker, "live-conversation"}, 5_000
+      assert has_element?(ctx.view, "#track-machine-state", "Asleep")
+
+      # The machine is up, so the tab it refused reads now.
+      stub(Tracks, :files, fn _, _, path ->
+        {:ok, %Files.Listing{path: path || ctx.track.workdir, truncated: false, entries: []}}
+      end)
+
+      send(worker, :go)
+      settle(ctx.view)
+      refute has_element?(ctx.view, "#track-machine-state", "Asleep")
+      refute has_element?(ctx.view, "#panel-asleep")
+      refute Tracks.asleep?(Repo.get!(Track, ctx.track.id))
+    end
+
+    test "an awake track is asked once, answers awake, and nothing on the page moves", ctx do
+      fountain_reachable()
+      test = self()
+
+      expect(Ravix.Fountain, :wake, fn _, conversation ->
+        send(test, {:fountain_wake, conversation})
+        {:ok, :awake}
+      end)
+
+      # Every detail read the page makes: the open's, and none after it.
+      stub(Tracks, :get, fn _, id, _ ->
+        send(test, {:read, id})
+
+        {:ok,
+         %{
+           track: Tracks.present(Repo.get!(Track, id), role: :owner),
+           header: blank_header(),
+           threads: thread_options(id),
+           starters: [],
+           models: []
+         }}
+      end)
+
+      ctx = open_track(ctx)
+      settle(ctx.view)
+      assert_received {:fountain_wake, "live-conversation"}
+      assert_received {:read, _}
+      refute_received {:read, _}
+    end
+
+    test "a Read member's open never reaches Fountain, and the page still opens", ctx do
+      reader = insert_user()
+      insert_track_member(ctx.track, reader, role: :read)
+      fountain_reachable()
+      reject(&Ravix.Fountain.wake/2)
+
+      ctx = open_track(ctx, log_in_user(build_conn(), reader))
+      settle(ctx.view)
+      assert has_element?(ctx.view, "#track-machine-state")
+    end
+
+    test "a session revoked before the page has read the track wakes nothing", ctx do
+      fountain_reachable()
+      reject(&Tracks.wake_on_open/3)
+      reject(&Ravix.Fountain.wake/2)
+      test = self()
+      row = Repo.get!(Track, ctx.track.id)
+
+      stub(Tracks, :get, fn _, id, _ ->
+        send(test, {:reading, self()})
+        assert_receive :go, 5_000
+
+        {:ok,
+         %{
+           track: Tracks.present(row, role: :owner),
+           header: blank_header(),
+           threads: thread_options(id),
+           starters: [],
+           models: []
+         }}
+      end)
+
+      ctx = open_track(ctx)
+      assert_receive {:reading, reader}, 5_000
+      token = Plug.Conn.get_session(ctx.conn, :session_token)
+      Repo.delete!(Repo.get_by!(Session, token_hash: Ravix.Crypto.sha256(token)))
+
+      :sys.replace_state(ctx.view.pid, fn state ->
+        update_in(state.socket.assigns.session_guard, &%{&1 | stale?: true})
+      end)
+
+      ref = Process.monitor(ctx.view.pid)
+      send(reader, :go)
+      assert_receive {:DOWN, ^ref, :process, _, _}, 5_000
+    end
+
+    test "another user's track handed to the page is refused before any wake", ctx do
+      stranger = insert_user()
+      theirs = insert_project(user: stranger)
+      track = insert_track(project: theirs, conversation_id: "theirs")
+      reject(&Tracks.wake_on_open/3)
+      reject(&Ravix.Fountain.wake/2)
+
+      ref = Process.monitor(ctx.view.pid)
+      # Handed over as the rail hands a track it listed.
+      send(ctx.view.pid, {:select_track, theirs, Tracks.present(track, role: :owner)})
+      assert_receive {:DOWN, ^ref, :process, _, _}, 5_000
+    end
+
+    test "refreshes and same-track patches do not wake again; switching does", ctx do
+      {:ok, review} =
+        Tracks.Store.create_thread(%{
+          track_id: ctx.track.id,
+          title: "Review",
+          conversation_id: "review"
+        })
+
+      other =
+        insert_track(
+          project: ctx.project,
+          conversation_id: "other-conversation",
+          created_by_login: ctx.user.login
+        )
+
+      opens_counted()
+      %{track: %{id: id}} = ctx = open_track(ctx)
+      settle(ctx.view)
+      assert_received {:open_wake, ^id, ^id}
+
+      # The refresh tick, a retried read, and the workspace patching its URL
+      # without changing the track or the thread.
+      send(ctx.view.pid, :refresh)
+      settle(ctx.view)
+      render_click(ctx.view, "retry-load")
+      settle(ctx.view)
+      render_patch(ctx.parent, "/p/#{ctx.project.id}/t/#{id}?thread=#{id}")
+      settle(ctx.view)
+      refute_received {:open_wake, _, _}
+
+      # A sibling thread is woken when it is the one shown, and only then.
+      render_click(ctx.view, "select-thread", %{"thread_id" => review.id})
+      settle(ctx.view)
+      review_id = review.id
+      assert_received {:open_wake, ^id, ^review_id}
+      render_click(ctx.view, "select-thread", %{"thread_id" => id})
+      settle(ctx.view)
+      assert_received {:open_wake, ^id, ^id}
+
+      other_id = other.id
+      render_patch(ctx.parent, "/p/#{ctx.project.id}/t/#{other_id}")
+      settle(ctx.view)
+      assert_received {:open_wake, ^other_id, ^other_id}
+      refute_received {:open_wake, _, _}
+    end
+
+    # LiveViewTest joins with `_mounts` pinned to 0, so the reconnect itself
+    # cannot be driven here: this starts from the state `rejoined/1` leaves a
+    # page in when the client says it has joined before.
+    test "a page that rejoined does not wake the track it was showing", ctx do
+      {:ok, review} =
+        Tracks.Store.create_thread(%{
+          track_id: ctx.track.id,
+          title: "Review",
+          conversation_id: "review"
+        })
+
+      opens_counted()
+      id = ctx.track.id
+
+      :sys.replace_state(ctx.view.pid, fn state ->
+        put_in(state.socket.assigns.open_wake, {:rejoined, id})
+      end)
+
+      render_click(ctx.view, "retry-load")
+      settle(ctx.view)
+      refute_received {:open_wake, _, _}
+
+      render_click(ctx.view, "select-thread", %{"thread_id" => review.id})
+      settle(ctx.view)
+      review_id = review.id
+      assert_received {:open_wake, ^id, ^review_id}
+    end
+
+    test "a refused wake on open says nothing, and Wake still says why", ctx do
+      asleep_row(ctx)
+      refusal = %FountainError{status: 402, code: "insufficient_credits", message: "x"}
+      expect(Tracks, :wake_on_open, fn _, _, _ -> {:error, refusal} end)
+
+      ctx = open_track(ctx)
+      settle(ctx.view)
+      refute toasted(ctx) =~ "out of credits"
+      assert has_element?(ctx.view, "#track-machine-state", "Asleep")
+      assert has_element?(ctx.view, "#panel-wake:not([disabled])", "Wake")
+
+      expect(Tracks, :wake, fn _, _ -> {:error, refusal} end)
+      ctx.view |> element("#panel-wake") |> render_click()
+      assert toasted(ctx) =~ "out of credits"
+    end
+
+    test "a wake on open that crashes says nothing either", ctx do
+      asleep_row(ctx)
+      expect(Tracks, :wake_on_open, fn _, _, _ -> raise "boom" end)
+
+      ExUnit.CaptureLog.capture_log(fn ->
+        ctx = open_track(ctx)
+        settle(ctx.view)
+        refute toasted(ctx) =~ "Could not finish loading"
+        assert has_element?(ctx.view, "#track-machine-state", "Asleep")
+      end)
+    end
+
+    for {name, attrs, conversations} <- [
+          {"a track with no conversation", [conversation_id: nil], []},
+          {"a track in setup", [setup_state: "running"], []},
+          {"setup parked on a sleeping machine",
+           [setup_state: "running", setup_error_code: "sandbox_suspended"], []},
+          {"a closing track", [sandbox_state: :closing], []},
+          {"a turn already running", [], [{"live-conversation", "running"}]}
+        ] do
+      test "#{name} is not woken on open", ctx do
+        Repo.update!(Ecto.Changeset.change(ctx.track, unquote(Macro.escape(attrs))))
+
+        fountain_reachable(
+          for {id, status} <- unquote(conversations),
+              do: Shapes.conversation(%{"id" => id, "status" => status})
+        )
+
+        reject(&Ravix.Fountain.wake/2)
+        reject(&Tracks.retry/3)
+        reject(&Setup.advance/2)
+
+        ctx = open_track(ctx)
+        settle(ctx.view)
+        assert has_element?(ctx.view, "#track-machine-state")
+      end
+    end
+
+    test "a closed track opens no page, and so wakes nothing", ctx do
+      Repo.update!(Ecto.Changeset.change(ctx.track, closed_at: DateTime.utc_now()))
+      reject(&Tracks.wake_on_open/3)
+      reject(&Ravix.Fountain.wake/2)
+
+      {:ok, parent, _} = live(ctx.conn, "/p/#{ctx.project.id}/t/#{ctx.track.id}")
+      render_async(parent, 5_000)
+    end
+  end
+
   describe "the model menu" do
     setup ctx do
       # `status` and `model` stand for the live conversation, which is

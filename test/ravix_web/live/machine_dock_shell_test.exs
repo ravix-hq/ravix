@@ -49,6 +49,9 @@ defmodule RavixWeb.Live.MachineDockShellTest do
     fountain(project)
     test = self()
 
+    # The dock's Wake is what these count, not the page's wake on open.
+    stub(Tracks, :wake_on_open, fn _, _, _ -> {:ok, :skipped} end)
+
     # `Ravix.Tracks.wake/2` asks Fountain; an awake machine is `awake`.
     stub(Ravix.Fountain, :wake, fn _client, "c1" ->
       send(test, :fountain_wake)
