@@ -250,9 +250,14 @@ defmodule RavixWeb.Live.NewProject do
           Every turn in this project uses your {RavixWeb.AgentName.label(@runtime)} subscription or API key, whoever is working.
         </p>
       </div>
+      <%!-- The connect step, a card of its own under the agent it is for
+        (RAV-133). It folds up once the agent is usable, so the fields under
+        it move with it rather than jumping (RAV-135). --%>
       <div
         :if={@runtime in ["claude", "codex"] and not usable?(@project_agents, @runtime)}
         id={"project-connect-#{@runtime}"}
+        class="agent-connect-step"
+        phx-remove={RavixWeb.Live.AgentPanel.collapse()}
       >
         <.live_component
           :if={@runtime in ["claude", "codex"] and not usable?(@project_agents, @runtime)}

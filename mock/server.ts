@@ -929,6 +929,14 @@ const cleanBoxes = new Set<string>();
 const readDelays = new Map<string, number>();
 
 /**
+ * How long a pasted credential takes to be accepted, in ms. Fountain asks the
+ * provider before answering, which is the second or so the connecting state
+ * is on screen; the browser harness sets this to hold that state still long
+ * enough to measure (RAV-135).
+ */
+let credentialDelayMs = 0;
+
+/**
  * Provider lifecycle control for deterministic mock contract tests. A park
  * with `snapshot` keeps the worktree's files and diff as Fountain does when
  * its capture succeeds; without it the park kept nothing, as when the
@@ -1183,6 +1191,7 @@ export async function fountain(req: Request, url: URL): Promise<Response | null>
     if (method === "PUT") {
       const value = String(body.value ?? "").trim();
       if (!value) return json({ error: "value is required", reason: "empty_value" }, 422);
+      if (credentialDelayMs > 0) await Bun.sleep(credentialDelayMs);
       // Fountain asks the provider whether the value works. Here, anything
       // containing "invalid" does not, so the refusal can be seen in
       // development without a real key to revoke.
@@ -1673,6 +1682,7 @@ const PEOPLE = [
     { id: 9237, login: "addrepository", name: "Add Repository", avatar_url: `${BASE}/ghweb/avatar.svg` },
     { id: 9298, login: "tooltipfocus", name: "Tooltip Focus", avatar_url: `${BASE}/ghweb/avatar.svg` },
     { id: 9137, login: "railselect", name: "Rail Select", avatar_url: `${BASE}/ghweb/avatar.svg` },
+    { id: 9133, login: "connectstep", name: "Connect Step", avatar_url: `${BASE}/ghweb/avatar.svg` },
   ] : []),
   { id: 9001, login: "dana", name: "Dana Okonkwo", avatar_url: `${BASE}/ghweb/avatar.svg?dana` },
   { id: 9002, login: "eli", name: "Eli Fischer", avatar_url: `${BASE}/ghweb/avatar.svg?eli` },
@@ -2110,6 +2120,15 @@ Bun.serve({
       const { id } = await req.json() as { id: string };
       if (!state.boxes.has(id)) return json({ error: "invalid_fixture" }, 400);
       cleanBoxes.add(id);
+      return json({ status: "ok" });
+    }
+
+    // Hold a pasted credential for `ms` before accepting or refusing it, so a
+    // spec can look at the connecting state; 0 answers at once again.
+    if (p === "/__browser/credential-delay" && req.method === "POST" && process.env.RAVIX_BROWSER_TEST === "1") {
+      const { ms } = await req.json() as { ms: number };
+      if (!Number.isInteger(ms) || ms < 0 || ms > 10_000) return json({ error: "invalid_fixture" }, 400);
+      credentialDelayMs = ms;
       return json({ status: "ok" });
     }
 
