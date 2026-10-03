@@ -506,6 +506,11 @@ html[data-inspector="closed"] #inspector-toggle .label-show { display: inline; }
 /* ── the yard (left rail) ──────────────────────────────────────────────── */
 
 .yard { display: flex; flex-direction: column; min-width: 0; min-height: 0; background: var(--sidebar); border-right: 1px solid var(--line); }
+/* The rail is controls, not prose (RAV-137): a press and drag from its
+   gutter is a grab at a project, never a selection of every row. Anything
+   typed into, should a field ever sit in the rail, keeps its own text. */
+.yard { -webkit-user-select: none; user-select: none; }
+.yard :is(input, textarea, [contenteditable]) { -webkit-user-select: text; user-select: text; }
 /* Drawn first, tabbed to after the nav (RAV-98): see the template. */
 .yard-top {
   order: -1;
