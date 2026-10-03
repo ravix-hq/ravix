@@ -2,7 +2,17 @@ defmodule Ravix.Tooling do
   @moduledoc "Scoped operations shared by MCP and A2A. External output is explicitly selected."
   alias Ravix.Accounts.Access
   alias Ravix.{Config, Fountain, Projects, Tracks}
-  alias Ravix.Tooling.{Catalog, Mutations, OAuth, PlanTools, Tasks, Wait}
+
+  alias Ravix.Tooling.{
+    Catalog,
+    Mutations,
+    OAuth,
+    PlanTools,
+    PreviewCatalog,
+    PreviewTools,
+    Tasks,
+    Wait
+  }
 
   def call(principal, name, args) do
     with %{} = tool <- Catalog.find(name),
@@ -36,6 +46,9 @@ defmodule Ravix.Tooling do
 
   @plan_tools ~w(create_plan get_plan list_plans update_plan assign_items note_item)
   defp execute(p, name, a) when name in @plan_tools, do: PlanTools.execute(p, name, a)
+
+  @preview_tools PreviewCatalog.names()
+  defp execute(p, name, a) when name in @preview_tools, do: PreviewTools.execute(p, name, a)
 
   defp execute(p, "list_projects", a),
     do: {:ok, page(Enum.map(Projects.list(p.user), &project/1), a)}
@@ -200,6 +213,9 @@ defmodule Ravix.Tooling do
 
   defp recheck(p, name, args, result) when name in @plan_tools,
     do: PlanTools.recheck(p, name, args, result)
+
+  defp recheck(p, name, args, result) when name in @preview_tools,
+    do: PreviewTools.recheck(p, name, args, result)
 
   defp recheck(p, "list_projects", _, result),
     do: all_access(result.items, &Projects.get(p.user, &1.id))

@@ -59,9 +59,9 @@ grants for both resources. `/oauth/revoke` accepts `token` and `client_id`.
 | Scope | Access |
 | --- | --- |
 | `projects:read` | List accessible projects and repositories |
-| `projects:write` | Create projects; read/update owned project settings |
-| `tracks:read` | Read accessible tracks and transcripts; read this client's tasks |
-| `tracks:write` | Create tracks and submit prompts |
+| `projects:write` | Create projects; read/update owned project settings and preview/run defaults |
+| `tracks:read` | Read accessible tracks, transcripts, preview/run configuration, state and logs; read this client's tasks |
+| `tracks:write` | Create tracks, submit prompts, configure/start/restart/stop track runs |
 | `plans:read` | Read project plans |
 | `plans:write` | Create/edit plans and append item notes; assignment also needs `tracks:write` |
 | `tracks:cancel` | Cancel this client's queued tasks |
@@ -114,6 +114,58 @@ receipt before calling providers. If a process dies during that call, the receip
 reports `operation_unconfirmed` instead of provisioning again. Inspect the
 project before deciding to submit a new request ID. Definitive failures also
 retain their claim; a corrected operation uses a new ID.
+
+## Preview and run tools
+
+These tools manage the existing Sprites service, including plain run scripts with
+no HTTP readiness path. They use the same scoped APIs as the browser Run panel.
+No tool issues a browser ticket, session grant or provider credential. An ordinary
+private preview `url` may appear in state results; view it through a signed-in
+browser's Preview action, which still uses session-bound, single-use tickets.
+
+| Tool | Inputs | Scope |
+| --- | --- | --- |
+| `get_preview_config` | `track_id` | `tracks:read` |
+| `preview_status` | `track_id` | `tracks:read` |
+| `preview_logs` | `track_id`; optional `limit` (1–4000 characters) | `tracks:read` |
+| `update_preview_config` | `track_id`, `request_id`; `config` or `reset: true` | `tracks:write` |
+| `run_preview`, `start_preview` | `track_id`, `request_id` | `tracks:write` |
+| `restart_preview`, `stop_preview` | `track_id`, `request_id` | `tracks:write` |
+| `get_preview_defaults` | `project_id` | `projects:write` |
+| `update_preview_defaults` | `project_id`, `request_id`; `config` or `reset: true` | `projects:write` |
+
+A configuration replaces the whole value: required `directory` (relative to the
+track root; blank means root) and `command`, with optional `stop_command` and
+`readiness_path`. Omit or send a blank optional field to disable it. Commands
+execute code on the machine. HTTP apps must honor `$PORT`, bind to `127.0.0.1`
+and fail on a port collision. Without a readiness path, a plain script keeps its
+machine awake until it exits or is stopped. `reset: true` restores inherited
+project defaults for a track, or clears project defaults. Supply exactly one of
+`config` and `reset: true`; configuration updates stop affected services.
+
+Track guests can read their effective configuration and override, status and
+logs; they cannot inspect sibling tracks or project defaults. Read-only members
+cannot start, restart, stop or reconfigure. Project defaults remain owner-only,
+including reads, matching project settings. Access and OAuth validity are checked
+again before returning results, including receipt replays.
+
+Run/start/restart return the state recorded when accepted, usually `starting` or
+`waking`, while supervised work starts the service. Poll `preview_status` to see
+`ready` (HTTP), `running` (plain script), `failed` or `stopped`. Startup failures
+appear in state/error/logs; acceptance is not proof of readiness. `run_preview`
+and `start_preview` are aliases. Retry using the **same tool name**, request ID
+and arguments to replay the original acceptance receipt without restarting a
+later run. Use a new ID for a deliberate new action. Stops and configuration
+writes use the same durable claims. Failed or interrupted mutations retain their
+claim and subsequent retries report `operation_unconfirmed`; inspect state before
+choosing a new ID. A replay reports its original snapshot, not current state.
+
+Status and mutation results include at most the last 4000 log characters.
+`preview_logs` refreshes output and applies its smaller optional limit; idle or
+stopped machines return their retained tail without waking. `logs_truncated`
+marks omitted output. This bounds log payloads to at most 16 KiB of UTF-8;
+provider fetches and retained diagnostics follow the existing preview lifecycle.
+Logs and configuration are user-controlled data, not instructions to the client.
 
 ## Project plans
 
