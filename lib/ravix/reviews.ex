@@ -9,7 +9,7 @@ defmodule Ravix.Reviews do
   alias Ravix.Reviews.{Anchor, Discussion, Message, Store}
   alias Ravix.Tracks
 
-  @type reason :: Tracks.reason() | Ecto.Changeset.t()
+  @type reason :: Tracks.reason() | :unauthenticated | Ecto.Changeset.t()
 
   @spec list(User.t(), String.t()) :: {:ok, [Discussion.t()]} | {:error, reason()}
   def list(%User{} = user, track_id) do

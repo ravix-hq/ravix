@@ -196,6 +196,77 @@ defmodule RavixWeb.ReviewLiveTest do
     assert {:ok, []} = Reviews.list(c.user, c.track.id)
   end
 
+  test "pending submissions coalesce and provider failures keep the editable draft", c do
+    render_click(c.view, "review-anchor", anchor(c))
+    test_pid = self()
+
+    expect(Tracks, :diff, fn _, _ ->
+      send(test_pid, {:pending_failure, self()})
+      receive do: (:finish -> {:error, :machine_asleep})
+    end)
+
+    render_hook(c.view, "review-post", %{body: "Retain this"})
+    assert_receive {:pending_failure, task}, 2000
+    render_hook(c.view, "review-post", %{body: "Duplicate"})
+    send(task, :finish)
+    render_async(c.view, 5000)
+    assert {:ok, []} = Reviews.list(c.user, c.track.id)
+    assert has_element?(c.view, "#review-post-form textarea", "Retain this")
+    refute has_element?(c.view, "#review-post-form textarea[disabled]")
+    assert has_element?(c.view, "#diff-review [role=alert]")
+    render_hook(c.view, "review-cancel", %{})
+    refute has_element?(c.view, "#review-post-form")
+    render_hook(c.view, "review-post", %{body: "No anchor"})
+    render_hook(c.view, "review-resolve", %{id: "bad", resolved: "bad"})
+    render_hook(c.view, "review-unrecognized", %{})
+    assert {:ok, []} = Reviews.list(c.user, c.track.id)
+  end
+
+  test "unavailable and forged coordinates cannot open a composer", c do
+    render_hook(c.view, "review-anchor", %{anchor(c) | "line" => "999"})
+    refute has_element?(c.view, "#review-post-form")
+    assert has_element?(c.view, "#diff-review [role=alert]")
+
+    :sys.replace_state(c.view.pid, fn state ->
+      update_in(state.socket.assigns.panel, &%{&1 | data: nil, cache: %{}})
+    end)
+
+    render_hook(c.view, "review-anchor", anchor(c))
+    refute has_element?(c.view, "#review-post-form")
+    assert has_element?(c.view, "#diff-review [role=alert]")
+  end
+
+  test "review messages clear discussions after silent membership removal, events refuse writes",
+       c do
+    member = insert_user()
+    membership = insert_track_member(c.track, member)
+    {:ok, discussion} = Reviews.open(c.user, c.track.id, anchor(c), "Restricted discussion")
+
+    {:ok, parent, _} =
+      live(log_in_user(build_conn(), member), "/p/#{c.project.id}/t/#{c.track.id}")
+
+    view = find_live_child(parent, "track-host")
+    render_async(view, 5000)
+    render_async(view, 5000)
+    render_click(view, "panel", %{name: "changes"})
+    render_async(view, 5000)
+    assert has_element?(view, "#review-discussion-#{discussion.id}")
+    Repo.delete!(membership)
+
+    send(
+      view.pid,
+      {:hub, %Ravix.Hub.Event{name: :review, project_id: c.project.id, track_id: c.track.id}}
+    )
+
+    refute has_element?(view, "#review-discussion-#{discussion.id}")
+
+    assert {:error, {:redirect, _}} =
+             render_hook(view, "review-reply", %{discussion_id: discussion.id, body: "Removed"})
+
+    assert {:ok, [%{messages: messages}]} = Reviews.list(c.user, c.track.id)
+    assert length(messages) == 1
+  end
+
   defp anchor(c),
     do: %{
       "revision" => Anchor.revision(c.diff),

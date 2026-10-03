@@ -97,6 +97,14 @@ installed on repositories outside the org.
 - Desktop notifications, switched on from the rail: when a track finishes or
   fails while the tab is in the background, the browser says so.
 
+Changes supports persistent human review discussions on files or old/new diff lines.
+Checks lists the same discussions and links back to the file and original anchor.
+Track readers can reply and resolve/reopen. Reviews never become transcript notes,
+agent prompts, or GitHub comments. A revision fingerprints the returned working diff,
+including untracked/truncation state, rather than a Git commit. Any diff change marks
+previous discussions outdated and retains their original line text; stale submissions
+require a refresh. Binary and metadata-only changes accept file discussions only.
+
 Schedules recheck the creator's project membership before opening each fresh
 track and use the durable prompt queue. A cluster singleton polls every 30 seconds;
 database claims prevent duplicate dispatches. Downtime coalesces missed occurrences

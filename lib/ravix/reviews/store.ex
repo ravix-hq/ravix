@@ -23,13 +23,17 @@ defmodule Ravix.Reviews.Store do
     id = Ecto.Changeset.get_field(discussion, :id)
     message = Message.changeset(%Message{}, %{discussion_id: id, author_id: user_id, body: body})
 
-    Ecto.Multi.new()
-    |> Ecto.Multi.insert(:discussion, discussion)
-    |> Ecto.Multi.insert(:message, message)
-    |> Repo.transaction()
+    Repo.transaction(fn ->
+      with {:ok, row} <- Repo.insert(discussion),
+           {:ok, _} <- Repo.insert(message) do
+        row
+      else
+        {:error, changeset} -> Repo.rollback(changeset)
+      end
+    end)
     |> case do
-      {:ok, %{discussion: row}} -> {:ok, preload(row)}
-      {:error, _, reason, _} -> {:error, reason}
+      {:ok, row} -> {:ok, preload(row)}
+      {:error, reason} -> {:error, reason}
     end
   end
 

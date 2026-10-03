@@ -18,7 +18,8 @@ defmodule Ravix.Repo.Migrations.AddDiffReviews do
     create index(:review_discussions, [:track_id, :inserted_at])
 
     create constraint(:review_discussions, :review_anchor,
-             check: "(side = 'file' AND line IS NULL) OR (side IN ('old', 'new') AND line > 0)"
+             check:
+               "(side = 'file' AND line IS NULL) OR (side IN ('old', 'new') AND line IS NOT NULL AND line > 0)"
            )
 
     create table(:review_messages, primary_key: false) do

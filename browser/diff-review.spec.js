@@ -52,6 +52,7 @@ test('diff review persists across reload, replies and resolves from Changes and 
   // Reopening the inspector uses the same navigation on a narrow screen.
   await page.goto(url);
   await expect(page.locator('[data-phx-main]')).toHaveClass(/phx-connected/);
+  await page.getByRole('navigation', { name: 'Track views', exact: true }).getByRole('button', { name: 'Files', exact: true }).click();
   await panels.getByRole('button', { name: 'Changes', exact: true }).click();
   await page.locator('a[phx-click=review-jump]').click();
   await page.locator(`#${discussionId}`).scrollIntoViewIfNeeded();

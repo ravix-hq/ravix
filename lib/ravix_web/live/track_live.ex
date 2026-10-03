@@ -71,6 +71,7 @@ defmodule RavixWeb.TrackLive do
   alias Ravix.GitHub.ChecksReport
   alias Ravix.{Hub, Previews, PromptQueue, SessionConfig, Terminal, Tracks}
   alias Ravix.Hub.Event
+  alias Ravix.Reviews.Anchor
   alias Ravix.Tracks.{AgentFailure, Diff, Files, Follower, MachineState, Track}
   alias Ravix.Tracks.Transcript
   alias Ravix.Tracks.Transcript.Block, as: TranscriptBlock
@@ -3234,6 +3235,7 @@ defmodule RavixWeb.TrackLive do
     assigns =
       assign(assigns,
         selected: selected,
+        diff_revision: Anchor.revision(assigns.data),
         filtered: filtered,
         added: Enum.sum(Enum.map(assigns.data.changes, & &1.added)),
         removed: Enum.sum(Enum.map(assigns.data.changes, & &1.removed))
@@ -3299,7 +3301,7 @@ defmodule RavixWeb.TrackLive do
         </p>
         <p :for={line <- @selected.metadata}>{line}</p>
         <p :if={@selected.binary}>Binary files differ</p>
-        <ReviewPanel.anchor_button diff={@data} path={@selected.change.path} side="file" />
+        <ReviewPanel.anchor_button revision={@diff_revision} path={@selected.change.path} side="file" />
         <%= if large_diff?(@selected) and !@diff_show_large do %>
           <p>Large diff hidden to keep this panel responsive.</p>
           <button type="button" phx-click="show-large-diff">Show anyway</button>
@@ -3320,7 +3322,7 @@ defmodule RavixWeb.TrackLive do
                   <span :if={!line.old} class="diff-number" aria-hidden="true"></span>
                   <ReviewPanel.anchor_button
                     :if={line.old}
-                    diff={@data}
+                    revision={@diff_revision}
                     path={@selected.change.path}
                     side="old"
                     line={line.old}
@@ -3328,7 +3330,7 @@ defmodule RavixWeb.TrackLive do
                   <span :if={!line.new} class="diff-number" aria-hidden="true"></span>
                   <ReviewPanel.anchor_button
                     :if={line.new}
-                    diff={@data}
+                    revision={@diff_revision}
                     path={@selected.change.path}
                     side="new"
                     line={line.new}
