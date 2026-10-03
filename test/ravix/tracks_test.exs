@@ -2000,7 +2000,7 @@ defmodule Ravix.TracksTest do
       )
 
       # Nothing asks the machine: it is parked, which is why this is a snapshot.
-      reject(Ravix.Terminal, :status, 3)
+      reject(Ravix.Terminal, :status, 2)
 
       {:ok, snapshot_at, 0} = DateTime.from_iso8601(at)
 

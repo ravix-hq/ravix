@@ -1489,7 +1489,7 @@ export async function fountain(req: Request, url: URL): Promise<Response | null>
     if (!box || box.status === "terminated") return json({ error: "sandbox_unavailable", message: "this sandbox cannot take that request right now; send it again shortly" }, 503);
     if (box.status !== "suspended") return json({ status: "awake" });
     await wakeMockSprite(box.sprite_name);
-    box.status = "ready";
+    setSandboxStatus(box.id, "ready");
     return json({ status: "waking" });
   }
 
