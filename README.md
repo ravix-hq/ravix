@@ -100,10 +100,12 @@ installed on repositories outside the org.
 Changes supports persistent human review discussions on files or old/new diff lines.
 Checks lists the same discussions and links back to the file and original anchor.
 Track readers can reply and resolve/reopen. Reviews never become transcript notes,
-agent prompts, or GitHub comments. A revision fingerprints the returned working diff,
-including untracked/truncation state, rather than a Git commit. Any diff change marks
-previous discussions outdated and retains their original line text; stale submissions
-require a refresh. Binary and metadata-only changes accept file discussions only.
+agent prompts, or GitHub comments. A revision fingerprints the file’s Git diff section, including blob indexes, rather
+than a Git commit. Extra untracked files and reader/writer retrieval differences do
+not invalidate tracked discussions. Changed files retain outdated discussions and
+original line text; stale submissions require a refresh. Partial files and binaries
+without blob identities remain unverifiable and cannot accept new anchors. Binary
+and metadata-only changes accept file discussions only.
 
 Schedules recheck the creator's project membership before opening each fresh
 track and use the durable prompt queue. A cluster singleton polls every 30 seconds;

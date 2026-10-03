@@ -7,7 +7,16 @@ defmodule RavixWeb.Live.ReviewPanel do
   alias Ravix.Tracks.Diff
   alias RavixWeb.Error
 
-  def new, do: %{discussions: [], anchor: nil, body: "", error: nil, busy?: false, selected: nil}
+  def new,
+    do: %{
+      generation: make_ref(),
+      discussions: [],
+      anchor: nil,
+      body: "",
+      error: nil,
+      busy?: false,
+      selected: nil
+    }
 
   def refresh(socket) do
     case Reviews.list(socket.assigns.current_user, socket.assigns.track_id) do
@@ -27,6 +36,9 @@ defmodule RavixWeb.Live.ReviewPanel do
       _ -> Phoenix.LiveView.redirect(socket, to: "/")
     end
   end
+
+  defp dispatch("review-anchor", _params, %{assigns: %{review: %{busy?: true}}} = socket),
+    do: socket
 
   defp dispatch("review-anchor", params, socket) do
     case current_diff(socket.assigns.panel) do
@@ -54,11 +66,12 @@ defmodule RavixWeb.Live.ReviewPanel do
 
     if state.anchor && !state.busy? do
       %{current_user: user, track_id: id, session_hash: hash} = socket.assigns
+      generation = state.generation
       anchor = Map.new(state.anchor, fn {key, value} -> {Atom.to_string(key), value} end)
 
       socket
       |> update(body: body, busy?: true, error: nil)
-      |> start_async({:review_post, id}, fn ->
+      |> start_async({:review_post, id, generation}, fn ->
         Reviews.open(user, id, anchor, body, session_hash: hash)
       end)
     else
@@ -102,10 +115,11 @@ defmodule RavixWeb.Live.ReviewPanel do
 
   defp dispatch(_, _, socket), do: socket
 
-  def completed(id, response, socket), do: scoped(socket, &finish(id, response, &1))
+  def completed(id, generation, response, socket),
+    do: scoped(socket, &finish(id, generation, response, &1))
 
-  defp finish(id, response, socket) do
-    if id == socket.assigns.track_id do
+  defp finish(id, generation, response, socket) do
+    if id == socket.assigns.track_id && generation == socket.assigns.review.generation do
       socket = update(socket, busy?: false)
 
       case response do
@@ -141,7 +155,7 @@ defmodule RavixWeb.Live.ReviewPanel do
 
     assigns =
       assign(assigns,
-        revision: if(diff, do: Anchor.revision(diff)),
+        statuses: statuses(assigns.state.discussions, diff),
         open: Enum.count(assigns.state.discussions, &(!&1.resolved))
       )
 
@@ -182,15 +196,22 @@ defmodule RavixWeb.Live.ReviewPanel do
         class="review-discussion"
         tabindex="-1"
         data-selected={to_string(@state.selected == discussion.id)}
-        data-outdated={if @revision, do: to_string(discussion.revision != @revision), else: "unknown"}
+        data-outdated={
+          if @statuses[discussion.id] in [:current, :outdated],
+            do: to_string(@statuses[discussion.id] == :outdated),
+            else: "unknown"
+        }
+        data-revision-status={@statuses[discussion.id]}
       >
         <h4>{discussion.path}{position(discussion)}</h4>
         <p>
           {if discussion.resolved, do: "Resolved", else: "Open"} ·
           <%= cond do %>
-            <% is_nil(@revision) -> %>
+            <% @statuses[discussion.id] == :unchecked -> %>
               Revision not checked — open Changes to compare.
-            <% discussion.revision != @revision -> %>
+            <% @statuses[discussion.id] == :unverifiable -> %>
+              Revision unavailable — original anchor retained; current content cannot be verified.
+            <% @statuses[discussion.id] == :outdated -> %>
               Outdated — retained at its original revision.
             <% true -> %>
               Current diff
@@ -246,6 +267,12 @@ defmodule RavixWeb.Live.ReviewPanel do
       <% end %>
     </button>
     """
+  end
+
+  defp statuses(discussions, diff) do
+    revisions = if diff, do: Anchor.revisions(diff)
+    availability = if diff, do: diff.untracked, else: :unread
+    Map.new(discussions, &{&1.id, Anchor.status(&1, revisions, availability)})
   end
 
   defp position(%{line: nil}), do: " (file)"

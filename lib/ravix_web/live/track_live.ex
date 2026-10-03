@@ -1212,8 +1212,8 @@ defmodule RavixWeb.TrackLive do
     end
   end
 
-  defp async_result({:review_post, track_id}, response, socket),
-    do: ReviewPanel.completed(track_id, response, socket)
+  defp async_result({:review_post, track_id, generation}, response, socket),
+    do: ReviewPanel.completed(track_id, generation, response, socket)
 
   defp async_result({:plan_items, track_id}, {:ok, {:ok, summary}}, socket) do
     if track_id == socket.assigns.track_id do
@@ -3235,7 +3235,7 @@ defmodule RavixWeb.TrackLive do
     assigns =
       assign(assigns,
         selected: selected,
-        diff_revision: Anchor.revision(assigns.data),
+        diff_revision: if(selected, do: Anchor.revision(assigns.data, selected.change.path)),
         filtered: filtered,
         added: Enum.sum(Enum.map(assigns.data.changes, & &1.added)),
         removed: Enum.sum(Enum.map(assigns.data.changes, & &1.removed))
@@ -3301,7 +3301,15 @@ defmodule RavixWeb.TrackLive do
         </p>
         <p :for={line <- @selected.metadata}>{line}</p>
         <p :if={@selected.binary}>Binary files differ</p>
-        <ReviewPanel.anchor_button revision={@diff_revision} path={@selected.change.path} side="file" />
+        <p :if={!@diff_revision}>
+          Complete file revision unavailable; existing discussions remain below.
+        </p>
+        <ReviewPanel.anchor_button
+          :if={@diff_revision}
+          revision={@diff_revision}
+          path={@selected.change.path}
+          side="file"
+        />
         <%= if large_diff?(@selected) and !@diff_show_large do %>
           <p>Large diff hidden to keep this panel responsive.</p>
           <button type="button" phx-click="show-large-diff">Show anyway</button>
@@ -3319,17 +3327,17 @@ defmodule RavixWeb.TrackLive do
                 <div class={"diff-line diff-#{line.kind}"}>
                   <%!-- The gutter is visual; a screen reader hears one phrase instead. --%>
                   <span class="sr-only">{diff_line_label(line)}</span>
-                  <span :if={!line.old} class="diff-number" aria-hidden="true"></span>
+                  <span :if={!line.old || !@diff_revision} class="diff-number" aria-hidden="true">{line.old}</span>
                   <ReviewPanel.anchor_button
-                    :if={line.old}
+                    :if={line.old && @diff_revision}
                     revision={@diff_revision}
                     path={@selected.change.path}
                     side="old"
                     line={line.old}
                   />
-                  <span :if={!line.new} class="diff-number" aria-hidden="true"></span>
+                  <span :if={!line.new || !@diff_revision} class="diff-number" aria-hidden="true">{line.new}</span>
                   <ReviewPanel.anchor_button
-                    :if={line.new}
+                    :if={line.new && @diff_revision}
                     revision={@diff_revision}
                     path={@selected.change.path}
                     side="new"

@@ -22,12 +22,13 @@ defmodule RavixWeb.ReviewLiveTest do
       untracked: :listed
     }
 
-    stub(Tracks, :get, fn _, id, _ ->
+    stub(Tracks, :get, fn current, id, _ ->
+      {:ok, access} = Accounts.Access.track_access(current, id)
       row = Repo.get!(Track, id)
 
       {:ok,
        %{
-         track: Tracks.present(row, role: :owner),
+         track: Tracks.present(row, role: access.role, level: access.level),
          header: %Header{
            copy_of: nil,
            branched_from: nil,
@@ -276,9 +277,144 @@ defmodule RavixWeb.ReviewLiveTest do
     assert {:ok, []} = Reviews.list(c.user, c.track.id)
   end
 
+  test "an A-B-A return cannot let an old post clear a newer draft", c do
+    test_pid = self()
+    old_generation = :sys.get_state(c.view.pid).socket.assigns.review.generation
+
+    stub(Tracks, :diff, fn _, _ ->
+      send(test_pid, {:fresh_panel, self()})
+      {:ok, c.diff}
+    end)
+
+    render_click(c.view, "review-anchor", anchor(c))
+
+    expect(Tracks, :diff, fn _, _ ->
+      send(test_pid, {:old_submission, self()})
+      receive do: (:finish -> {:ok, c.diff})
+    end)
+
+    render_hook(c.view, "review-post", %{body: "Original submission"})
+    assert_receive {:old_submission, task}, 2000
+    project = :sys.get_state(c.view.pid).socket.assigns.project
+    other = insert_track(project: c.project)
+    send(c.view.pid, {:select_track, project, Tracks.present(other, role: :owner)})
+    render(c.view)
+    assert :sys.get_state(c.view.pid).socket.assigns.track_id == other.id
+    send(c.view.pid, {:select_track, project, Tracks.present(c.track, role: :owner)})
+    render(c.view)
+    render_click(c.view, "panel", %{name: "changes"})
+    assert_receive {:fresh_panel, read}, 2000
+    monitor = Process.monitor(read)
+    assert_receive {:DOWN, ^monitor, :process, ^read, _}, 2000
+    render(c.view)
+    render_hook(c.view, "review-anchor", anchor(c))
+    render_hook(c.view, "review-draft", %{body: "New draft after returning"})
+    refute :sys.get_state(c.view.pid).socket.assigns.review.generation == old_generation
+    assert has_element?(c.view, "#review-post-form textarea", "New draft after returning")
+    send(task, :finish)
+    render_async(c.view, 5000)
+    assert has_element?(c.view, "#review-post-form textarea", "New draft after returning")
+    refute has_element?(c.view, "#review-post-form textarea[disabled]")
+    assert {:ok, [discussion]} = Reviews.list(c.user, c.track.id)
+    assert hd(discussion.messages).body == "Original submission"
+  end
+
+  test "a reader's tracked discussion remains current when writers see extra untracked files",
+       c do
+    reader = %{c.diff | untracked: :unread}
+
+    extra =
+      "diff --git a/notes.txt b/notes.txt\nnew file mode 100644\n--- /dev/null\n+++ b/notes.txt\n@@ -0,0 +1 @@\n+Only listed for writers\n"
+
+    writer =
+      Diff.with_untracked(
+        reader,
+        {:ok,
+         %{
+           code: 0,
+           stdout: Jason.encode!(%{available: true, diff: extra, large: [], truncated: false})
+         }}
+      )
+
+    member = insert_user()
+    insert_track_member(c.track, member, role: :read)
+
+    stub(Tracks, :diff, fn user, _ ->
+      {:ok, if(user.id == member.id, do: reader, else: writer)}
+    end)
+
+    {:ok, discussion} =
+      Reviews.open(
+        c.user,
+        c.track.id,
+        %{
+          "revision" => Anchor.revision(writer, "space name.txt"),
+          "path" => "space name.txt",
+          "side" => "new",
+          "line" => 2
+        },
+        "Tracked review"
+      )
+
+    {:ok, parent, _} =
+      live(log_in_user(build_conn(), member), "/p/#{c.project.id}/t/#{c.track.id}")
+
+    view = find_live_child(parent, "track-host")
+    render_async(view, 5000)
+    render_async(view, 5000)
+    render_click(view, "panel", %{name: "changes"})
+    render_async(view, 5000)
+    assert has_element?(view, "#review-discussion-#{discussion.id}[data-revision-status=current]")
+    assert {:ok, %{level: :read}} = Accounts.Access.track_access(member, c.track.id)
+  end
+
+  test "unavailable oversized file content retains a discussion without claiming a current revision",
+       c do
+    {:ok, discussion} = Reviews.open(c.user, c.track.id, anchor(c), "Before it grew")
+    header = "diff --git a/added.txt b/added.txt\nnew file mode 100644\n"
+    empty = %{c.diff | diff: "", files: [], changes: []}
+
+    oversized =
+      Diff.with_untracked(
+        empty,
+        {:ok,
+         %{
+           code: 0,
+           stdout:
+             Jason.encode!(%{
+               available: true,
+               diff: header,
+               large: ["added.txt"],
+               truncated: false
+             })
+         }}
+      )
+
+    stub(Tracks, :diff, fn _, _ -> {:ok, oversized} end)
+    render_click(c.view, "refresh-panel", %{})
+    render_async(c.view, 5000)
+
+    assert has_element?(
+             c.view,
+             "#review-discussion-#{discussion.id}[data-revision-status=unverifiable]"
+           )
+
+    render_click(c.view, "select-diff", %{path: "added.txt"})
+    refute has_element?(c.view, "button[phx-click=review-anchor]")
+    render_hook(c.view, "review-anchor", anchor(c))
+    refute has_element?(c.view, "#review-post-form")
+
+    c.view
+    |> form("#review-reply-#{discussion.id}", %{body: "Retained response"})
+    |> render_submit()
+
+    assert {:ok, [%{messages: messages}]} = Reviews.list(c.user, c.track.id)
+    assert length(messages) == 2
+  end
+
   defp anchor(c),
     do: %{
-      "revision" => Anchor.revision(c.diff),
+      "revision" => Anchor.revision(c.diff, "added.txt"),
       "path" => "added.txt",
       "side" => "new",
       "line" => "1"

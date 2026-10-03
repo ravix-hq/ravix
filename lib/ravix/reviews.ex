@@ -28,7 +28,10 @@ defmodule Ravix.Reviews do
          :ok <- session(user, opts),
          {:ok, discussion} <-
            Store.create(
-             Map.merge(position, %{track_id: track_id, revision: Anchor.revision(diff)}),
+             Map.merge(position, %{
+               track_id: track_id,
+               revision: Anchor.revision(diff, position.path)
+             }),
              user.id,
              body
            ) do

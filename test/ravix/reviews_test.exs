@@ -39,7 +39,7 @@ defmodule Ravix.ReviewsTest do
 
     assert {old.side, old.line, old.excerpt} == {"old", 2, "two"}
     assert new.excerpt == "<script>alert(1)</script>"
-    assert new.revision == Anchor.revision(c.diff)
+    assert new.revision == Anchor.revision(c.diff, new.path)
     assert hd(new.messages).body == "Review insertion"
     assert hd(old.messages).author.id == c.guest.id
     assert_receive {:hub, %{name: :review}}
@@ -92,7 +92,7 @@ defmodule Ravix.ReviewsTest do
     assert {:ok, [original]} = Reviews.list(c.user, c.track.id)
     assert original.id == discussion.id
     assert original.excerpt == "+++ content"
-    refute original.revision == Anchor.revision(updated)
+    refute original.revision == Anchor.revision(updated, original.path)
     assert {:ok, _} = Reviews.reply(c.user, c.track.id, original.id, "Still useful")
     assert {:ok, %{resolved: true}} = Reviews.resolve(c.user, c.track.id, original.id, true)
     assert {:ok, []} = Comments.list(c.user, c.track.id, nil)
@@ -161,19 +161,143 @@ defmodule Ravix.ReviewsTest do
   test "partial diff only accepts returned lines and its fingerprint differs from a complete read",
        c do
     partial = %{c.diff | truncated: true, files: Diff.parse(c.diff.diff, true)}
-    refute Anchor.revision(partial) == Anchor.revision(c.diff)
+    assert is_nil(Anchor.revision(partial, "space name.txt"))
+    assert is_binary(Anchor.revision(c.diff, "space name.txt"))
 
     assert {:error, {:unprocessable, _, _}} =
              Anchor.locate(partial, %{
                anchor(c, "added.txt", "new", 100)
-               | "revision" => Anchor.revision(partial)
+               | "revision" => Anchor.revision(partial, "added.txt")
              })
 
     assert {:error, {:unprocessable, _, _}} = Anchor.locate(c.diff, nil)
   end
 
+  test "tracked anchors match a reader even when a writer sees extra untracked files", c do
+    reader = %{c.diff | untracked: :unread}
+
+    extra =
+      "diff --git a/notes.txt b/notes.txt\nnew file mode 100644\n--- /dev/null\n+++ b/notes.txt\n@@ -0,0 +1 @@\n+Writer-only content\n"
+
+    writer =
+      Diff.with_untracked(
+        reader,
+        {:ok,
+         %{
+           code: 0,
+           stdout: Jason.encode!(%{available: true, diff: extra, large: [], truncated: false})
+         }}
+      )
+
+    assert writer.untracked == :listed
+    refute reader.diff == writer.diff
+    path = "space name.txt"
+    assert Anchor.revision(reader, path) == Anchor.revision(writer, path)
+
+    stub(Tracks, :diff, fn user, _ ->
+      {:ok, if(user.id == c.user.id, do: writer, else: reader)}
+    end)
+
+    {:ok, discussion} =
+      Reviews.open(
+        c.user,
+        c.track.id,
+        %{anchor(c, path, "new", 2) | "revision" => Anchor.revision(writer, path)},
+        "Tracked"
+      )
+
+    assert {:ok, _} =
+             Reviews.open(
+               c.guest,
+               c.track.id,
+               %{anchor(c, path, "old", 2) | "revision" => discussion.revision},
+               "Reader"
+             )
+
+    assert Anchor.status(discussion, Anchor.revisions(reader), reader.untracked) == :current
+    assert {:ok, _} = Reviews.reply(c.guest, c.track.id, discussion.id, "Same content")
+  end
+
+  test "header-only oversized untracked files are unverifiable and cannot accept stale file posts",
+       c do
+    complete =
+      diff(
+        "diff --git a/large.txt b/large.txt\nnew file mode 100644\n--- /dev/null\n+++ b/large.txt\n@@ -0,0 +1 @@\n+Original\n"
+      )
+
+    stub(Tracks, :diff, fn _, _ -> {:ok, complete} end)
+
+    position = %{
+      "revision" => Anchor.revision(complete, "large.txt"),
+      "path" => "large.txt",
+      "side" => "file",
+      "line" => nil
+    }
+
+    {:ok, discussion} = Reviews.open(c.user, c.track.id, position, "Original review")
+    header = "diff --git a/large.txt b/large.txt\nnew file mode 100644\n"
+
+    oversized =
+      Diff.with_untracked(
+        diff(""),
+        {:ok,
+         %{
+           code: 0,
+           stdout:
+             Jason.encode!(%{
+               available: true,
+               diff: header,
+               large: ["large.txt"],
+               truncated: false
+             })
+         }}
+      )
+
+    assert hd(oversized.files).partial
+    assert is_nil(Anchor.revision(oversized, "large.txt"))
+
+    assert Anchor.status(discussion, Anchor.revisions(oversized), oversized.untracked) ==
+             :unverifiable
+
+    stub(Tracks, :diff, fn _, _ -> {:ok, oversized} end)
+
+    for revision <- [position["revision"], nil] do
+      assert {:error, {:conflict, "unverifiable_review", _}} =
+               Reviews.open(
+                 c.user,
+                 c.track.id,
+                 %{position | "revision" => revision},
+                 "Cannot verify"
+               )
+    end
+
+    assert {:ok, [retained]} = Reviews.list(c.user, c.track.id)
+    assert retained.id == discussion.id
+    assert {:ok, _} = Reviews.reply(c.user, c.track.id, retained.id, "Still retained")
+  end
+
+  test "binary revisions use Git blob indexes; missing identities never claim current", c do
+    path = "binary.dat"
+    {:ok, discussion} = Reviews.open(c.user, c.track.id, anchor(c, path, "file", nil), "Binary")
+    changed = diff(String.replace(c.diff.diff, "e7be1ea..f9e371f", "e7be1ea..abcdef0"))
+    assert Anchor.status(discussion, Anchor.revisions(changed), :listed) == :outdated
+    unknown = diff(String.replace(c.diff.diff, "index e7be1ea..f9e371f 100644\n", ""))
+    assert Anchor.status(discussion, Anchor.revisions(unknown), :listed) == :unverifiable
+
+    assert {:error, {:conflict, "unverifiable_review", _}} =
+             Anchor.locate(unknown, anchor(c, path, "file", nil))
+
+    assert Anchor.status(discussion, %{}, :unread) == :unverifiable
+    assert Anchor.status(discussion, nil, :unread) == :unchecked
+  end
+
   defp anchor(c, path, side, line),
-    do: %{"revision" => Anchor.revision(c.diff), "path" => path, "side" => side, "line" => line}
+    do: %{
+      "revision" => Anchor.revision(c.diff, path),
+      "path" => path,
+      "side" => side,
+      "line" => line
+    }
 
   defp diff(patch),
     do: %Diff{
