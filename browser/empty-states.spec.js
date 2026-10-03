@@ -105,6 +105,7 @@ test("an asleep track's snapshot keeps Files and Changes on screen until Wake", 
   const trackId = new URL(page.url()).pathname.split('/t/')[1];
   const sandbox = await sandboxOf(request, trackId);
   expect((await request.post(`${mock}/__browser/sandbox-status`, { data: { id: sandbox, status: 'suspended', snapshot: true } })).ok()).toBe(true);
+  await page.locator('#track-tab-files').click();
   await page.locator('.panel-refresh').click();
 
   const bar = page.locator('#panel-snapshot');
@@ -114,7 +115,7 @@ test("an asleep track's snapshot keeps Files and Changes on screen until Wake", 
   await expect(page.locator('#track-machine-state')).toHaveText('Asleep');
   expect((await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa']).analyze()).violations).toEqual([]);
 
-  await page.getByRole('button', { name: 'Changes', exact: true }).click();
+  await page.locator('#track-tab-changes').click();
   await expect(bar).toContainText('Asleep. Showing changes as of');
   await expect(page.locator('#changes-untracked-asleep')).toHaveText(/Files shows them as of the snapshot\./);
 

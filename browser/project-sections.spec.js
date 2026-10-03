@@ -22,6 +22,9 @@ test('creating a section clears its field and a taken name is refused under the 
   await newProject.getByRole('button', { name: 'Add repository', exact: true }).click();
   await expect(newProject).not.toBeVisible();
 
+  // Sections are managed from Home.
+  await page.locator('.topbar-home').click();
+  await expect(page).toHaveURL(/\/home$/);
   await page.getByRole('button', { name: 'Manage sections', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: 'Project sections', exact: true });
   const field = dialog.getByLabel('New section', { exact: true });
