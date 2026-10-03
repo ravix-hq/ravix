@@ -3,9 +3,10 @@ defmodule Ravix.SearchTest do
   import Mimic
   alias Ravix.{Repo, Search}
   alias Ravix.Search.{Entry, Index}
-  alias Ravix.Tracks.{Reply, Thread, Track}
+  alias Ravix.Tracks.{Reply, Thread, Track, TrackPermission}
   alias Ravix.Tracks.Transcript
   alias Ravix.TranscriptFixture, as: TF
+  alias Ravix.Workspaces.{Membership, Workspace}
 
   setup :verify_on_exit!
 
@@ -61,11 +62,18 @@ defmodule Ravix.SearchTest do
 
   test "two completed turns survive newest reply replacement and ingestion is idempotent", ctx do
     first = events("first", "firsthuman", "firstassistant")
-    second = events("second", "secondhuman", "secondassistant", 20)
+
+    second =
+      events("second", "secondhuman", "secondassistant", 20)
+      |> Enum.map(fn e ->
+        if e["state"] == "completed", do: Map.put(e, "ts", "2026-10-03T19:02:00Z"), else: e
+      end)
+
     Reply.record(ctx.track.conversation_id, first, "claude")
     Reply.record(ctx.track.conversation_id, second, "claude")
     Reply.record(ctx.track.conversation_id, first, "claude")
     assert Repo.aggregate(Entry, :count) == 4
+    assert Repo.get!(Thread, ctx.track.id).reply_excerpt == "secondassistant"
     assert [%{kind: "prompt", turn_id: "first"}] = search(ctx.owner, "firsthuman").results
 
     assert [%{kind: "assistant", turn_id: "first", thread_id: id, conversation_id: conv}] =
@@ -113,7 +121,7 @@ defmodule Ravix.SearchTest do
     assert search(ctx.owner, "unrelatedtext").results == []
   end
 
-  test "supervised page hook writes selected text", ctx do
+  test "page hook finishes selected-text persistence before returning", ctx do
     page = Transcript.page(events("backfill", "pagehuman", "pageassistant"), "claude", %{})
 
     page = %{
@@ -208,13 +216,13 @@ defmodule Ravix.SearchTest do
     member = insert_user()
 
     w =
-      %Ravix.Workspaces.Workspace{}
-      |> Ravix.Workspaces.Workspace.changeset(%{name: "Team", kind: :team})
+      %Workspace{}
+      |> Workspace.changeset(%{name: "Team", kind: :team})
       |> Repo.insert!()
 
     m =
-      %Ravix.Workspaces.Membership{}
-      |> Ravix.Workspaces.Membership.changeset(%{
+      %Membership{}
+      |> Membership.changeset(%{
         workspace_id: w.id,
         user_id: member.id,
         role: :member
@@ -233,8 +241,8 @@ defmodule Ravix.SearchTest do
         created_by: ctx.owner.id
       )
 
-    %Ravix.Tracks.TrackPermission{}
-    |> Ravix.Tracks.TrackPermission.changeset(%{
+    %TrackPermission{}
+    |> TrackPermission.changeset(%{
       track_id: private.id,
       user_id: member.id,
       workspace_id: w.id
@@ -287,12 +295,43 @@ defmodule Ravix.SearchTest do
           %{"page" => "0"},
           %{"page" => "1001"},
           %{"page" => "2no"},
-          %{"page" => 3}
+          %{"page" => 3},
+          %{"project" => ["x"]},
+          %{"track" => %{"x" => "y"}},
+          %{"project" => String.duplicate("x", 201)}
         ] do
       assert {:error, {:unprocessable, _, _}} = Search.run(ctx.owner, params)
     end
 
     assert {:ok, _} = Search.filters(ctx.owner, %{"project" => "missing"})
+  end
+
+  test "closed tracks obey the transcript door for guests, project members and owner", ctx do
+    guest = insert_user()
+    member = insert_user()
+    insert_track_member(ctx.track, guest)
+    insert_project_member(ctx.project, member)
+
+    Index.record(
+      ctx.track.conversation_id,
+      events("closed", "closedhuman", "closedassistant"),
+      "claude"
+    )
+
+    pages = Map.new([guest, member, ctx.owner], &{&1.id, search(&1, "closedassistant")})
+    Repo.update!(Ecto.Changeset.change(ctx.track, closed_at: DateTime.utc_now()))
+
+    for user <- [guest, member] do
+      assert {:error, :not_found} = Ravix.Accounts.Access.track_access(user, ctx.track.id)
+      assert search(user, "closedassistant").results == []
+      assert {:ok, %{results: []}} = Search.revalidate(user, pages[user.id])
+      assert {:ok, %{tracks: []}} = Search.filters(user, %{})
+    end
+
+    assert {:ok, _} = Ravix.Accounts.Access.track_access(ctx.owner, ctx.track.id)
+    assert [%{kind: "assistant"}] = search(ctx.owner, "closedassistant").results
+    assert {:ok, %{results: [_]}} = Search.revalidate(ctx.owner, pages[ctx.owner.id])
+    assert {:ok, %{tracks: [_]}} = Search.filters(ctx.owner, %{})
   end
 
   test "archived and deleting projects hide their search content", ctx do

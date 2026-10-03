@@ -38,7 +38,8 @@ defmodule Ravix.Search.Store do
 
       Repo.insert_all(Entry, Enum.map(entries, &Map.put(&1, :thread_id, thread_id)),
         conflict_target: [:id],
-        on_conflict: conflict
+        on_conflict: conflict,
+        log: false
       )
     end
 
@@ -106,7 +107,8 @@ defmodule Ravix.Search.Store do
       join: p in Project,
       as: :project,
       on: p.id == t.project_id,
-      where: is_nil(p.archived_at) and is_nil(p.deletion_requested_at)
+      where: is_nil(p.archived_at) and is_nil(p.deletion_requested_at),
+      where: is_nil(t.closed_at) or p.user_id == ^user_id
     )
     |> Access.visible(user_id)
   end
@@ -189,7 +191,7 @@ defmodule Ravix.Search.Store do
       title: th.title,
       excerpt:
         fragment(
-          "left(ts_headline('simple', ?, plainto_tsquery('simple', ?), 'StartSel=\"\", StopSel=\"\", MaxWords=40, MinWords=15'), 400)",
+          ~S|left(ts_headline('simple', ?, plainto_tsquery('simple', ?), 'StartSel="", StopSel="", MaxWords=40, MinWords=15'), 400)|,
           e.text,
           ^words
         ),
@@ -220,7 +222,7 @@ defmodule Ravix.Search.Store do
       title: t.title,
       excerpt:
         fragment(
-          "left(ts_headline('simple', ?, plainto_tsquery('simple', ?), 'StartSel=\"\", StopSel=\"\", MaxWords=40, MinWords=15'), 400)",
+          ~S|left(ts_headline('simple', ?, plainto_tsquery('simple', ?), 'StartSel="", StopSel="", MaxWords=40, MinWords=15'), 400)|,
           fragment("coalesce(?->>'prompt', '')", q.body),
           ^words
         ),

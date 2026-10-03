@@ -1,8 +1,9 @@
 defmodule RavixWeb.SearchLive do
   @moduledoc "Authenticated global search; async pages are checked again before display."
   use RavixWeb, :live_view
-  alias Ravix.{Hub, Search}
   alias Ravix.Accounts.User
+  alias Ravix.{Hub, Search}
+  alias Ravix.Search.Query
   alias RavixWeb.Live.Guard
 
   @impl true
@@ -13,8 +14,10 @@ defmodule RavixWeb.SearchLive do
      assign(socket,
        page_title: "Search · Ravix",
        params: %{},
+       draft_params: %{},
        results: [],
        filters: %{projects: [], tracks: []},
+       query: %Query{},
        page: 1,
        has_more: false,
        loading: false,
@@ -36,25 +39,20 @@ defmodule RavixWeb.SearchLive do
     {:noreply, push_patch(socket, to: path(Map.delete(params, "page")))}
   end
 
-  @impl true
-  def handle_async(:search, {:ok, {:ok, page}}, socket) do
-    with {:ok, page} <- Search.revalidate(socket.assigns.current_user, page),
-         {:ok, filters} <- Search.filters(socket.assigns.current_user, socket.assigns.params) do
-      {:noreply,
-       socket
-       |> subscriptions(filters)
-       |> assign(
-         filters: filters,
-         results: page.results,
-         page: page.page,
-         has_more: page.has_more,
-         loading: false
-       )}
-    else
-      {:error, reason} ->
-        {:noreply, failed(socket, reason)}
-    end
+  def handle_event("draft-search", %{"search" => params}, socket) do
+    draft = Query.form_params(params)
+
+    draft =
+      if draft["project"] != socket.assigns.draft_params["project"],
+        do: Map.put(draft, "track", ""),
+        else: draft
+
+    {:noreply, socket |> assign(draft_params: draft) |> refresh()}
   end
+
+  @impl true
+  def handle_async(:search, {:ok, {:ok, page}}, socket),
+    do: {:noreply, apply_page(socket, page)}
 
   def handle_async(:search, {:ok, {:error, reason}}, socket),
     do: {:noreply, failed(socket, reason)}
@@ -66,29 +64,83 @@ defmodule RavixWeb.SearchLive do
   @impl true
   def handle_info(:refresh_access, socket) do
     Process.send_after(self(), :refresh_access, Guard.ttl_ms())
-    {:noreply, load(socket, socket.assigns.params)}
+    {:noreply, refresh(socket)}
   end
 
-  def handle_info({:hub, %Hub.Event{name: name}}, socket) when name in [:people, :tracks, :reply],
-    do: {:noreply, load(socket, socket.assigns.params)}
+  def handle_info({:hub, %Hub.Event{name: name}}, socket)
+      when name in [:people, :tracks, :reply] do
+    socket = refresh(socket)
+    user = socket.assigns.current_user
+    query = socket.assigns.query
+
+    {:noreply,
+     socket
+     |> cancel_async(:search)
+     |> assign(loading: true)
+     |> start_async(:search, fn -> Search.run(user, query) end)}
+  end
 
   def handle_info(_message, socket), do: {:noreply, socket}
 
   defp load(%{assigns: %{current_user: %User{} = user}} = socket, params) do
-    socket
-    |> cancel_async(:search)
-    |> assign(
-      params: params,
-      results: [],
-      filters: %{projects: [], tracks: []},
-      loading: true,
-      error: nil,
-      has_more: false
-    )
-    |> start_async(:search, fn -> Search.run(user, params) end)
+    socket = cancel_async(socket, :search)
+
+    case Query.from(params) do
+      {:ok, query} ->
+        socket
+        |> assign(
+          params: Query.form_params(query),
+          draft_params: Query.form_params(query),
+          query: query,
+          results: [],
+          filters: %{projects: [], tracks: []},
+          loading: true,
+          error: nil,
+          has_more: false
+        )
+        |> start_async(:search, fn -> Search.run(user, query) end)
+
+      {:error, reason} ->
+        socket
+        |> assign(
+          params: Query.form_params(params),
+          draft_params: Query.form_params(params),
+          filters: %{projects: [], tracks: []}
+        )
+        |> failed(reason)
+    end
   end
 
   defp load(socket, _params), do: redirect(socket, to: "/login")
+
+  defp refresh(%{assigns: %{loading: true}} = socket), do: socket
+  defp refresh(%{assigns: %{error: error}} = socket) when not is_nil(error), do: socket
+
+  defp refresh(socket) do
+    apply_page(socket, %{
+      results: socket.assigns.results,
+      page: socket.assigns.page,
+      has_more: socket.assigns.has_more
+    })
+  end
+
+  defp apply_page(socket, page) do
+    with {:ok, page} <- Search.revalidate(socket.assigns.current_user, page),
+         {:ok, filters} <-
+           Search.filters(socket.assigns.current_user, socket.assigns.draft_params) do
+      socket
+      |> subscriptions(filters, page.results)
+      |> assign(
+        filters: filters,
+        results: page.results,
+        page: page.page,
+        has_more: page.has_more,
+        loading: false
+      )
+    else
+      {:error, reason} -> failed(socket, reason)
+    end
+  end
 
   defp failed(socket, reason),
     do:
@@ -99,8 +151,8 @@ defmodule RavixWeb.SearchLive do
         error: RavixWeb.Error.from(reason).message
       )
 
-  defp subscriptions(socket, filters) do
-    wanted = MapSet.new(filters.projects, & &1.id)
+  defp subscriptions(socket, filters, results) do
+    wanted = MapSet.new(Enum.map(filters.projects, & &1.id) ++ Enum.map(results, & &1.project_id))
 
     if connected?(socket) do
       Enum.each(MapSet.difference(wanted, socket.assigns.subscriptions), &Hub.subscribe/1)
@@ -111,7 +163,19 @@ defmodule RavixWeb.SearchLive do
   end
 
   defp path(params),
-    do: "/search?" <> URI.encode_query(Map.take(params, ~w(q project track page)))
+    do:
+      "/search?" <>
+        URI.encode_query(
+          Map.take(params, ~w(q project track page))
+          |> Enum.filter(fn {_key, value} -> is_binary(value) and value != "" end)
+        )
+
+  defp query_text(params) do
+    case params["q"] do
+      text when is_binary(text) -> text
+      _ -> ""
+    end
+  end
 
   defp page_path(params, page), do: path(Map.put(params, "page", to_string(page)))
   defp result_path(%{kind: "project"} = row), do: "/p/#{row.project_id}"

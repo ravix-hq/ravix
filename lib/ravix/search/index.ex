@@ -6,33 +6,29 @@ defmodule Ravix.Search.Index do
   Older history is filled when its transcript pages are opened.
   """
   alias Ravix.Search.Store
+  alias Ravix.Tracks.Transcript
   alias Ravix.Tracks.Transcript.{Block, Event, Turn}
 
   @doc "Persist selected text from a settled turn's events, already held by settlement."
   def record(conversation_id, events, runtime) do
-    page = Ravix.Tracks.Transcript.page(events, runtime, %{})
+    page = Transcript.page(events, runtime, %{})
     persist(Enum.map(page.turns, &%{&1 | conversation_id: conversation_id}))
   end
 
-  @doc "Backfill the completed turns of an authorized transcript page under supervision."
-  def note(page) do
-    turns = page.turns |> Enum.filter(& &1.settled?) |> Enum.take(200)
-    Task.Supervisor.start_child(Ravix.TaskSupervisor, fn -> persist(turns) end)
-    :ok
-  end
+  @doc "Backfill a bounded authorized page in its caller, before the async read completes."
+  def note(page), do: persist(page.turns)
 
   @doc false
   def persist(turns) do
     turns
     |> Enum.filter(& &1.settled?)
     |> Enum.take(200)
-    |> Enum.each(fn %Turn{} = turn ->
+    |> Enum.flat_map(fn %Turn{} = turn ->
       if is_binary(turn.conversation_id) and is_binary(turn.id) and
-           not String.starts_with?(turn.id, "pending") do
-        entries = entries(turn)
-        Store.index_turn(turn.conversation_id, entries)
-      end
+           not String.starts_with?(turn.id, "pending"), do: entries(turn), else: []
     end)
+    |> Enum.group_by(& &1.conversation_id)
+    |> Enum.each(fn {conversation_id, entries} -> Store.index_turn(conversation_id, entries) end)
 
     :ok
   end

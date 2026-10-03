@@ -8,6 +8,7 @@
     for={to_form(%{}, as: :search)}
     id="workspace-search-form"
     phx-submit="search"
+    phx-change="draft-search"
     class="search-form"
   >
     <label for="search-query">Search words</label>
@@ -16,7 +17,7 @@
         id="search-query"
         type="search"
         name="search[q]"
-        value={@params["q"]}
+        value={query_text(@draft_params)}
         placeholder="What are you looking for?"
         maxlength="500"
         autofocus
@@ -31,7 +32,7 @@
           <option
             :for={project <- @filters.projects}
             value={project.id}
-            selected={@params["project"] == project.id}
+            selected={@draft_params["project"] == project.id}
           >
             {project.name}
           </option>
@@ -44,7 +45,7 @@
           <option
             :for={track <- @filters.tracks}
             value={track.id}
-            selected={@params["track"] == track.id}
+            selected={@draft_params["track"] == track.id}
           >
             {track.name}
           </option>
@@ -53,13 +54,13 @@
     </div>
   </.form>
   <p class="hint search-history-note">
-    All words must match. Completed conversation text is indexed as turns settle and as transcript pages are opened. Older pages not yet opened may be absent. Each indexed turn keeps up to 65,536 characters per human or assistant message; tool output, reasoning, and attachments are excluded. Filter menus show up to 200 accessible items.
+    All words must match. Completed human and assistant messages are searchable. Older history is added as you open its transcript pages. Very long messages may be shortened. Tool output, reasoning, and attachments are excluded.
   </p>
   <section aria-live="polite" aria-busy={to_string(@loading)}>
     <p :if={@loading} role="status">Searching…</p>
     <p :if={@error} role="alert">{@error}</p>
     <p :if={!@loading && !@error && @results == []}>
-      {if String.trim(@params["q"] || "") == "",
+      {if String.trim(query_text(@draft_params)) == "",
         do: "Enter words to search your work.",
         else: "No results in the work you can access. Try fewer words or different filters."}
     </p>

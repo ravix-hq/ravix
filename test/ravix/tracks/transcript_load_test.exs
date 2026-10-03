@@ -83,10 +83,14 @@ defmodule Ravix.Tracks.TranscriptLoadTest do
     track = insert_track(project: project, conversation_id: "settlement")
     client = Fountain.Client.new("https://fountain.test", "key")
     event = Fixture.stage(2, "completed") |> Transcript.Event.from()
-    expect(Fountain, :events, fn _, "settlement", [] -> {:error, :offline} end)
+    expect(Fountain, :events, fn _, "settlement", [prompts: true] -> {:error, :offline} end)
     assert {:error, :offline} = Settlement.record(client, track.id, "settlement", event)
     assert Repo.all(TurnFailure) == []
-    expect(Fountain, :events, fn _, "settlement", [] -> {:ok, [Fixture.stage(1, "started")]} end)
+
+    expect(Fountain, :events, fn _, "settlement", [prompts: true] ->
+      {:ok, [Fixture.stage(1, "started")]}
+    end)
+
     assert {:ok, _} = Settlement.record(client, track.id, "settlement", event)
     assert {:ok, _} = Settlement.record(client, track.id, "settlement", event)
     assert [%{stage: "classification", state: "completed"}] = Repo.all(TurnFailure)
@@ -157,7 +161,7 @@ defmodule Ravix.Tracks.TranscriptLoadTest do
     }
 
     log = [Fixture.stage(1, "started"), Fixture.output(2, Fixture.text("working")), suspension]
-    expect(Fountain, :events, fn _, "sleep", [] -> {:ok, log} end)
+    expect(Fountain, :events, fn _, "sleep", [prompts: true] -> {:ok, log} end)
 
     assert {:ok, _} =
              Settlement.record(client, track.id, "sleep", Transcript.Event.from(suspension))
@@ -167,7 +171,7 @@ defmodule Ravix.Tracks.TranscriptLoadTest do
              &(&1.code == "machine_suspended" and &1.turn_id == "t")
            )
 
-    expect(Fountain, :events, fn _, "sleep", [] ->
+    expect(Fountain, :events, fn _, "sleep", [prompts: true] ->
       {:ok, [Fixture.stage(1, "completed"), suspension]}
     end)
 
