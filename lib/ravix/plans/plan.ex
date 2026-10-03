@@ -4,6 +4,7 @@ defmodule Ravix.Plans.Plan do
   import Ecto.Changeset
   @primary_key {:id, :string, autogenerate: false}
   schema "plans" do
+    field :resource_id, :string
     field :project_id, :string
     field :title, :string
     field :summary, :string, default: ""

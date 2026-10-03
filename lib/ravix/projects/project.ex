@@ -2,8 +2,9 @@ defmodule Ravix.Projects.Project do
   @moduledoc """
   Which project is which.
 
-  A row, because a project's name and its repository are Ravix's ideas
-  rather than Fountain's. The three Fountain ids are the project. They are
+  Repository projects use GitHub’s full `owner/repository` name. Scratch
+  projects receive a name at creation. Neither can be renamed independently.
+  These identities belong to Ravix rather than Fountain. The three Fountain ids are the project. They are
   written once, at creation, and never updated: the sandbox is built from
   them, so a row that changed one would be a row pointing at a different
   machine. The one exception is `agent_id`, which moves on a rebuild and
@@ -26,6 +27,8 @@ defmodule Ravix.Projects.Project do
 
   schema "projects" do
     belongs_to :user, Ravix.Accounts.User
+    field :resource_id, :string, virtual: true
+    field :resource_owner_id, :string, virtual: true
     field :name, :string
     field :repo_full_name, :string
     field :repo_private, :boolean, default: false
@@ -81,7 +84,10 @@ defmodule Ravix.Projects.Project do
 
   @doc "Maintenance rollout follows the project owner, including member-triggered work."
   def maintenance?(project),
-    do: Ravix.Config.dedicated_opens_enabled?(%Ravix.Accounts.User{id: project.user_id})
+    do:
+      Ravix.Config.dedicated_opens_enabled?(%Ravix.Accounts.User{
+        id: project.resource_owner_id || project.user_id
+      })
 
   @doc "A project with its three Fountain ids. Mints the id and `created_at` when absent."
   @spec changeset(t(), map()) :: Ecto.Changeset.t()

@@ -429,7 +429,9 @@ defmodule Ravix.Tracks.Sandbox do
     Enum.reduce_while(ids, :ok, fn id, :ok ->
       sibling = Store.get_track(id)
 
-      with true <- sibling.project_id == track.project_id and sibling.sandbox_layout == :shared,
+      with true <-
+             sibling.project_id == track.project_id and sibling.sandbox_layout == :shared and
+               sibling.resource_id == track.resource_id,
            :ok <- revoke_preview(sibling),
            :ok <- end_threads(client, sibling) do
         {:cont, :ok}

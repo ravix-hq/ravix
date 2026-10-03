@@ -214,6 +214,30 @@ defmodule Ravix.PreviewsTest do
     assert {:error, :not_found} = Previews.stop(insert_user(), t1.id)
   end
 
+  test "a merged track keeps its run script while canonical defaults change", ctx do
+    {:ok, workspace} = Ravix.Workspaces.Store.ensure_personal_workspace(ctx.owner)
+    donor = insert_project(user: ctx.owner, repo_full_name: ctx.project.repo_full_name)
+    Ravix.Workspaces.Store.move_project(ctx.project.id, workspace.id)
+    Ravix.Workspaces.Store.mark_legacy_duplicate(donor.id, ctx.project.id)
+    Ravix.Workspaces.Store.move_project(donor.id, workspace.id)
+    ctx.t2 |> Ecto.Changeset.change(project_id: donor.id) |> Repo.update!()
+    retained = %Config{directory: "retained", command: "retained", readiness_path: "/"}
+    Store.set_defaults(donor.id, retained)
+
+    assert {:ok, _} =
+             Ravix.Projects.Consolidation.Store.merge(workspace.id, ctx.project.id, donor.id)
+
+    assert :ok = Lifecycle.start_service(ctx.t2.id)
+    assert Store.get(ctx.t2.id).state == :ready
+    assert Lifecycle.info(ctx.t2.id).config == retained
+    assert Row.applied(Store.get(ctx.t2.id)) == retained
+
+    assert {:ok, nil} = Previews.set_defaults(ctx.owner, ctx.project.id, nil)
+    assert Store.get(ctx.t2.id).state == :ready
+    assert Lifecycle.info(ctx.t2.id).config == retained
+    assert state(ctx.p).services[service_id(ctx.t2.id)] == "running"
+  end
+
   test "saving defaults stops the tracks that run on them and leaves overrides alone", %{
     p: p,
     owner: owner,

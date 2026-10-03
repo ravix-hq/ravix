@@ -9,10 +9,9 @@
 // that is how the picker draws a live swatch per theme without a class per
 // theme, and it means a swatch cannot drift from its palette.
 //
-// The saved palette lives in localStorage under `ravix.theme`, which the
-// root layout's inline script also reads so the page paints in it before
-// the stylesheet does. Two places holding one string is a thing that rots;
-// `layouts_test.exs` asserts they still agree.
+// `priv/static/theme.js` resolves the same preference before the first paint.
+// Store Auto as a preference, not the palette it resolves to, so it keeps
+// following the device. Explicit modes and saved experimental palettes stay put.
 //
 // The menu is pure client. Opening it, hovering a row to preview, choosing,
 // and every way out (a choice, a click outside, Escape, the pointer leaving,
@@ -33,19 +32,22 @@
 //     </div>
 //   </div>
 //
-// The list of valid ids is whatever the picker offers: a saved value that no
-// longer names a real theme resolves to the default rather than leaving
-// `<html>` on an attribute that matches nothing.
+// Every picker receives the full option map even when it offers only the
+// basic modes. Opening the quick picker must not reset a custom palette.
 
 export const THEME_KEY = "ravix.theme"
 // A choice in one picker, told to the others: the You menu's and the
 // Appearance page's (RAV-77) can both be on the page at once.
 const CHANGED = "ravix:theme-changed"
-export const DEFAULT_THEME = "ravix"
+export const DEFAULT_THEME = "auto"
 
 function readSaved() {
   try {
-    return localStorage.getItem(THEME_KEY)
+    const saved = localStorage.getItem(THEME_KEY)
+    // These were the saved names before the standard Light and Dark modes.
+    if (saved === "ravix") return "light"
+    if (saved === "slate") return "dark"
+    return saved
   } catch {
     // A private window, or site data switched off. The default palette is
     // a complete answer, so this is not worth telling anybody about.
@@ -53,8 +55,15 @@ function readSaved() {
   }
 }
 
+function palette(id) {
+  if (id === "auto") return matchMedia("(prefers-color-scheme: dark)").matches ? "slate" : "ravix"
+  if (id === "light") return "ravix"
+  if (id === "dark") return "slate"
+  return id
+}
+
 function paint(id) {
-  document.documentElement.setAttribute("data-theme", id)
+  document.documentElement.setAttribute("data-theme", palette(id))
 }
 
 function remember(id) {
@@ -67,13 +76,25 @@ function remember(id) {
 
 export const Theme = {
   mounted() {
-    this.ids = this.choices().map(el => el.dataset.themeChoice)
+    this.options = JSON.parse(this.el.dataset.themeOptions)
+    this.ids = Object.keys(this.options)
     const saved = readSaved()
     this.theme = this.ids.includes(saved) ? saved : DEFAULT_THEME
     // Re-applied through the validating path: the inline bootstrap trusted
     // whatever was saved so the first frame would be right.
     paint(this.theme)
     this.reflect()
+    this.system = matchMedia("(prefers-color-scheme: dark)")
+    this.onSystem = () => {
+      if (this.theme === "auto") paint(this.theme)
+      this.reflect()
+    }
+    this.system.addEventListener("change", this.onSystem)
+    this.disclosure = this.el.closest("details")
+    this.onDisclosure = () => {
+      if (!this.disclosure.open) this.close()
+    }
+    this.disclosure?.addEventListener("toggle", this.onDisclosure)
 
     this.onClick = e => {
       const choice = e.target.closest("[data-theme-choice]")
@@ -125,6 +146,8 @@ export const Theme = {
   },
 
   destroyed() {
+    this.system.removeEventListener("change", this.onSystem)
+    this.disclosure?.removeEventListener("toggle", this.onDisclosure)
     window.removeEventListener(CHANGED, this.onChanged)
     document.removeEventListener("mousedown", this.onAway)
     document.removeEventListener("keydown", this.onKey)
@@ -176,18 +199,19 @@ export const Theme = {
 
   // The rows and the trigger say which palette is on.
   reflect() {
-    let name = null
     for (const choice of this.choices()) {
       const on = choice.dataset.themeChoice === this.theme
       choice.classList.toggle("on", on)
       choice.setAttribute("aria-checked", on ? "true" : "false")
       const check = choice.querySelector("[data-theme-check]")
       if (check) check.hidden = !on
-      if (on) name = choice.dataset.themeName || choice.textContent.trim()
+    }
+    for (const preview of this.el.querySelectorAll("[data-theme-preview]")) {
+      preview.setAttribute("data-theme", palette(preview.dataset.themePreview))
     }
     const swatch = this.el.querySelector("[data-theme-swatch]")
-    if (swatch) swatch.setAttribute("data-theme", this.theme)
+    if (swatch) swatch.setAttribute("data-theme", palette(this.theme))
     const label = this.el.querySelector("[data-theme-name]")
-    if (label && name) label.textContent = name
+    if (label) label.textContent = this.options[this.theme]
   },
 }

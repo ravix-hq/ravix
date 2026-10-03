@@ -2,7 +2,7 @@ defmodule Ravix.Previews.PreviewDefault do
   @moduledoc """
   A project's run script, stored in the existing preview default row.
 
-  One per project: directory, run command, optional stop command and optional
+  One per project resource: directory, run command, optional stop command and optional
   HTTP readiness path. Tracks inherit it unless they supply an override. Deleting the row is
   how defaults are cleared.
 
@@ -18,7 +18,8 @@ defmodule Ravix.Previews.PreviewDefault do
   @type t :: %__MODULE__{}
 
   schema "preview_defaults" do
-    belongs_to :project, Ravix.Projects.Project, primary_key: true
+    field :resource_id, :string
+    belongs_to :project, Ravix.Projects.Project
     field :config, Ravix.Previews.Config.Type
   end
 
@@ -26,9 +27,10 @@ defmodule Ravix.Previews.PreviewDefault do
   @spec changeset(t(), map()) :: Ecto.Changeset.t()
   def changeset(default, attrs) do
     default
-    |> cast(attrs, [:project_id, :config])
+    |> cast(attrs, [:project_id, :resource_id, :config])
     |> validate_required([:project_id, :config])
     |> foreign_key_constraint(:project_id)
+    |> unique_constraint(:project_id, name: :preview_defaults_identity)
     |> unique_constraint(:project_id, name: :preview_defaults_pkey)
   end
 end

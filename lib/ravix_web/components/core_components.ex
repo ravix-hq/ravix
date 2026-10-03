@@ -592,10 +592,29 @@ defmodule RavixWeb.CoreComponents do
 
   @doc "The shared, browser-local palette picker for public and workspace pages."
   attr :id, :string, required: true
+  attr :experimental, :boolean, default: false
 
   def theme_picker(assigns) do
+    modes = [{"auto", "Auto"}, {"light", "Light"}, {"dark", "Dark"}]
+
+    palettes =
+      for theme <-
+            ~w(one-dark dracula nord tokyo-night catppuccin-mocha night-owl monokai gruvbox-dark solarized-dark daylight github-light one-light solarized-light catppuccin-latte mario neon-noir vaporwave matrix hot-dog-stand bubblegum),
+          do:
+            {theme,
+             theme
+             |> String.replace("-", " ")
+             |> String.split()
+             |> Enum.map_join(" ", &String.capitalize/1)}
+
+    assigns =
+      assign(assigns,
+        options: Map.new(modes ++ palettes),
+        choices: if(assigns.experimental, do: palettes, else: modes)
+      )
+
     ~H"""
-    <div id={@id} phx-hook="Theme" class="theme-picker">
+    <div id={@id} phx-hook="Theme" class="theme-picker" data-theme-options={Jason.encode!(@options)}>
       <button
         class="theme-trigger"
         data-theme-toggle
@@ -606,34 +625,31 @@ defmodule RavixWeb.CoreComponents do
         <span class="theme-swatch" data-theme-swatch></span><span class="col"><small>Theme</small><span
           class="truncate"
           data-theme-name
-        >Ravix</span></span>
+        >Auto</span></span>
         <.icon name="chevron" size={12} />
       </button>
       <div id={"#{@id}-menu"} class="theme-menu" role="menu" aria-label="Theme" hidden>
         <button
-          :for={
-            theme <-
-              ~w(ravix slate one-dark dracula nord tokyo-night catppuccin-mocha night-owl monokai gruvbox-dark solarized-dark daylight github-light one-light solarized-light catppuccin-latte mario neon-noir vaporwave matrix hot-dog-stand bubblegum)
-          }
+          :for={{theme, label} <- @choices}
           class="theme-option"
           role="menuitemradio"
           aria-checked="false"
           data-theme-choice={theme}
-          data-theme-name={
-            String.replace(theme, "-", " ")
-            |> String.split()
-            |> Enum.map_join(" ", &String.capitalize/1)
-          }
+          data-theme-name={label}
         >
-          <span class="theme-swatch" data-theme={theme}></span><span>{String.replace(theme, "-", " ")
-          |> String.split()
-          |> Enum.map_join(" ", &String.capitalize/1)}</span><span
+          <span class="theme-swatch" data-theme={theme} data-theme-preview={theme}></span><span>{label}</span><span
             class="check"
             data-theme-check
             aria-hidden="true"
             hidden
           >✓</span>
         </button>
+        <a
+          :if={!@experimental}
+          class="theme-option"
+          role="menuitem"
+          href="/settings/appearance#appearance-advanced"
+        >Advanced appearance…</a>
       </div>
     </div>
     """

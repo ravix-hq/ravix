@@ -136,14 +136,8 @@ defmodule RavixWeb.Live.NewProjectTest do
     assert has_element?(view, "#project-agent-claude[aria-pressed=true]", "Connected")
     assert has_element?(view, ".new-project-fields", "subscription or API key")
 
-    assert has_element?(
-             view,
-             "#project-agent-codex:not([disabled])",
-             "Not connected — connect to use"
-           )
-
     view
-    |> form("#new-project-form", new_project: [name: "Keep this", repo: "acme/web"])
+    |> form("#new-project-form", new_project: [repo: "acme/web"])
     |> render_change()
 
     view |> element("#project-agent-codex") |> render_click()
@@ -162,7 +156,6 @@ defmodule RavixWeb.Live.NewProjectTest do
     view |> form("#credential-form", credential: [value: "sk-test"]) |> render_submit()
     render_async(view)
     assert has_element?(view, "#project-agent-codex[aria-pressed=true]", "Connected")
-    assert has_element?(view, "#project-name[value='Keep this']")
     assert has_element?(view, "#project-repositories input[value='acme/web'][checked]")
     refute has_element?(view, "#new-project-form button[disabled]")
     refute has_element?(view, "#project-connect-codex")
@@ -249,10 +242,7 @@ defmodule RavixWeb.Live.NewProjectTest do
 
     render_click(view, "dismiss")
     render_click(view, "dialog", %{name: "new-project"})
-    assert has_element?(view, "#project-repo-query[placeholder='owner/repo']:not([value])")
-    assert has_element?(view, "#project-name[placeholder='Name the scratch project']")
     view |> form("#new-project-form", new_project: [repo: "acme/web"]) |> render_change()
-    assert has_element?(view, "#project-name[placeholder=\"Defaults to the repository's name\"]")
   end
 
   test "Enter in the search picks the first match, and nothing when none matches",

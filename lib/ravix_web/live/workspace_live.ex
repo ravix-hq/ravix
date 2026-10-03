@@ -2361,10 +2361,9 @@ defmodule RavixWeb.WorkspaceLive do
   # the same form on its own page.
   defp fresh_start?(projects), do: projects == []
 
-  # New track (RAV-37): one action, in the sidebar, on Home and on the phone.
-  # It opens the New track dialog; with no project to start one in yet, the
-  # prompt that starts one is Home's first-prompt form, so it goes there
-  # rather than into Add a repository.
+  # New track starts from a project row on desktop and from the mobile action.
+  # With no project to start one in yet, the prompt that starts one is Home's
+  # first-prompt form, so it goes there rather than into Add a repository.
   defp new_track_click(rail_loaded, projects) do
     if rail_loaded and fresh_start?(projects),
       do: JS.patch("/home") |> JS.focus(to: "#home-quick-start-prompt"),

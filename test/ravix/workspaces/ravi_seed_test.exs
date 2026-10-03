@@ -77,7 +77,7 @@ defmodule Ravix.Workspaces.RaviSeedTest do
 
     by_id = Map.new(summary.projects, &{&1.id, &1})
     assert Map.keys(by_id) |> Enum.sort() == Enum.sort([@duplicate, @canonical, ctx.other.id])
-    assert %{action: :move, rename: "ravix", duplicate_of: nil} = by_id[@canonical]
+    assert %{action: :move, rename: "ravix-hq/ravix", duplicate_of: nil} = by_id[@canonical]
     assert %{action: :move, rename: nil, duplicate_of: @canonical} = by_id[@duplicate]
     assert %{action: :move} = by_id[ctx.other.id]
 
@@ -88,7 +88,6 @@ defmodule Ravix.Workspaces.RaviSeedTest do
 
     lines = RaviSeed.format(summary)
     assert hd(lines) =~ "Dry run"
-    assert Enum.any?(lines, &(&1 =~ "rename to \"ravix\""))
     assert Enum.any?(lines, &(&1 =~ "legacy duplicate of #{@canonical}"))
   end
 
@@ -102,7 +101,7 @@ defmodule Ravix.Workspaces.RaviSeedTest do
     assert Enum.sort(owners) == Enum.sort([{ctx.jh.id, :owner}, {ctx.raunak.id, :owner}])
 
     canonical = reload(ctx.canonical)
-    assert %{name: "ravix", workspace_id: ^id, user_id: jh_id} = canonical
+    assert %{name: "ravix-hq/ravix", workspace_id: ^id, user_id: jh_id} = canonical
     assert jh_id == ctx.jh.id
 
     duplicate = reload(ctx.duplicate)
@@ -125,7 +124,7 @@ defmodule Ravix.Workspaces.RaviSeedTest do
     assert Enum.all?(again.projects, &(&1.action == :in_place and is_nil(&1.rename)))
     assert Repo.aggregate(RepositoryReservation, :count) == 1
     assert Repo.aggregate(from(m in Membership, where: m.workspace_id == ^id), :count) == 2
-    assert reload(ctx.canonical).name == "ravix"
+    assert reload(ctx.canonical).name == "ravix-hq/ravix"
   end
 
   test "an owner removed from Ravi is neither re-added nor reported as an owner", ctx do

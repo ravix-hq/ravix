@@ -798,9 +798,6 @@ defmodule RavixWeb.WorkspaceLiveTest do
 
     refute render(view) =~ hidden.name
     refute render(view) =~ "Somebody else"
-    # The sidebar's "Add a repository" is the one way in; Home's one action is New track.
-    refute has_element?(view, "#home button", "repository")
-    assert has_element?(view, "#home #home-new-track[data-new-track-trigger]", "New track")
     add = element(view, "#yard button.yard-item", "Add a repository")
     render_click(add)
     view |> form("#new-project-form", new_project: [name: "Abandoned name"]) |> render_change()
@@ -1460,14 +1457,15 @@ defmodule RavixWeb.WorkspaceLiveTest do
     refute has_element?(view, "#settings-page")
   end
 
-  test "top New track defaults to the current project and switches scoped projects", %{conn: conn} do
+  test "project row opens a track in that project and switches scoped destinations", %{conn: conn} do
     user = insert_user()
     first = insert_project(user: user, name: "First")
     second = insert_project(user: user, name: "Second")
     foreign = insert_project(user: insert_user(login: "elsewhere"))
     {:ok, view, _} = live(log_in_user(conn, user), "/p/#{first.id}")
     render_async(view)
-    view |> element("#top-new-track") |> render_click()
+    view |> element("#new-track-#{first.id}") |> render_click()
+    assert_patch(view, "/p/#{first.id}?new=track")
     render_async(view)
     assert has_element?(view, "#new-track-dialog")
     assert has_element?(view, "#new-track-project option[value='#{first.id}'][selected]")
@@ -1527,7 +1525,7 @@ defmodule RavixWeb.WorkspaceLiveTest do
 
   for has_project <- [false, true] do
     @has_project has_project
-    test "top New track for a track-only member with writable project: #{@has_project}", %{
+    test "mobile New track for a track-only member with writable project: #{@has_project}", %{
       conn: conn
     } do
       owner = insert_user()
@@ -1538,7 +1536,7 @@ defmodule RavixWeb.WorkspaceLiveTest do
       writable = if @has_project, do: insert_project(user: member)
       {:ok, view, _} = live(log_in_user(conn, member), "/p/#{shared.id}/t/#{track.id}")
       render_async(view)
-      view |> element("#top-new-track") |> render_click()
+      view |> element("#mobile-new-track") |> render_click()
       render_async(view)
       refute_patched(view)
       assert has_element?(view, "#yard [data-project-id='#{shared.id}'].current")
@@ -1576,7 +1574,7 @@ defmodule RavixWeb.WorkspaceLiveTest do
 
     {:ok, view, _} = live(log_in_user(conn, user), "/p/#{home.id}")
     render_async(view)
-    view |> element("#top-new-track") |> render_click()
+    view |> element("#mobile-new-track") |> render_click()
     render_click(view, "origin", %{kind: "branch"})
     assert_receive {:loading_refs, worker}
     monitor = Process.monitor(worker)
@@ -1596,17 +1594,17 @@ defmodule RavixWeb.WorkspaceLiveTest do
     assert has_element?(view, "#yard [data-project-id='#{home.id}'].current")
   end
 
-  test "top New track with no projects starts at Home's first prompt", %{conn: conn} do
+  test "mobile New track with no projects starts at Home's first prompt", %{conn: conn} do
     user = insert_user()
     {:ok, view, _} = live(log_in_user(conn, user), "/inbox")
     render_async(view)
-    view |> element("#top-new-track") |> render_click()
+    view |> element("#mobile-new-track") |> render_click()
     assert_patch(view, "/home")
     refute has_element?(view, "#new-project-dialog")
     assert has_element?(view, "#home-quick-start-prompt")
 
-    # Before the rail has said there are none, the server still answers the
-    # event with Add a repository rather than nothing.
+    # Before the rail has said there are none, the shared New track event still
+    # answers with Add a repository rather than nothing.
     render_click(view, "top-new-track", %{})
     assert has_element?(view, "#new-project-dialog")
   end
@@ -1730,49 +1728,6 @@ defmodule RavixWeb.WorkspaceLiveTest do
     # Plans are behind the project row now, not on the project's home.
     refute has_element?(view, "#plans-panel")
     assert has_element?(view, "a.project-action[aria-label='Plans in New project']")
-  end
-
-  test "New track is the one create action: sidebar, Home and phone, one label and shortcut",
-       %{conn: conn} do
-    user = insert_user()
-    {:ok, view, _} = live(log_in_user(conn, user), "/home")
-    render_async(view)
-
-    assert has_element?(
-             view,
-             "#top-new-track[data-new-track-trigger][aria-keyshortcuts='Control+N Meta+N']",
-             "Create"
-           )
-
-    for id <- ["home-new-track", "mobile-new-track"] do
-      assert has_element?(
-               view,
-               "##{id}[data-new-track-trigger][aria-keyshortcuts='Control+N Meta+N']",
-               "New track"
-             )
-    end
-
-    refute has_element?(view, ".workspace-mobile-nav button", "New project")
-    refute has_element?(view, ".workspace-mobile-nav button", "repository")
-
-    # Nothing to start a track in yet: New track goes to Home's first
-    # prompt, not to Add a repository.
-    html = view |> element("#home-new-track") |> render()
-    assert html =~ "home-quick-start-prompt"
-    refute html =~ "top-new-track"
-
-    insert_project(user: user, name: "Now there is one")
-    {:ok, view, _} = live(log_in_user(conn, user), "/home")
-    render_async(view)
-    assert view |> element("#home-new-track") |> render() =~ "top-new-track"
-    view |> element("#home-new-track") |> render_click()
-    assert has_element?(view, "#new-track-dialog")
-
-    assert has_element?(
-             view,
-             "#new-track-explainer",
-             "A track is a branch with its own machine; threads are conversations in it."
-           )
   end
 
   test "Add a repository from New track comes back to New track with it chosen", %{conn: conn} do

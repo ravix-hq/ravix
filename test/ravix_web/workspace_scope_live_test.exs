@@ -117,7 +117,7 @@ defmodule RavixWeb.WorkspaceScopeLiveTest do
     refute has_element?(view, "#search-track-link-#{ctx.tracks.team.id}")
     render_click(view, "dismiss-switcher", %{})
 
-    view |> element("#top-new-track") |> render_click()
+    view |> element("#mobile-new-track") |> render_click()
     render_async(view)
     refute "team/api" in repo_options(view)
     assert "me/app" in repo_options(view)
@@ -142,7 +142,7 @@ defmodule RavixWeb.WorkspaceScopeLiveTest do
     refute has_element?(view, "#search-track-link-#{ctx.tracks.shared.id}")
     render_click(view, "dismiss-switcher", %{})
 
-    view |> element("#top-new-track") |> render_click()
+    view |> element("#mobile-new-track") |> render_click()
     render_async(view)
     assert repo_options(view) == ["team/api"]
 

@@ -6,6 +6,7 @@ defmodule Ravix.PlansAssignmentTest do
   alias Ravix.Fountain.{Client, FakeTransport}
   alias Ravix.Plans.{Assignment, Item}
   alias Ravix.PromptQueue.Store, as: QueueStore
+  alias Ravix.Schedules.Runner
   alias Ravix.Tooling.{Authorization, OAuth}
   alias Ravix.Tracks.Track
   alias RavixWeb.Tooling.MCP
@@ -46,6 +47,72 @@ defmodule Ravix.PlansAssignmentTest do
 
     stub(Fountain, :client, fn -> Client.new("https://fountain.test", "test-key") end)
     %{user: user, project: project, p: p, plan: plan}
+  end
+
+  test "preserved plans, schedules and routines open on their original resource", ctx do
+    resource =
+      insert_project_resource(ctx.project,
+        runtime: "claude",
+        repo_full_name: nil,
+        installation_id: nil
+      )
+
+    plan = ctx.plan |> Ecto.Changeset.change(resource_id: resource.id) |> Repo.update!()
+
+    {:ok, schedule} =
+      Ravix.Schedules.create(ctx.user, ctx.project.id, %{
+        "name" => "Review",
+        "prompt" => "Review the changes"
+      })
+
+    schedule = schedule |> Ecto.Changeset.change(resource_id: resource.id) |> Repo.update!()
+
+    {:ok, routine, token} =
+      Ravix.Routines.create(ctx.user, ctx.project.id, %{
+        "name" => "Triage",
+        "prompt" => "Triage the changes"
+      })
+
+    routine = routine |> Ecto.Changeset.change(resource_id: resource.id) |> Repo.update!()
+
+    client =
+      FakeTransport.client(
+        Enum.flat_map(["plan", "schedule", "routine"], fn id ->
+          [
+            {%{method: "GET", path: "/api/conversations"}, {200, [], %{data: []}}},
+            {%{method: "POST", path: "/api/conversations"}, {201, [], %{data: %{id: id}}}}
+          ]
+        end)
+      )
+
+    stub(Fountain, :client, fn -> client end)
+    stub(Ravix.Tracks, :prompt, fn _, _, _ -> {:ok, %{}} end)
+
+    assert {:ok, %{items: [assigned]}} =
+             Assignment.assign(ctx.user, ctx.p, plan.id, [%{"item_id" => "api"}], "retained")
+
+    Runner.run(schedule.id, schedule.next_run_at)
+    scheduled = Repo.reload!(schedule)
+    assert scheduled.last_status == "Prompt queued"
+
+    assert {:ok, %{status: "queued", track_id: routine_track_id}, :new} =
+             Ravix.Routines.receive(routine.id, token, "event", %{})
+
+    for id <- [assigned.track_id, scheduled.last_track_id, routine_track_id] do
+      track = Repo.get!(Track, id)
+      assert track.project_id == ctx.project.id
+      assert track.resource_id == resource.id
+    end
+
+    assert {:ok, %{resource_id: resource_id}} =
+             Plans.create(
+               ctx.user,
+               ctx.project.id,
+               %{"title" => "Follow-up"},
+               {:track_agent, assigned.track_id}
+             )
+
+    assert resource_id == resource.id
   end
 
   test "opening tracks preserves plan origin and queues coordinated prompts exactly once", %{

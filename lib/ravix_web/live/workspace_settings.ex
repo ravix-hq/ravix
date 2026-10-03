@@ -413,7 +413,7 @@ defmodule RavixWeb.Live.WorkspaceSettings do
       )
 
     ~H"""
-    <div id="workspace-settings-content" class="settings-host">
+    <div id="workspace-settings-content" class="settings-host settings-shell">
       <Settings.frame
         kind={:workspace}
         section={@section}
@@ -439,50 +439,63 @@ defmodule RavixWeb.Live.WorkspaceSettings do
             <.form
               for={@general_form}
               id="workspace-general-form"
+              class="settings-row"
               phx-submit="rename"
               phx-target={@myself}
             >
-              <.input
-                field={@general_form[:name]}
-                id="workspace-name"
-                label="Name"
-                maxlength="60"
-                autocomplete="off"
-                required
-              />
+              <div class="settings-row-copy">
+                <label for="workspace-name">Name</label>
+                <p id="workspace-name-hint" class="hint">
+                  The name shown to everyone in this workspace.
+                </p>
+              </div>
+              <div class="settings-row-controls">
+                <.input
+                  field={@general_form[:name]}
+                  id="workspace-name"
+                  aria-describedby="workspace-name-hint"
+                  maxlength="60"
+                  autocomplete="off"
+                  required
+                />
+              </div>
             </.form>
           </Settings.unsaved_changes>
-          <dl class="workspace-facts">
-            <div :if={!@rename?}>
+          <dl class="settings-row-facts">
+            <div :if={!@rename?} class="settings-row">
               <dt>Name</dt>
               <dd id="workspace-name-shown">{@workspace.name}</dd>
             </div>
-            <div>
+            <div class="settings-row">
               <dt>Kind</dt>
               <dd id="workspace-kind">
                 {if @team?, do: "Team workspace", else: "Personal workspace"}
               </dd>
             </div>
-            <div>
+            <div class="settings-row">
               <dt>Your role</dt>
               <dd>{role_label(@role)}</dd>
             </div>
           </dl>
-          <p :if={!@team?} class="hint">
-            A personal workspace is yours alone. Create a team workspace to invite people.
-          </p>
-          <section aria-labelledby="new-workspace-heading">
-            <h2 id="new-workspace-heading">Another workspace</h2>
-            <p class="hint">A team workspace has its own members, repositories and projects.</p>
-            <button
-              type="button"
-              id="general-new-workspace"
-              class="ghost"
-              phx-click="dialog"
-              phx-value-name="new-workspace"
-            >
-              <.icon name="plus" size={14} />New workspace…
-            </button>
+          <section class="settings-row" aria-labelledby="new-workspace-heading">
+            <div class="settings-row-copy">
+              <h2 id="new-workspace-heading">Team workspace</h2>
+              <p class="hint">A team workspace has its own members, repositories and projects.</p>
+              <p :if={!@team?} class="hint">
+                A personal workspace is yours alone. Create a team workspace to invite people.
+              </p>
+            </div>
+            <div class="settings-row-controls">
+              <button
+                type="button"
+                id="general-new-workspace"
+                class="ghost"
+                phx-click="dialog"
+                phx-value-name="new-workspace"
+              >
+                <.icon name="plus" size={14} />New workspace…
+              </button>
+            </div>
           </section>
         </div>
 
@@ -505,11 +518,17 @@ defmodule RavixWeb.Live.WorkspaceSettings do
             </p>
           </section>
 
-          <section :if={@team? and @manager?} aria-labelledby="invite-heading">
-            <h2 id="invite-heading">Invite by GitHub username</h2>
+          <section :if={@team? and @manager?} class="settings-row" aria-labelledby="invite-heading">
+            <div class="settings-row-copy">
+              <h2 id="invite-heading">Invite by GitHub username</h2>
+              <p class="hint">
+                New users join when they first sign in.
+                <span :if={!@owner?}>Only an owner can invite an admin or owner.</span>
+              </p>
+            </div>
             <form
               id="workspace-invite-form"
-              class="workspace-invite"
+              class="workspace-invite settings-row-controls"
               phx-submit="invite"
               phx-change="suggest"
               phx-target={@myself}
@@ -544,10 +563,6 @@ defmodule RavixWeb.Live.WorkspaceSettings do
               </div>
               <button type="submit" class="primary">Invite</button>
             </form>
-            <p class="hint">
-              Somebody who has not signed in to Ravix yet joins when they first do.
-              <span :if={!@owner?}>Only an owner can invite an admin or owner.</span>
-            </p>
           </section>
 
           <section aria-labelledby="members-heading">
@@ -674,7 +689,7 @@ defmodule RavixWeb.Live.WorkspaceSettings do
                   <.link
                     :if={project.user_id == @current_user.id}
                     navigate={Settings.section_path(:project, project.id, "general")}
-                    class="ghost"
+                    class="ghost workspace-project-settings"
                     aria-label={"Settings of #{project.name}"}
                     data-tip={"Settings of #{project.name}"}
                   >
@@ -687,40 +702,46 @@ defmodule RavixWeb.Live.WorkspaceSettings do
         </div>
 
         <div :if={@section == "danger"} id="workspace-danger" class="workspace-page">
-          <section class="danger-card" aria-labelledby="leave-heading">
-            <h2 id="leave-heading">Leave this workspace</h2>
-            <p :if={@own_personal?} class="hint">
-              This is your personal workspace. You cannot leave it.
-            </p>
-            <p :if={!@own_personal?} class="hint">
-              You lose access to its projects and tracks unless somebody shared them with you directly.
-              An owner or admin can invite you back.
-            </p>
-            <button
-              :if={!@own_personal?}
-              type="button"
-              id="leave-workspace"
-              class="danger"
-              phx-click="leave"
-              phx-target={@myself}
-              data-confirm={"Leave #{@workspace.name}?"}
-            >
-              Leave {@workspace.name}
-            </button>
+          <section class="settings-row" aria-labelledby="leave-heading">
+            <div class="settings-row-copy">
+              <h2 id="leave-heading">Leave this workspace</h2>
+              <p :if={@own_personal?} class="hint">
+                This is your personal workspace. You cannot leave it.
+              </p>
+              <p :if={!@own_personal?} class="hint">
+                You lose access to its projects and tracks unless somebody shared them with you directly.
+                An owner or admin can invite you back.
+              </p>
+            </div>
+            <div :if={!@own_personal?} class="settings-row-controls">
+              <button
+                type="button"
+                id="leave-workspace"
+                class="danger"
+                phx-click="leave"
+                phx-target={@myself}
+                data-confirm={"Leave #{@workspace.name}?"}
+              >
+                Leave {@workspace.name}
+              </button>
+            </div>
           </section>
 
-          <section :if={@delete? and @team?} class="danger-card" aria-labelledby="delete-heading">
-            <h2 id="delete-heading">Delete this workspace</h2>
-            <p class="hint">
-              Nobody can open it again, and its members, invitations and GitHub connections go with it.
-            </p>
-            <p :if={@projects != []} class="hint" id="delete-has-projects">
-              It still has {length(@projects)} {if length(@projects) == 1,
-                do: "project",
-                else: "projects"}. Move or delete them first.
-            </p>
+          <section :if={@delete? and @team?} class="settings-row" aria-labelledby="delete-heading">
+            <div class="settings-row-copy">
+              <h2 id="delete-heading">Delete this workspace</h2>
+              <p class="hint">
+                Nobody can open it again, and its members, invitations and GitHub connections go with it.
+              </p>
+              <p :if={@projects != []} class="hint" id="delete-has-projects">
+                It still has {length(@projects)} {if length(@projects) == 1,
+                  do: "project",
+                  else: "projects"}. Move or delete them first.
+              </p>
+            </div>
             <form
               id="delete-workspace-form"
+              class="settings-row-controls"
               phx-change="delete-confirm"
               phx-submit="delete"
               phx-target={@myself}

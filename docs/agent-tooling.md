@@ -103,7 +103,10 @@ installation choices and a `repositories` page. Pages default to 50 items and
 are capped at 100. Pass `next_cursor` as `after` to continue. Transcript event
 data is capped, with `truncated: true` on oversized events.
 
-Settings allow name, runtime, model, instructions, setup script and packages.
+Settings allow runtime, model, instructions, setup script and packages.
+Repository projects use the full `owner/repository` name; scratch projects are
+named at creation. Project names cannot be changed. The legacy settings `name`
+field is accepted but ignored.
 Secret names can be read, but secret values are never returned. Secret writes,
 project/track sharing changes and project deletion/rebuild are not exposed.
 Setup scripts and agent instructions can execute code, which the consent page

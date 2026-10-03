@@ -5,6 +5,7 @@ defmodule Ravix.Routines.Routine do
 
   @primary_key {:id, :string, autogenerate: false}
   schema "routines" do
+    field :resource_id, :string
     field :user_id, :string
     field :project_id, :string
     field :name, :string

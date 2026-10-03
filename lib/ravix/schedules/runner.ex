@@ -28,7 +28,9 @@ defmodule Ravix.Schedules.Runner do
     with true <- not is_nil(user),
          {:ok, _} <- Access.project_access(user, schedule.project_id),
          {:ok, track} <-
-           Tracks.open(user, schedule.project_id, %{"title" => track_name(schedule)}) do
+           Tracks.open(user, schedule.project_id, %{"title" => track_name(schedule)},
+             resource_id: schedule.resource_id
+           ) do
       case Tracks.prompt(user, track.id, %{
              "prompt" => schedule.prompt,
              "request_id" =>

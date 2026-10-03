@@ -43,28 +43,45 @@ defmodule Ravix.Previews.Store do
 
   # ── defaults ─────────────────────────────────────────────────────────
 
-  @doc "A project's default configuration, or nil."
-  @spec defaults(String.t()) :: Row.config() | nil
-  def defaults(project_id) do
-    case Repo.get(PreviewDefault, project_id) do
-      nil -> nil
-      %PreviewDefault{config: config} -> config
-    end
+  @doc "The defaults of a project's original or retained resource."
+  @spec defaults(String.t(), String.t() | nil) :: Row.config() | nil
+  def defaults(project_id, resource_id \\ nil) do
+    identity = resource_id || project_id
+
+    Repo.one(
+      from d in PreviewDefault,
+        where: d.project_id == ^project_id,
+        where: fragment("COALESCE(?, ?)", d.resource_id, d.project_id) == ^identity,
+        select: d.config
+    )
   end
 
-  @doc "Save (or with nil, clear) a project's default configuration."
-  @spec set_defaults(String.t(), Row.config() | nil) :: :ok
-  def set_defaults(project_id, nil) do
-    Repo.delete_all(from d in PreviewDefault, where: d.project_id == ^project_id)
+  @doc "Save (or with nil, clear) the defaults of one project resource."
+  @spec set_defaults(String.t(), Row.config() | nil, String.t() | nil) :: :ok
+  def set_defaults(project_id, config, resource_id \\ nil)
+
+  def set_defaults(project_id, nil, resource_id) do
+    identity = resource_id || project_id
+
+    Repo.delete_all(
+      from d in PreviewDefault,
+        where: d.project_id == ^project_id,
+        where: fragment("COALESCE(?, ?)", d.resource_id, d.project_id) == ^identity
+    )
+
     :ok
   end
 
-  def set_defaults(project_id, config) do
+  def set_defaults(project_id, config, resource_id) do
     %PreviewDefault{}
-    |> PreviewDefault.changeset(%{project_id: project_id, config: config})
+    |> PreviewDefault.changeset(%{
+      project_id: project_id,
+      resource_id: resource_id,
+      config: config
+    })
     |> Repo.insert!(
       on_conflict: [set: [config: config]],
-      conflict_target: :project_id
+      conflict_target: {:unsafe_fragment, "(COALESCE(resource_id, project_id))"}
     )
 
     :ok

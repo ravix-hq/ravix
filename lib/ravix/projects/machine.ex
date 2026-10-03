@@ -246,7 +246,7 @@ defmodule Ravix.Projects.Machine do
   defp adopt(project, client, set_id) do
     with {:ok, body} <- adopted_body(project, client, set_id),
          {:ok, _agent} <- Fountain.update_agent(client, project.agent_id, body),
-         do: Projects.Store.set_credential_set(project.id, set_id)
+         do: Projects.Store.set_credential_set(project, set_id)
   end
 
   # The owner's set becomes the default. The allowlist is reset to `[]` only
@@ -276,8 +276,8 @@ defmodule Ravix.Projects.Machine do
   # ownership: the owner's row, read by the project's own `user_id`. The caller
   # is already through `Access.project_of/2` or `Access.project_access/2`, and
   # what is read is which set pays, which is the owner's whoever is asking.
-  defp owner_set(%Project{user_id: user_id}) do
-    case Ravix.Accounts.Store.get_user(user_id) do
+  defp owner_set(%Project{} = project) do
+    case Ravix.Accounts.Store.get_user(project.resource_owner_id || project.user_id) do
       %User{credential_set_id: id} when is_binary(id) -> id
       _ -> nil
     end
@@ -297,7 +297,7 @@ defmodule Ravix.Projects.Machine do
   """
   @spec rebuild(Project.t(), Fountain.Client.t()) :: {:ok, Rebuild.t()} | {:error, term()}
   def rebuild(%Project{} = project, client) do
-    if Project.maintenance?(project),
+    if Project.maintenance?(project) or length(Projects.Store.resources(project)) > 1,
       do: Projects.Deletion.retire_shared(project, client),
       else: with(:ok <- shared_lifecycle(project), do: rebuild_shared(project, client))
   end
@@ -434,6 +434,7 @@ defmodule Ravix.Projects.Machine do
   defp repoint_row(project, %{repo: repo} = target) do
     fields =
       %{
+        name: repo.full_name,
         repo_full_name: repo.full_name,
         repo_private: repo.private == true,
         default_branch: repo.default_branch,
@@ -474,7 +475,7 @@ defmodule Ravix.Projects.Machine do
             project.id,
             Map.take(
               project,
-              ~w(repo_full_name repo_private default_branch installation_id github_repo_id workspace_installation_id)a
+              ~w(name repo_full_name repo_private default_branch installation_id github_repo_id workspace_installation_id)a
             ),
             stamp: false
           )
@@ -493,7 +494,9 @@ defmodule Ravix.Projects.Machine do
   end
 
   defp kept_agents(project, client) do
-    if Project.maintenance?(project), do: rewrite_prompts(project, client), else: :ok
+    if Project.maintenance?(project) or length(Projects.Store.resources(project)) > 1,
+      do: rewrite_prompts(project, client),
+      else: :ok
   end
 
   # The agents stay on the maintenance path, so their system prompts, which
@@ -513,7 +516,7 @@ defmodule Ravix.Projects.Machine do
   @doc "The machine, its settings and its secrets, gone; the row archived; `tracks` published."
   @spec destroy(Project.t(), Fountain.Client.t()) :: :ok | {:error, term()}
   def destroy(%Project{} = project, client) do
-    if Project.maintenance?(project),
+    if Project.maintenance?(project) or length(Projects.Store.resources(project)) > 1,
       do: Projects.Deletion.request(project),
       else: with(:ok <- shared_lifecycle(project), do: destroy_shared(project, client))
   end
@@ -704,8 +707,12 @@ defmodule Ravix.Projects.Machine do
   nothing here looks a record up by name, only by the id the row stores.
   """
   @spec fountain_name(Project.t(), String.t() | nil) :: String.t()
-  def fountain_name(%Project{id: id, name: name}, suffix \\ nil) do
-    Enum.join(["Ravix", name, String.slice(id, 0, 8)] ++ List.wrap(suffix), " · ")
+  def fountain_name(%Project{} = project, suffix \\ nil) do
+    Enum.join(
+      ["Ravix", project.name, String.slice(project.resource_id || project.id, 0, 8)] ++
+        List.wrap(suffix),
+      " · "
+    )
   end
 
   @doc """

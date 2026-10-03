@@ -36,7 +36,11 @@ defmodule Ravix.Tracks.Setup do
       track ->
         try do
           # ownership: the setup lease admitted by Access.track_access owns this opening reconciliation.
-          project = Ravix.Projects.Store.live_project(track.project_id)
+          project =
+            Ravix.Projects.Store.for_track(
+              Ravix.Projects.Store.live_project(track.project_id),
+              track
+            )
 
           if project do
             thread = if track.sandbox_layout == :dedicated, do: Store.thread(track.id)
@@ -111,7 +115,7 @@ defmodule Ravix.Tracks.Setup do
     cond do
       Fountain.Error.credential?(error) ->
         # ownership: no door — the setup lease authorizes this project and its funding owner.
-        owner = Ravix.Accounts.Store.get_user(project.user_id)
+        owner = Ravix.Accounts.Store.get_user(project.resource_owner_id || project.user_id)
 
         agent =
           Map.get(

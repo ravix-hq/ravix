@@ -14,6 +14,7 @@ defmodule Ravix.Release do
   that reach a context do the same.
   """
   alias Ravix.People.Cutover
+  alias Ravix.Projects.Consolidation
   alias Ravix.Tracks.{Billing, TitleBackfill}
   alias Ravix.Workspaces.{Backfill, PersonalAssignment, RaviSeed}
 
@@ -65,6 +66,12 @@ defmodule Ravix.Release do
     summary = with_repo_only(fn -> PersonalAssignment.run(apply: apply?) end)
     Enum.each(PersonalAssignment.format(summary), &IO.puts/1)
     summary
+  end
+
+  @doc "Consolidate one workspace after stopping serving instances; dry run by default."
+  def consolidate_projects(workspace_id, apply? \\ false) do
+    load_app()
+    with_repo_only(fn -> Consolidation.run(workspace_id, apply: apply?) end)
   end
 
   @doc """

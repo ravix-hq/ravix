@@ -80,7 +80,7 @@ defmodule RavixWeb.FirstRunTest do
   end
 
   describe "/home with nothing started" do
-    test "is the first-prompt form, with suggestions and what the words mean", %{conn: conn} do
+    test "is the first-prompt form, with suggestions", %{conn: conn} do
       repos([%{full_name: "acme/app", installation_id: 42}])
       view = home(conn, user())
 
@@ -104,11 +104,6 @@ defmodule RavixWeb.FirstRunTest do
         view |> element("#home-start .quick-start-suggestion", suggestion) |> render_click()
         assert has_element?(view, "#home-quick-start-prompt", suggestion)
       end
-
-      assert has_element?(view, "#home-explainer", "A track")
-      assert has_element?(view, "#home-explainer", "A preview")
-      assert has_element?(view, "#home-explainer", "Sharing")
-      assert has_element?(view, "#home-explainer a[href='/welcome?from=start']", "How it works")
     end
 
     test "Start creates the project and its track, queues the prompt and lands in the track",

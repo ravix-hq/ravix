@@ -3442,6 +3442,102 @@ defmodule RavixWeb.TrackLiveTest do
       assert has_element?(ctx.view, "#model-trigger:not([disabled])")
     end
 
+    test "choosing another model family opens a draft thread instead of changing this one", ctx do
+      user_id = ctx.user.id
+      track_id = ctx.track.id
+      options = draft_options(ctx)
+
+      expect(Tracks, :thread_options, fn %{id: ^user_id}, ^track_id -> {:ok, options} end)
+      reject(&Tracks.set_model/4)
+      reject(&Tracks.start_thread/4)
+      reject(&Ravix.Fountain.create_conversation/2)
+      threads_before = Repo.aggregate(Ravix.Tracks.Thread, :count)
+
+      ctx.view |> element("#model-trigger") |> render_focus()
+      render_async(ctx.view)
+
+      assert has_element?(
+               ctx.view,
+               ~s(#model-models-codex button[phx-click="draft-thread"][phx-value-runtime="codex"][phx-value-model="openai/gpt-6-astra"])
+             )
+
+      ctx.view
+      |> element(
+        ~s(#model-models-codex button[phx-click="draft-thread"][phx-value-model="openai/gpt-6-astra"])
+      )
+      |> render_click()
+
+      assert has_element?(ctx.view, "#thread-tab-draft[aria-selected=true]")
+      assert Repo.aggregate(Ravix.Tracks.Thread, :count) == threads_before
+
+      assert has_element?(
+               ctx.view,
+               ~s(#draft-runtime-menu input[name="thread_draft[runtime]"][value="codex"][checked])
+             )
+
+      assert has_element?(
+               ctx.view,
+               ~s(#draft-runtime-menu input[name="thread_draft[model]"][value="openai/gpt-6-astra"][checked])
+             )
+    end
+
+    for delayed? <- [false, true] do
+      @delayed_options delayed?
+      test "track navigation discards #{if delayed?, do: "pending", else: "loaded"} model options",
+           ctx do
+        first_id = ctx.track.id
+        next = insert_track(project: ctx.project, conversation_id: "next-conversation")
+        next_id = next.id
+        test_pid = self()
+        old_options = draft_options(ctx)
+        new_options = draft_options(ctx, runtime: "codex")
+
+        stub(Tracks, :thread_options, fn _, id ->
+          case id do
+            ^first_id ->
+              if @delayed_options do
+                send(test_pid, {:reading_options, self()})
+                receive do: (:release_options -> :ok)
+              end
+
+              {:ok, old_options}
+
+            ^next_id ->
+              {:ok, new_options}
+          end
+        end)
+
+        ctx.view |> element("#model-trigger") |> render_click()
+
+        monitor =
+          if @delayed_options do
+            assert_receive {:reading_options, worker}
+            Process.monitor(worker)
+          else
+            render_async(ctx.view)
+            nil
+          end
+
+        {:ok, project} = Ravix.Projects.get(ctx.user, ctx.project.id)
+        send(ctx.view.pid, {:select_track, project, Tracks.present(next)})
+        settle(ctx.view)
+        if monitor, do: assert_receive({:DOWN, ^monitor, :process, _, _})
+
+        ctx.view |> element("#thread-add-menu button[phx-click='draft-thread']") |> render_click()
+        render_async(ctx.view)
+
+        assert has_element?(
+                 ctx.view,
+                 ~s(#draft-runtime-menu input[name="thread_draft[runtime]"][value="codex"][checked])
+               )
+
+        assert has_element?(
+                 ctx.view,
+                 ~s(#draft-runtime-menu input[name="thread_draft[model]"][value="openai/gpt-6-astra"][checked])
+               )
+      end
+    end
+
     test "choosing the project default clears the personal preference through the context", ctx do
       expect(Tracks, :set_model, fn _, _, _, nil -> {:ok, nil} end)
       ctx.view |> element(~s(#model-menu [phx-value-model=""])) |> render_click()
@@ -3632,22 +3728,6 @@ defmodule RavixWeb.TrackLiveTest do
       assert has_element?(ctx.view, ~s(#model-fast[phx-value-id="fast-mode"][aria-checked=false]))
     end
 
-    test "the menu is in sections, Model, Effort and Speed, with the default note last (RAV-95)",
-         ctx do
-      html = ctx.view |> element("#model-menu") |> render()
-
-      assert ["Model", "Effort", "Speed"] ==
-               html
-               |> LazyHTML.from_fragment()
-               |> LazyHTML.query(".model-section-label")
-               |> Enum.map(&LazyHTML.text/1)
-
-      assert has_element?(ctx.view, "#model-menu > p.model-default-hint:last-child")
-      assert html =~ "Also your default for new threads"
-      # Three models are a short list: no search.
-      refute has_element?(ctx.view, "#model-search")
-    end
-
     test "Fast is a switch that shows its state, on and off", ctx do
       assert has_element?(
                ctx.view,
@@ -3705,45 +3785,6 @@ defmodule RavixWeb.TrackLiveTest do
       refute render(ctx.view) =~ "Xhigh"
     end
 
-    test "more than six models get a search field over the model rows", ctx do
-      models = for n <- 1..7, do: "anthropic/claude-test-#{n}"
-
-      stub(Tracks, :get, fn _, id, _ ->
-        track =
-          Tracks.present(Repo.get!(Track, id), role: :owner)
-          |> Map.merge(%{status: :ready, model: hd(models), runtime: "claude"})
-          |> Map.merge(%{session_options: nil, session_config: %{}})
-
-        {:ok,
-         %{
-           track: track,
-           header: blank_header(),
-           threads: thread_options(id),
-           starters: [],
-           models: models
-         }}
-      end)
-
-      send(ctx.view.pid, {:hub, Event.new(:tracks, ctx.project.id, track_id: ctx.track.id)})
-      settle(ctx.view)
-
-      assert has_element?(
-               ctx.view,
-               "#model-menu > input#model-search[type=search][data-chip-filter][aria-label='Search models']"
-             )
-
-      for model <- models do
-        assert has_element?(
-                 ctx.view,
-                 ~s(#model-models [phx-value-model="#{model}"][data-filter-text])
-               )
-      end
-
-      assert has_element?(ctx.view, "#model-models [data-chip-filter-empty][hidden]")
-      # Not reported yet: no Effort, and no Speed either.
-      refute has_element?(ctx.view, "#model-speed")
-    end
-
     test "nothing advertised yet, or an older Fountain: no controls, and no slash commands",
          ctx do
       ctx.serve.("claude", "anthropic/claude-opus-5-5", nil, %{"effort" => "high"})
@@ -3773,6 +3814,30 @@ defmodule RavixWeb.TrackLiveTest do
       expect(Tracks, :set_session_option, fn _, _, _, "fast", "false" -> {:ok, %{}} end)
       ctx.view |> element("#model-fast") |> render_click()
       render_async(ctx.view)
+    end
+
+    test "cycling effort persists each advertised choice and wraps to the first", ctx do
+      stub(Ravix.MachineCache, :conversations, fn _, _, _ -> {:ok, []} end)
+      client = FakeTransport.client([])
+      stub(Ravix.Fountain, :client, fn -> client end)
+
+      stub(Ravix.Fountain, :get_conversation, fn _, "live-conversation" ->
+        {:ok,
+         Shapes.conversation(%{
+           "id" => "live-conversation",
+           "status" => "idle",
+           "session_config_options" => @claude
+         })}
+      end)
+
+      for value <- ["max", "default", "high"] do
+        ctx.view |> element("#model-cycle-effort") |> render_click()
+        render_async(ctx.view)
+
+        assert Repo.get!(Ravix.Tracks.Thread, ctx.track.id).session_config["effort"] == value
+        assert ThreadPreference.session_config(ctx.user, ctx.project.runtime)["effort"] == value
+        ctx.serve.("claude", "anthropic/claude-opus-5-5", @claude, %{"effort" => value})
+      end
     end
 
     test "unadvertised ids and values are refused at the event, before the context", ctx do
@@ -6492,25 +6557,6 @@ defmodule RavixWeb.TrackLiveTest do
 
     assert has_element?(ctx.view, "#machine-dock:not([hidden])")
     assert has_element?(ctx.view, "#track-terminal .dock-empty h3", "No commands yet")
-
-    assert has_element?(
-             ctx.view,
-             "#track-terminal .dock-empty",
-             "builds and scripts run one at a time"
-           )
-
-    assert has_element?(
-             ctx.view,
-             "#track-terminal .dock-empty",
-             "For an interactive shell, open a terminal with +."
-           )
-
-    assert has_element?(
-             ctx.view,
-             "#track-terminal .dock-empty",
-             "For a process that keeps running"
-           )
-
     refute has_element?(ctx.view, "button[phx-click=dock]", "Run")
     refute has_element?(ctx.view, "button[phx-click=dock]", "Terminal")
   end

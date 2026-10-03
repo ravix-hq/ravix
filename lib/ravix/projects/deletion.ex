@@ -25,9 +25,18 @@ defmodule Ravix.Projects.Deletion do
   end
 
   def retire_shared_locked(project, client) do
+    outcomes = Enum.map(Store.resources(project), &retire_resource(&1, client))
+
+    case Enum.find(outcomes, &match?({:error, _}, &1)) do
+      nil -> {:ok, %Projects.Machine.Rebuild{removed: ["shared machine"], failed: []}}
+      error -> error
+    end
+  end
+
+  defp retire_resource(project, client) do
     # ownership: Access.project_of admitted the shared-only rebuild.
     with {:ok, :ok} <- Sandbox.Store.retire_shared_tracks(project) do
-      operations = Sandbox.Store.shared_retirements(project.id)
+      operations = Sandbox.Store.shared_retirements(project)
       for op <- operations, do: Sandbox.advance(client, op.id)
       retirement_result(project, operations)
     end
@@ -38,7 +47,7 @@ defmodule Ravix.Projects.Deletion do
     failed? = Enum.any?(operations, &(Sandbox.Store.get_operation(&1.id).phase == "failed"))
 
     cond do
-      Store.get_project(project.id).shared_machine_retiring ->
+      Store.for_resource(Store.get_project(project.id), project.resource_id).shared_machine_retiring ->
         {:error,
          {:conflict, "machine_cleanup_pending",
           "The shared machine is still being removed. Try again shortly. Dedicated tracks are unaffected."}}
@@ -61,13 +70,26 @@ defmodule Ravix.Projects.Deletion do
   def advance(client, project) do
     # ownership: the durable project deletion admitted by Access.project_of owns its track cleanup.
     if Sandbox.Store.project_clean?(project.id) do
-      with :ok <- Projects.RuntimeAgents.retire(project, client),
-           :ok <- absent(Fountain.delete_agent(client, project.agent_id)),
-           :ok <- delete_vault(client, project.vault_id),
-           :ok <- absent(Fountain.delete_environment(client, project.environment_id)) do
+      result =
+        Enum.reduce_while(Store.resources(project), :ok, fn resource, :ok ->
+          delete_resource(client, resource)
+        end)
+
+      with :ok <- result do
         Store.archive(project.id)
         Hub.publish(project.id, :tracks)
       end
+    end
+  end
+
+  defp delete_resource(client, resource) do
+    with :ok <- Projects.RuntimeAgents.retire(resource, client),
+         :ok <- absent(Fountain.delete_agent(client, resource.agent_id)),
+         :ok <- delete_vault(client, resource.vault_id),
+         :ok <- absent(Fountain.delete_environment(client, resource.environment_id)) do
+      {:cont, :ok}
+    else
+      error -> {:halt, error}
     end
   end
 

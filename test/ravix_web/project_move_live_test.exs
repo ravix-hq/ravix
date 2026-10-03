@@ -167,7 +167,7 @@ defmodule RavixWeb.ProjectMoveLiveTest do
   test "with workspaces switched off there is no Workspace section", ctx do
     Application.put_env(:ravix, :workspace_access, false)
     view = open_settings(ctx)
-    assert has_element?(view, "#settings-form")
+    assert has_element?(view, "#general-repository")
     refute has_element?(view, "#general-workspace")
   end
 

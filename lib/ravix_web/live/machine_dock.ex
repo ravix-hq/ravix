@@ -622,7 +622,7 @@ defmodule RavixWeb.Live.MachineDock do
               phx-click="shell-new"
               phx-target={@myself}
               disabled={length(@shells) >= Terminal.max_tabs()}
-              title={
+              data-tip={
                 if length(@shells) >= Terminal.max_tabs(),
                   do: "A track can have #{Terminal.max_tabs()} terminals open at once"
               }
@@ -659,9 +659,7 @@ defmodule RavixWeb.Live.MachineDock do
             </div>
             <div :if={@output == [] && @dock == :terminal} class="dock-empty">
               <.empty icon="terminal" title="No commands yet">
-                Tests, builds and scripts run one at a time in this track’s worktree.
-                For an interactive shell, open a terminal with +. For a process
-                that keeps running, use the run script.
+                Run a command below, or open an interactive terminal with +.
                 <:action label="Open Preview" click={JS.push("panel", value: %{name: "preview"})} />
               </.empty>
             </div>

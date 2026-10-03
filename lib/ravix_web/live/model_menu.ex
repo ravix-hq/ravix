@@ -147,6 +147,11 @@ defmodule RavixWeb.Live.ModelMenu do
   attr :session_config, :map, default: %{}, doc: "the thread's chosen option values"
   attr :project_model, :string, required: true
   attr :models, :list, required: true, doc: "the catalog's models for the project's runtime"
+
+  attr :runtime_options, :map,
+    default: nil,
+    doc: "all runtimes and models available for new threads"
+
   attr :disabled, :boolean, default: false
   attr :busy, :boolean, default: false, doc: "a turn is running, which is why it is disabled"
 
@@ -168,10 +173,8 @@ defmodule RavixWeb.Live.ModelMenu do
   Before any turn has reported, or on a Fountain without the field, neither
   is shown and the label is the model alone.
 
-  RAV-95 laid it out in sections, Model, Effort and Speed, with Fast as a
-  switch: once the runtime has reported, a model it lists no Fast for shows
-  the switch off and disabled, "Not available for this model". More than
-  six models get a search field.
+  Models stay in a searchable flat list. Effort expands below it; Fast is
+  a switch, disabled when the runtime reports no Fast option for this model.
   """
   def menu(%{models: []} = assigns) do
     assigns = assign(assigns, :label, chip_label(assigns))
@@ -183,12 +186,22 @@ defmodule RavixWeb.Live.ModelMenu do
 
   def menu(assigns) do
     %{effort: effort, fast: fast} = SessionConfig.controls(assigns.session_options)
+    effort_value = SessionConfig.in_force(effort, assigns.session_config)
+    effort_choice = effort && Enum.find(effort.choices, &(&1.value == effort_value))
+
+    next_effort =
+      if effort && effort.choices != [] do
+        index = Enum.find_index(effort.choices, &(&1.value == effort_value))
+        Enum.at(effort.choices, rem((index || -1) + 1, length(effort.choices)))
+      end
 
     assigns =
       assigns
-      |> assign(:choices, Enum.uniq(assigns.models ++ [assigns.model]))
+      |> assign(:groups, model_groups(assigns))
       |> assign(:effort, effort)
-      |> assign(:effort_value, SessionConfig.in_force(effort, assigns.session_config))
+      |> assign(:effort_value, effort_value)
+      |> assign(:effort_choice, effort_choice)
+      |> assign(:next_effort, next_effort)
       |> assign(:fast, fast)
       |> assign(:speed?, is_list(assigns.session_options))
       |> assign(
@@ -209,48 +222,123 @@ defmodule RavixWeb.Live.ModelMenu do
       disabled={@disabled}
       title={if @busy, do: "#{@label}\nCan't change while the agent is working"}
       data-busy={@busy}
+      phx-click="model-options"
+      phx-focus="model-options"
     >
-      <.search :if={searchable?(@choices)} id="model" />
-      <div id="model-models" role="radiogroup" aria-labelledby="model-models-label">
-        <p id="model-models-label" class="model-section-label">Model</p>
-        <.option
-          :for={choice <- @choices}
-          model={choice}
-          checked={choice == @model}
-          tag={if choice == @project_model, do: "Project default"}
-          popovertarget="model-menu"
-          popovertargetaction="hide"
-          phx-click="set-model"
-          phx-value-model={if choice == @project_model, do: "", else: choice}
-          filter={ModelName.friendly(choice)}
-        />
-        <.search_empty :if={searchable?(@choices)} />
+      <.search id="model" />
+      <div id="model-families" role="group" aria-label="Model families">
+        <div
+          :for={group <- @groups}
+          id={if group.current?, do: "model-models", else: "model-models-#{group.runtime}"}
+          role={if group.current?, do: "radiogroup", else: "group"}
+          aria-label={group.label}
+        >
+          <.option
+            :for={choice <- group.models}
+            :if={group.current?}
+            model={choice}
+            checked={choice == @model}
+            tag={if choice == @project_model, do: "Project default"}
+            popovertarget="model-menu"
+            popovertargetaction="hide"
+            phx-click="set-model"
+            phx-value-model={if choice == @project_model, do: "", else: choice}
+            filter={group.label <> " " <> ModelName.friendly(choice)}
+            disabled={@disabled}
+          />
+          <.new_thread_option
+            :for={choice <- group.models}
+            :if={!group.current?}
+            runtime={group.runtime}
+            model={choice}
+            enabled={group.available? && !@disabled}
+            tag={if group.available?, do: "New thread", else: group.reason}
+          />
+        </div>
+        <p :if={@runtime_options == nil} class="model-default-hint model-loading">
+          Open to load other agents.
+        </p>
+        <.search_empty />
       </div>
-      <div
+      <details
         :if={@effort}
         id="model-effort"
-        role="radiogroup"
-        aria-labelledby="model-effort-label"
+        class="model-effort"
       >
-        <p id="model-effort-label" class="model-section-label">Effort</p>
-        <.option
-          :for={choice <- @effort.choices}
-          model={choice.value}
-          label={choice.name}
-          checked={choice.value == @effort_value}
-          popovertarget="model-menu"
-          popovertargetaction="hide"
+        <summary class="account-item model-effort-trigger">
+          <span id="model-effort-label">Effort</span><span class="spacer"></span><small>
+            {if @effort_choice, do: @effort_choice.name}
+          </small><.icon name="chevron" size={11} />
+        </summary>
+        <div role="radiogroup" aria-labelledby="model-effort-label">
+          <.option
+            :for={choice <- @effort.choices}
+            model={choice.value}
+            label={choice.name}
+            checked={choice.value == @effort_value}
+            popovertarget="model-menu"
+            popovertargetaction="hide"
+            phx-click="set-session-option"
+            phx-value-id={@effort.id}
+            phx-value-choice={choice.value}
+            disabled={@disabled}
+          />
+        </div>
+      </details>
+      <div :if={@speed?} id="model-speed" role="group" aria-labelledby="model-speed-label">
+        <span id="model-speed-label" class="sr-only">Speed</span>
+        <.fast_switch fast={@fast} on?={@fast_on?} disabled={@disabled} />
+      </div>
+      <div class="model-menu-footer">
+        <.link navigate="/settings/agents" class="ghost" data-leaves-page>
+          <.icon name="settings" size={12} />Edit agents
+        </.link>
+        <button
+          :if={@next_effort}
+          type="button"
+          id="model-cycle-effort"
+          class="ghost"
           phx-click="set-session-option"
           phx-value-id={@effort.id}
-          phx-value-choice={choice.value}
-        />
-      </div>
-      <div :if={@speed?} id="model-speed" role="group" aria-labelledby="model-speed-label">
-        <p id="model-speed-label" class="model-section-label">Speed</p>
-        <.fast_switch fast={@fast} on?={@fast_on?} />
+          phx-value-choice={@next_effort.value}
+          disabled={@disabled}
+          data-tip={"Use #{@next_effort.name} effort"}
+        >
+          Cycle effort
+        </button>
       </div>
       <p class="model-default-hint">Also your default for new threads</p>
     </.chip>
+    """
+  end
+
+  attr :runtime, :string, required: true
+  attr :model, :string, required: true
+  attr :enabled, :boolean, required: true
+  attr :tag, :string, default: nil
+
+  defp new_thread_option(assigns) do
+    assigns = assign(assigns, :label, ModelName.friendly(assigns.model))
+
+    ~H"""
+    <button
+      type="button"
+      class="account-item model-option"
+      title={@label}
+      data-filter-text={RavixWeb.AgentName.label(@runtime) <> " " <> @label}
+      disabled={!@enabled}
+      popovertarget="model-menu"
+      popovertargetaction="hide"
+      phx-click="draft-thread"
+      phx-value-runtime={@runtime}
+      phx-value-model={@model}
+    >
+      <span class="truncate">{@label}</span><small :if={@tag}>{@tag}</small><span class="spacer"></span><.icon
+        :if={@enabled}
+        name="external"
+        size={13}
+      />
+    </button>
     """
   end
 
@@ -259,6 +347,7 @@ defmodule RavixWeb.Live.ModelMenu do
     doc: "the advertised Fast option, nil when this model has none"
 
   attr :on?, :boolean, required: true
+  attr :disabled, :boolean, default: false
 
   # A switch that stays in the open menu and shows its state. A model the
   # runtime offers no Fast for keeps the row, off and disabled, and says why
@@ -273,6 +362,7 @@ defmodule RavixWeb.Live.ModelMenu do
       aria-checked="false"
       aria-disabled="true"
       title="Not available for this model"
+      data-tip="Not available for this model"
     >
       <span class="truncate">Fast mode</span><span class="spacer"></span><span
         class="model-switch"
@@ -293,6 +383,7 @@ defmodule RavixWeb.Live.ModelMenu do
       phx-click="set-session-option"
       phx-value-id={@fast.id}
       phx-value-choice={to_string(!@on?)}
+      disabled={@disabled}
     >
       <span class="truncate">{@fast.name}</span><span class="spacer"></span><span
         class="model-switch"
@@ -305,6 +396,64 @@ defmodule RavixWeb.Live.ModelMenu do
   @doc "Whether a model menu offering `models` gets a search field: more than six."
   def searchable?(models), do: length(models) > 6
 
+  defp model_groups(assigns) do
+    current = current_group(assigns)
+
+    other_groups =
+      case assigns.runtime_options do
+        %{runtimes: runtimes} ->
+          runtimes
+          |> Enum.reject(&(&1.runtime == assigns.runtime))
+          |> Enum.map(&runtime_group/1)
+
+        _ ->
+          []
+      end
+
+    [current | other_groups]
+  end
+
+  defp current_group(assigns) do
+    models =
+      case assigns.runtime_options do
+        %{runtimes: runtimes} ->
+          runtimes
+          |> Enum.find(&(&1.runtime == assigns.runtime))
+          |> case do
+            %{models: models} -> models
+            _ -> assigns.models
+          end
+
+        _ ->
+          assigns.models
+      end
+
+    %{
+      runtime: assigns.runtime,
+      label: RavixWeb.AgentName.label(assigns.runtime) || "Agent",
+      current?: true,
+      available?: true,
+      reason: nil,
+      models: Enum.uniq(models ++ [assigns.model] ++ List.wrap(assigns.project_model))
+    }
+  end
+
+  defp runtime_group(choice) do
+    %{
+      runtime: choice.runtime,
+      label: RavixWeb.AgentName.label(choice.runtime) || choice.runtime,
+      current?: false,
+      available?: choice.connected && choice.enabled && choice.models != [],
+      reason: unavailable_reason(choice),
+      models: choice.models
+    }
+  end
+
+  defp unavailable_reason(%{enabled: false}), do: "Unavailable"
+  defp unavailable_reason(%{connected: false}), do: "Not connected"
+  defp unavailable_reason(%{models: []}), do: "No models"
+  defp unavailable_reason(_), do: nil
+
   attr :id, :string, required: true, doc: "the chip's id; the field is `<id>-search`"
 
   @doc """
@@ -314,16 +463,19 @@ defmodule RavixWeb.Live.ModelMenu do
   """
   def search(assigns) do
     ~H"""
-    <input
-      id={"#{@id}-search"}
-      type="search"
-      class="model-search"
-      placeholder="Search models"
-      aria-label="Search models"
-      autocomplete="off"
-      data-chip-filter
-      data-chip-focus
-    />
+    <div class="model-search-row">
+      <.icon name="search" size={13} />
+      <input
+        id={"#{@id}-search"}
+        type="search"
+        class="model-search"
+        placeholder="Search models"
+        aria-label="Search models"
+        autocomplete="off"
+        data-chip-filter
+        data-chip-focus
+      />
+    </div>
     """
   end
 

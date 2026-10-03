@@ -275,7 +275,8 @@ defmodule Ravix.Projects do
   The runtime defaults to the owner's agent choice, then the catalog default.
   The owner must hold a credential for that runtime, checked authoritatively
   before any Fountain records are created. Provider errors refuse creation.
-  A name is required unless a repository supplies one.
+  Repository projects use GitHub’s full repository name, ignoring `name`.
+  A name is required for a scratch project.
   """
   @spec create(User.t(), map()) :: {:ok, View.t()} | {:error, reason()}
   def create(%User{} = user, attrs) do
@@ -356,7 +357,7 @@ defmodule Ravix.Projects do
          project = %Project{
            id: Ecto.UUID.generate(),
            user_id: user.id,
-           name: repo.name,
+           name: repo.full_name,
            repo_full_name: repo.full_name,
            repo_private: repo.private == true,
            default_branch: repo.default_branch,
@@ -700,6 +701,10 @@ defmodule Ravix.Projects do
   every account that ever installed ravix. No installation at all is not an
   error: it is the state everybody is in before they grant access, and the
   picker renders an invitation to do so.
+
+  With no installation filter, returns repositories from every account the
+  person can access, retaining each repository's installation for creation.
+  An explicit installation id still narrows the agent tooling's listing.
   """
   @spec repos(User.t(), integer() | nil) ::
           {:ok,
@@ -719,6 +724,26 @@ defmodule Ravix.Projects do
 
   defp repos_of(_app, _token, [], _wanted),
     do: {:ok, %{installations: [], selected: nil, repos: []}}
+
+  defp repos_of(app, token, installations, nil) do
+    # Assume a handful of accounts per person; reads use GitHub's existing cache.
+    # Threshold-based deferral required by AGENTS.md; no unfinished behavior.
+    # credo:disable-for-next-line Credo.Check.Design.TagTODO
+    # TODO WHEN picker reads exceed 2s p95 for users with 5+ installations,
+    # measure the per-account spans before adding concurrent reads.
+    result =
+      Enum.reduce_while(installations, {:ok, []}, fn installation, {:ok, lists} ->
+        case reauth_on_401(Ravix.GitHub.repositories(app, token, installation.id)) do
+          {:ok, repos} -> {:cont, {:ok, [repos | lists]}}
+          {:error, _} = error -> {:halt, error}
+        end
+      end)
+
+    with {:ok, lists} <- result do
+      repos = lists |> List.flatten() |> Enum.sort_by(&String.downcase(&1.full_name))
+      {:ok, %{installations: installations, selected: nil, repos: repos}}
+    end
+  end
 
   defp repos_of(app, token, [first | _] = installations, wanted) do
     chosen = if wanted && Enum.any?(installations, &(&1.id == wanted)), do: wanted, else: first.id
@@ -982,7 +1007,7 @@ defmodule Ravix.Projects do
          | repo: repo.full_name,
            default_branch: repo.default_branch,
            private: repo.private == true,
-           name: if(input.name == "", do: repo.name, else: input.name)
+           name: repo.full_name
        }}
     end
   end

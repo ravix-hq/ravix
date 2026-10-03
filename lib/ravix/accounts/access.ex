@@ -831,7 +831,14 @@ defmodule Ravix.Accounts.Access do
         # track somebody else made, which its creator runs (#299). There the
         # owner has what their seat gives them, like anybody else on it.
         project.user_id == user_id ->
-          {:ok, %TrackAccess{track: track, project: project, role: :owner, level: elem(grant, 0)}}
+          {:ok,
+           %TrackAccess{
+             track: track,
+             # ownership: Access.track_access/2 has established the visible track grant above.
+             project: Projects.for_track(project, track),
+             role: :owner,
+             level: elem(grant, 0)
+           }}
 
         track.closed_at != nil ->
           {:error, :not_found}
@@ -842,7 +849,13 @@ defmodule Ravix.Accounts.Access do
         # at the level of the nearest grant that reaches it (RAV-75).
         true ->
           {:ok,
-           %TrackAccess{track: track, project: project, role: :member, level: elem(grant, 0)}}
+           %TrackAccess{
+             track: track,
+             # ownership: Access.track_access/2 has established the visible track grant above.
+             project: Projects.for_track(project, track),
+             role: :member,
+             level: elem(grant, 0)
+           }}
       end
     else
       _ -> {:error, :not_found}

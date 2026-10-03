@@ -58,22 +58,22 @@ defmodule RavixWeb.NewTrackPickerTest do
     |> Enum.map(&(&1 |> LazyHTML.text() |> String.trim()))
   end
 
-  defp open_top(conn, path) do
+  defp open_mobile(conn, path) do
     {:ok, view, _} = live(conn, path)
     render_async(view)
-    view |> element("#top-new-track") |> render_click()
+    view |> element("#mobile-new-track") |> render_click()
     render_async(view)
     view
   end
 
-  test "the top button lists the personal workspace's repositories, most recent preselected",
+  test "the mobile button lists the personal workspace's repositories, most recent preselected",
        ctx do
     alpha = insert_project(user: ctx.user, repo_full_name: "me/alpha")
     beta = insert_project(user: ctx.user, repo_full_name: "me/beta")
     insert_project(user: ctx.user, repo_full_name: "team/api") |> in_team(ctx.team)
     insert_track(project: beta, created_by: ctx.user.id)
 
-    view = open_top(ctx.conn, "/home")
+    view = open_mobile(ctx.conn, "/home")
     assert has_element?(view, "#new-track-dialog #repo-picker")
     refute has_element?(view, "#new-track-project")
     assert options(view) == ["me/beta", "me/alpha"]
@@ -100,7 +100,7 @@ defmodule RavixWeb.NewTrackPickerTest do
     beta = insert_project(user: ctx.user, repo_full_name: "me/beta")
     insert_project(user: ctx.user, repo_full_name: "other/gamma")
 
-    view = open_top(ctx.conn, "/home")
+    view = open_mobile(ctx.conn, "/home")
     view |> form("#repo-picker-form", q: "ME/B") |> render_change()
     assert options(view) == ["me/beta"]
 
@@ -126,7 +126,7 @@ defmodule RavixWeb.NewTrackPickerTest do
     {:ok, _} = Store.mark_legacy_duplicate(marked.id, first.id)
     scratch = insert_project(user: ctx.user, repo_full_name: nil, name: "Sandbox")
 
-    view = open_top(ctx.conn, "/home")
+    view = open_mobile(ctx.conn, "/home")
     assert options(view) == ["me/app"]
     refute has_element?(view, "#repo-option-#{marked.id}")
     refute has_element?(view, "#repo-picker-list #repo-option-scratch")
@@ -151,7 +151,7 @@ defmodule RavixWeb.NewTrackPickerTest do
     insert_project(user: ctx.user, repo_full_name: "me/app")
     team_project = insert_project(user: ctx.user, repo_full_name: "team/api") |> in_team(ctx.team)
 
-    view = open_top(ctx.conn, "/home")
+    view = open_mobile(ctx.conn, "/home")
     assert options(view) == ["me/app"]
     render_hook(view, "new-track-project", %{"project" => team_project.id})
     assert has_element?(view, "#repo-picker-selected", "me/app")
@@ -160,7 +160,7 @@ defmodule RavixWeb.NewTrackPickerTest do
 
   test "no scratch project yet: scratch opens Add a repository in scratch mode", ctx do
     insert_project(user: ctx.user, repo_full_name: "me/app")
-    view = open_top(ctx.conn, "/home")
+    view = open_mobile(ctx.conn, "/home")
     view |> element("#repo-option-scratch") |> render_click()
     assert has_element?(view, "#new-project-dialog")
   end
@@ -245,7 +245,7 @@ defmodule RavixWeb.NewTrackPickerTest do
       refute has_element?(view, "#section-scratch")
       assert has_element?(view, "#section-other #project-row-#{scratch.id}")
 
-      view |> element("#top-new-track") |> render_click()
+      view |> element("#mobile-new-track") |> render_click()
       render_async(view)
       refute has_element?(view, "#repo-picker")
       assert has_element?(view, "#new-track-project option[value='#{app.id}'][selected]")

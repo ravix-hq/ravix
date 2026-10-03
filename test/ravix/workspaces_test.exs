@@ -180,12 +180,12 @@ defmodule Ravix.WorkspacesTest do
   end
 
   describe "dual readers" do
-    test "an old writer's project reads as legacy, with every fallback" do
+    test "an old writer's project keeps legacy access and a normalized repository identity" do
       owner = insert_user()
       project = old_writer_project(owner)
 
       assert project.created_by_user_id == nil
-      assert project.normalized_repo_full_name == nil
+      assert project.normalized_repo_full_name == "acme/widget"
       assert Workspaces.layout(project) == :legacy
       assert Workspaces.created_by(project) == owner.id
       assert Workspaces.repo_key(project) == "acme/widget"

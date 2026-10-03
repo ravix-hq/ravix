@@ -25,7 +25,7 @@ defmodule RavixWeb.RoutineWebhookControllerTest do
 
   test "reachable webhook queues once and exposes outcome on retry", ctx do
     track = insert_track(project: ctx.project)
-    expect(Tracks, :open, fn _, _, _ -> {:ok, track} end)
+    expect(Tracks, :open, fn _, _, _, _ -> {:ok, track} end)
     expect(Tracks, :prompt, fn _, _, _ -> {:ok, %{}} end)
 
     response =
@@ -45,7 +45,7 @@ defmodule RavixWeb.RoutineWebhookControllerTest do
   test "bearer and event contents never enter request logs", ctx do
     marker = "private-event-#{Ecto.UUID.generate()}"
     track = insert_track(project: ctx.project)
-    expect(Tracks, :open, fn _, _, _ -> {:ok, track} end)
+    expect(Tracks, :open, fn _, _, _, _ -> {:ok, track} end)
     expect(Tracks, :prompt, fn _, _, _ -> {:ok, %{}} end)
 
     log =
@@ -59,7 +59,7 @@ defmodule RavixWeb.RoutineWebhookControllerTest do
   end
 
   test "malformed, oversized and non-JSON requests are refused before track effects", ctx do
-    reject(&Tracks.open/3)
+    reject(&Tracks.open/4)
 
     for body <- ["{", "[]", "null", "1"] do
       assert deliver(ctx.routine, ctx.token, body) |> json_response(400)
@@ -84,7 +84,7 @@ defmodule RavixWeb.RoutineWebhookControllerTest do
   end
 
   test "paused, rotated, deleted and revoked credentials return useful errors", ctx do
-    reject(&Tracks.open/3)
+    reject(&Tracks.open/4)
     assert deliver(ctx.routine, "wrong", "{}") |> json_response(401)
     {:ok, _} = Routines.update(ctx.user, ctx.routine.id, %{enabled: false})
     assert deliver(ctx.routine, ctx.token, "{}") |> json_response(403)

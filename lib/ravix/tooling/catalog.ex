@@ -15,7 +15,7 @@ defmodule Ravix.Tooling.Catalog do
       ),
       tool(
         "create_project",
-        "Create a project using a connected credential. Optional runtime is claude or codex; defaults to your account agent, then the catalog default. Connect that agent first or receive agent_not_connected.",
+        "Create a project using a connected credential. Repository projects use the full repository name; name is only for scratch projects. Optional runtime is claude or codex; defaults to your account agent, then the catalog default. Connect that agent first or receive agent_not_connected.",
         "projects:write",
         %{
           "name" => string(100),
@@ -237,7 +237,11 @@ defmodule Ravix.Tooling.Catalog do
   defp settings do
     object(
       %{
-        "name" => string(100),
+        "name" =>
+          Map.merge(string(100), %{
+            "deprecated" => true,
+            "description" => "Ignored. Project names cannot be changed."
+          }),
         "runtime" => string(),
         "model" => string(),
         "instructions" => Map.put(string(100_000), "minLength", 0),

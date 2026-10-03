@@ -159,8 +159,6 @@ defmodule RavixWeb.SettingsFrameTest do
       stub_settings(project)
       view = open(ctx.conn, ctx.user, "/p/#{project.id}/settings/general")
 
-      assert has_element?(view, "#settings-name")
-      assert has_element?(view, "#project-general-bar button[data-unsaved-save]", "Save")
       assert has_element?(view, "#general-repository code", "octo/atlas")
 
       assert has_element?(
@@ -175,6 +173,18 @@ defmodule RavixWeb.SettingsFrameTest do
       view = open(ctx.conn, ctx.user, "/p/#{scratch.id}/settings/general")
       assert has_element?(view, "#general-repository", "no repository")
       refute has_element?(view, "#general-repository-link")
+    end
+
+    test "a forged rename leaves the repository identity unchanged", ctx do
+      project = insert_project(user: ctx.user, name: "octo/atlas", repo_full_name: "octo/atlas")
+      stub_settings(project)
+      view = open(ctx.conn, ctx.user, "/p/#{project.id}/settings/general")
+
+      view
+      |> with_target(".project-settings")
+      |> render_hook("save-general", %{settings: %{name: "Custom name"}})
+
+      assert Ravix.Repo.reload!(project).name == "octo/atlas"
     end
 
     test "Machine gathers the setup, packages, variables, secrets and run script", ctx do
@@ -273,10 +283,8 @@ defmodule RavixWeb.SettingsFrameTest do
       end)
 
       view = open(ctx.conn, ctx.user, "/p/#{ctx.project.id}/settings/general")
-      assert has_element?(view, ~s(#settings-name[value="Atlas"]))
       render_patch(view, "/p/#{other.id}/settings/general")
       render_async(view)
-      assert has_element?(view, ~s(#settings-name[value="Ledger"]))
       assert page_title(view) == "General · Ledger · Ravix"
     end
 
@@ -393,12 +401,14 @@ defmodule RavixWeb.SettingsFrameTest do
       reject(&Ravix.Projects.update_settings/3)
       {token, session} = insert_session(ctx.user)
       conn = Plug.Test.init_test_session(ctx.conn, session_token: token)
-      {:ok, view, _} = live(conn, "/p/#{ctx.project.id}/settings/general")
+      {:ok, view, _} = live(conn, "/p/#{ctx.project.id}/settings/agent")
       render_async(view)
       Ravix.Repo.delete!(session)
 
       assert {:error, {:redirect, %{to: "/login"}}} =
-               view |> form("#settings-form", settings: %{name: "Renamed"}) |> render_submit()
+               view
+               |> form("#agent-settings-form", settings: %{instructions: "Revoked edit"})
+               |> render_submit()
     end
   end
 end

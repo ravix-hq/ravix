@@ -16,7 +16,7 @@ defmodule Ravix.Projects.Store do
 
   import Ecto.Query
 
-  alias Ravix.Projects.Project
+  alias Ravix.Projects.{Project, Resource}
   alias Ravix.Repo
   alias Ravix.Tracks.Track
 
@@ -50,22 +50,56 @@ defmodule Ravix.Projects.Store do
         )
       )
 
+  def resource_key(%Project{} = project), do: project.resource_id || project.id
+
+  def for_track(project, track), do: for_resource(project, track.resource_id)
+  def for_resource(nil, _resource_id), do: nil
+  def for_resource(project, nil), do: project
+
+  def for_resource(%Project{id: id} = project, resource_id) do
+    Resource.bind(project, Repo.get_by!(Resource, id: resource_id, project_id: id))
+  end
+
+  def resources(%Project{} = project) do
+    [
+      project
+      | Enum.map(
+          Repo.all(from r in Resource, where: r.project_id == ^project.id),
+          &Resource.bind(project, &1)
+        )
+    ]
+  end
+
+  def lock_retirement(%Project{} = project) do
+    current = lock_retirement(project.id)
+
+    if project.resource_id do
+      resource =
+        Repo.one!(
+          from r in Resource,
+            where: r.id == ^project.resource_id and r.project_id == ^project.id,
+            lock: "FOR UPDATE"
+        )
+
+      Resource.bind(current, resource)
+    else
+      current
+    end
+  end
+
   def lock_retirement(id),
     do: Repo.one!(from p in Project, where: p.id == ^id, lock: "FOR UPDATE")
 
-  def set_retiring(id, retiring),
-    do:
-      Repo.update_all(from(p in Project, where: p.id == ^id),
-        set: [shared_machine_retiring: retiring]
-      )
+  def set_retiring(project, retiring),
+    do: update_fields(project, shared_machine_retiring: retiring)
 
-  def finish_retirement(id, success?) do
+  def finish_retirement(project, success?) do
     attrs =
       if success?,
         do: [shared_machine_retiring: false, shared_home_runtime: nil],
         else: [shared_machine_retiring: false]
 
-    Repo.update_all(from(p in Project, where: p.id == ^id), set: attrs)
+    update_fields(project, attrs)
   end
 
   def secret_snapshots?(id) do
@@ -73,7 +107,9 @@ defmodule Ravix.Projects.Store do
     Ravix.Config.dedicated_rollout?() or
       Repo.exists?(
         from t in Track,
-          where: t.project_id == ^id and t.sandbox_layout == :dedicated and is_nil(t.closed_at)
+          where:
+            t.project_id == ^id and is_nil(t.resource_id) and t.sandbox_layout == :dedicated and
+              is_nil(t.closed_at)
       )
   end
 
@@ -93,7 +129,7 @@ defmodule Ravix.Projects.Store do
       Repo.update_all(
         from(t in Track,
           where:
-            t.project_id == ^id and
+            t.project_id == ^id and is_nil(t.resource_id) and
               t.sandbox_layout == :dedicated and is_nil(t.closed_at) and
               t.sandbox_state not in [:closing, :terminated]
         ),
@@ -184,15 +220,11 @@ defmodule Ravix.Projects.Store do
     )
   end
 
-  @doc "Rename a project. Unscoped: called beside a `project_of/2` that established ownership."
-  @spec rename(String.t(), String.t()) :: :ok
-  def rename(id, name), do: update_fields(id, name: name)
-
-  @doc "Replace the person's extra instructions. Unscoped, as `rename/2`."
+  @doc "Replace the person's extra instructions. Unscoped; the caller establishes project ownership."
   @spec set_instructions(String.t(), String.t()) :: :ok
   def set_instructions(id, instructions), do: update_fields(id, instructions: instructions)
 
-  @doc "Record the harness the agent now runs. Unscoped, as `rename/2`."
+  @doc "Record the harness the agent now runs. Unscoped; the caller establishes project ownership."
   @spec set_harness(String.t(), String.t(), String.t()) :: :ok
   def set_harness(id, runtime, model),
     do: update_fields(id, runtime: runtime, model: model, home_runtime: runtime)
@@ -202,7 +234,8 @@ defmodule Ravix.Projects.Store do
     Repo.transaction(fn ->
       project = lock_retirement(id)
       # ownership: Access.project_of admitted preserving existing threads while changing defaults.
-      tracks = from(t in Track, where: t.project_id == ^id, select: t.id)
+      tracks =
+        from(t in Track, where: t.project_id == ^id and is_nil(t.resource_id), select: t.id)
 
       Repo.update_all(
         from(th in Ravix.Tracks.Thread,
@@ -233,7 +266,9 @@ defmodule Ravix.Projects.Store do
     # ownership: Access.project_of or Access.track_access admitted reading this project’s layout.
     Repo.aggregate(
       from(t in Track,
-        where: t.project_id == ^id and t.sandbox_layout == :shared and is_nil(t.closed_at)
+        where:
+          t.project_id == ^id and is_nil(t.resource_id) and t.sandbox_layout == :shared and
+            is_nil(t.closed_at)
       ),
       :count
     )
@@ -274,7 +309,7 @@ defmodule Ravix.Projects.Store do
     do:
       update_fields(id,
         agent_id: agent_id,
-        home_runtime: runtime || get_project(id).runtime,
+        home_runtime: runtime || resource_runtime(id),
         credential_set_id: credential_set_id,
         runtime_agents_retiring: false,
         shared_home_runtime: nil
@@ -285,7 +320,7 @@ defmodule Ravix.Projects.Store do
   at. Fountain is told first, by the caller; this is what lets the next wake
   see there is nothing to do. See `Ravix.Projects.Machine.adopt_credentials/2`.
   """
-  @spec set_credential_set(String.t(), String.t()) :: :ok
+  @spec set_credential_set(String.t() | Project.t(), String.t()) :: :ok
   def set_credential_set(id, credential_set_id),
     do: update_fields(id, credential_set_id: credential_set_id)
 
@@ -331,9 +366,18 @@ defmodule Ravix.Projects.Store do
   @spec open_tracks(String.t()) :: [Track.t()]
   defdelegate open_tracks(project_id), to: Ravix.Tracks.Store, as: :tracks_of
 
-  def runtime_agents(project_id) do
-    Repo.all(from(a in Ravix.Projects.RuntimeAgent, where: a.project_id == ^project_id))
-  end
+  def runtime_agents(project), do: Repo.all(runtime_query(project))
+
+  defp runtime_query(%Project{resource_id: resource_id}) when is_binary(resource_id),
+    do: from(a in Ravix.Projects.RuntimeAgent, where: a.resource_id == ^resource_id)
+
+  defp runtime_query(%Project{id: id}), do: runtime_query(id)
+
+  defp runtime_query(project_id),
+    do:
+      from(a in Ravix.Projects.RuntimeAgent,
+        where: a.project_id == ^project_id and is_nil(a.resource_id)
+      )
 
   defp unavailable?(nil), do: true
 
@@ -342,19 +386,19 @@ defmodule Ravix.Projects.Store do
       project.runtime_agents_retiring or not is_nil(project.archived_at) or
         not is_nil(project.deletion_requested_at)
 
-  def reserve_runtime(project_id, runtime, expected_agent \\ nil) do
+  def reserve_runtime(project, runtime, expected_agent \\ nil) do
     result =
       Repo.transaction(fn ->
-        project = Repo.one(from(p in Project, where: p.id == ^project_id, lock: "FOR UPDATE"))
+        current = lock_retirement(project)
 
-        if unavailable?(project) or
-             (not is_nil(expected_agent) and project.agent_id != expected_agent),
+        if unavailable?(current) or
+             (not is_nil(expected_agent) and current.agent_id != expected_agent),
            do: Repo.rollback(:retiring)
 
         {count, _} =
           Repo.insert_all(
             Ravix.Projects.RuntimeAgent,
-            [%{project_id: project_id, runtime: runtime}],
+            [%{project_id: current.id, resource_id: current.resource_id, runtime: runtime}],
             on_conflict: :nothing
           )
 
@@ -367,38 +411,37 @@ defmodule Ravix.Projects.Store do
     end
   end
 
-  def claim_shared_home(project_id, runtime, expected_agent) do
+  def claim_shared_home(project, runtime, expected_agent) do
     Repo.transaction(fn ->
-      project = Repo.one(from(p in Project, where: p.id == ^project_id, lock: "FOR UPDATE"))
+      current = lock_retirement(project)
 
-      if unavailable?(project) or
-           project.agent_id != expected_agent,
-         do: Repo.rollback(:retiring)
+      if unavailable?(current) or current.agent_id != expected_agent,
+        do: Repo.rollback(:retiring)
 
-      home = project.shared_home_runtime || runtime
+      home = current.shared_home_runtime || runtime
 
-      if is_nil(project.shared_home_runtime),
-        do: update_fields(project_id, shared_home_runtime: home)
+      if is_nil(current.shared_home_runtime),
+        do: update_fields(current, shared_home_runtime: home)
 
       home
     end)
   end
 
-  def retire_runtimes(project_id), do: update_fields(project_id, runtime_agents_retiring: true)
+  def retire_runtimes(project), do: update_fields(project, runtime_agents_retiring: true)
 
-  def bind_runtime(project_id, runtime, agent_id, credential_set_id) do
-    from(a in Ravix.Projects.RuntimeAgent,
-      where: a.project_id == ^project_id and a.runtime == ^runtime
-    )
+  def bind_runtime(project, runtime, agent_id, credential_set_id) do
+    project
+    |> runtime_query()
+    |> where([a], a.runtime == ^runtime)
     |> Repo.update_all(set: [agent_id: agent_id, credential_set_id: credential_set_id])
 
     :ok
   end
 
-  def forget_runtime(project_id, runtime) do
-    from(a in Ravix.Projects.RuntimeAgent,
-      where: a.project_id == ^project_id and a.runtime == ^runtime
-    )
+  def forget_runtime(project, runtime) do
+    project
+    |> runtime_query()
+    |> where([a], a.runtime == ^runtime)
     |> Repo.delete_all()
 
     :ok
@@ -406,7 +449,7 @@ defmodule Ravix.Projects.Store do
 
   @doc """
   Point a project's row at another repository (RAV-76), or back at the one
-  it had. `fields` are the repository columns: `repo_full_name`,
+  it had. `fields` are the project name and repository columns: `repo_full_name`,
   `repo_private`, `default_branch`, `installation_id`, and for a workspace
   project `workspace_installation_id` and `github_repo_id`. The comparison
   name is derived here.
@@ -416,7 +459,7 @@ defmodule Ravix.Projects.Store do
   pull request and checks are still looked up there. A track stamped
   before keeps its stamp. `{:error, :taken}` when the workspace already has
   a project for the new one (`projects_workspace_repo`). `stamp: false`
-  puts a refused change back without stamping. Unscoped, as `rename/2`.
+  puts a refused change back without stamping. Unscoped; the caller establishes project ownership.
   """
   @spec change_repository(String.t(), map(), keyword()) ::
           {:ok, Project.t()} | {:error, :taken | :not_found}
@@ -450,13 +493,25 @@ defmodule Ravix.Projects.Store do
     # `Access.project_of/2`; these are that project's own tracks, told which
     # repository their branches are on before the project moves off it.
     Repo.update_all(
-      from(t in Track, where: t.project_id == ^project.id and is_nil(t.repo_full_name)),
+      from(t in Track,
+        where: t.project_id == ^project.id and is_nil(t.resource_id) and is_nil(t.repo_full_name)
+      ),
       set: [repo_full_name: repo, repo_installation_id: installation]
     )
   end
 
   # A scratch project's tracks have no branch on GitHub to keep.
   defp stamp_tracks(_project), do: :ok
+
+  defp resource_runtime(%Project{} = project), do: project.runtime
+  defp resource_runtime(id), do: get_project(id).runtime
+
+  defp update_fields(%Project{resource_id: resource_id}, fields) when is_binary(resource_id) do
+    from(r in Resource, where: r.id == ^resource_id) |> Repo.update_all(set: fields)
+    :ok
+  end
+
+  defp update_fields(%Project{id: id}, fields), do: update_fields(id, fields)
 
   defp update_fields(id, fields) do
     from(p in Project, where: p.id == ^id) |> Repo.update_all(set: fields)

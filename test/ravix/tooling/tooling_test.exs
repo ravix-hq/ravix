@@ -390,7 +390,7 @@ defmodule Ravix.ToolingTest do
                "request_id" => "rename"
              })
 
-    assert Repo.get!(Project, project.id).name == "Renamed"
+    assert Repo.get!(Project, project.id).name == project.name
 
     assert {:error, {:unprocessable, _, _}} =
              Tooling.call(p, "update_project_settings", %{

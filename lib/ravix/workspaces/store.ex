@@ -1142,7 +1142,11 @@ defmodule Ravix.Workspaces.Store do
     # ownership: no door -- a catalog refresh or an admission, behind
     # `Access.workspace_grant/3`, following GitHub's own rename.
     project
-    |> Ecto.Changeset.change(repo_full_name: full_name, normalized_repo_full_name: normalized)
+    |> Ecto.Changeset.change(
+      name: full_name,
+      repo_full_name: full_name,
+      normalized_repo_full_name: normalized
+    )
     |> Ecto.Changeset.unique_constraint(:repo_full_name, name: :projects_workspace_repo)
     |> Repo.update()
     |> case do

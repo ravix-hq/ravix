@@ -531,7 +531,7 @@ defmodule Ravix.Previews do
       # because a preview outlives its track being closed until something
       # retires it.
       affected =
-        for %Track{id: track_id} <- Tracks.tracks_of(project_id, :all),
+        for %Track{id: track_id, resource_id: nil} <- Tracks.tracks_of(project_id, :all),
             match?(%Row{config: nil}, Store.get(track_id)),
             do: track_id
 

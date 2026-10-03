@@ -7,15 +7,16 @@ defmodule Ravix.Projects.RuntimeAgents do
 
   # ownership: callers enter through Access.project_access/2 or Access.track_access/2.
   # Subscription ownership follows the project's owner, never the collaborating member.
-  def owner(project), do: Ravix.Accounts.Store.get_user(project.user_id)
+  def owner(project),
+    do: Ravix.Accounts.Store.get_user(project.resource_owner_id || project.user_id)
 
   def ids(project) do
-    [project.agent_id | Enum.map(Store.runtime_agents(project.id), & &1.agent_id)]
+    [project.agent_id | Enum.map(Store.runtime_agents(project), & &1.agent_id)]
     |> Enum.reject(&is_nil/1)
   end
 
   def home_runtime(project, client, sandbox_id) do
-    agents = Store.runtime_agents(project.id)
+    agents = Store.runtime_agents(project)
 
     if agents == [] or is_nil(sandbox_id) do
       {:ok, project.shared_home_runtime || Project.home_runtime(project)}
@@ -42,7 +43,7 @@ defmodule Ravix.Projects.RuntimeAgents do
   def pin_shared_home(project, selection, machine) do
     wanted = if machine, do: selection.home, else: selection.runtime
 
-    case Store.claim_shared_home(project.id, wanted, project.agent_id) do
+    case Store.claim_shared_home(project, wanted, project.agent_id) do
       {:ok, ^wanted} ->
         :ok
 
@@ -57,7 +58,7 @@ defmodule Ravix.Projects.RuntimeAgents do
   def ensure(%{runtime_agents_retiring: true}, _client, _runtime, _model, _opts), do: pending()
 
   def ensure(project, client, runtime, model, opts) do
-    case Store.live_project(project.id) do
+    case Store.for_resource(Store.live_project(project.id), project.resource_id) do
       %{runtime_agents_retiring: false, agent_id: id} = fresh when id == project.agent_id ->
         ensure_current(fresh, client, runtime, model, opts)
 
@@ -98,7 +99,7 @@ defmodule Ravix.Projects.RuntimeAgents do
   end
 
   defp ensure_other(project, client, runtime, model, isolated) do
-    case Enum.find(Store.runtime_agents(project.id), &(&1.runtime == runtime)) do
+    case Enum.find(Store.runtime_agents(project), &(&1.runtime == runtime)) do
       nil ->
         with {:ok, id} <- reserve_and_create(project, client, runtime, model),
              do: admitted(project, client, %{agent_id: id, credential_set_id: nil}, isolated)
@@ -119,7 +120,7 @@ defmodule Ravix.Projects.RuntimeAgents do
   defp admitted(_project, _client, agent, _isolated), do: {:ok, agent.agent_id}
 
   defp reserve_and_create(project, client, runtime, model) do
-    case Store.reserve_runtime(project.id, runtime, project.agent_id) do
+    case Store.reserve_runtime(project, runtime, project.agent_id) do
       :ok -> create(project, client, runtime, model)
       {:error, _} -> pending()
     end
@@ -141,19 +142,19 @@ defmodule Ravix.Projects.RuntimeAgents do
       # the account", and every Ravix person's set is on this one account.
       # Creators are admitted one by one (`admit_payer/3`).
       allowed_inference_credential_ids: [],
-      metadata: %{ravix: %{project: project.id}}
+      metadata: %{ravix: %{project: Store.resource_key(project)}}
     }
 
     case Fountain.create_agent(client, body) do
       {:ok, %{"id" => id}} when is_binary(id) ->
-        Store.bind_runtime(project.id, runtime, id, set)
+        Store.bind_runtime(project, runtime, id, set)
         Ravix.MachineCache.forget_project(project.id)
         {:ok, id}
 
       {:error, %Error{} = error} ->
         # An uncertain POST must never be retried into a duplicate runtime agent.
         # Leave its reservation for operator reconciliation, including process death.
-        unless Error.unknown_outcome?(error), do: Store.forget_runtime(project.id, runtime)
+        unless Error.unknown_outcome?(error), do: Store.forget_runtime(project, runtime)
         {:error, Projects.Machine.name_taken(error)}
 
       _ ->
@@ -176,7 +177,7 @@ defmodule Ravix.Projects.RuntimeAgents do
       true ->
         with {:ok, _} <-
                Fountain.update_agent(client, agent.agent_id, %{inference_credential_id: set}) do
-          Store.bind_runtime(project.id, agent.runtime, agent.agent_id, set)
+          Store.bind_runtime(project, agent.runtime, agent.agent_id, set)
           {:ok, agent.agent_id}
         end
     end
@@ -297,9 +298,9 @@ defmodule Ravix.Projects.RuntimeAgents do
   end
 
   def retire(project, client) do
-    Store.retire_runtimes(project.id)
+    Store.retire_runtimes(project)
 
-    Enum.reduce_while(Store.runtime_agents(project.id), :ok, fn agent, :ok ->
+    Enum.reduce_while(Store.runtime_agents(project), :ok, fn agent, :ok ->
       case retire_one(project, client, agent) do
         :ok -> {:cont, :ok}
         error -> {:halt, error}
@@ -311,8 +312,8 @@ defmodule Ravix.Projects.RuntimeAgents do
 
   defp retire_one(project, client, agent) do
     case Fountain.delete_agent(client, agent.agent_id) do
-      :ok -> Store.forget_runtime(project.id, agent.runtime)
-      {:error, %Error{status: 404}} -> Store.forget_runtime(project.id, agent.runtime)
+      :ok -> Store.forget_runtime(project, agent.runtime)
+      {:error, %Error{status: 404}} -> Store.forget_runtime(project, agent.runtime)
       error -> error
     end
   end

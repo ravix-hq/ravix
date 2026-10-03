@@ -203,7 +203,19 @@ defmodule Ravix.Tracks do
   end
 
   defp present_all(rows, project, user, role, opts) do
-    live = conversations_of(project, fresh: Keyword.get(opts, :fresh, false))
+    # ownership: these track rows have passed Access.open_tracks/2.
+    resources =
+      rows
+      |> Enum.uniq_by(& &1.resource_id)
+      |> Map.new(fn row ->
+        {row.resource_id, Ravix.Projects.Store.for_track(project, row)}
+      end)
+
+    live =
+      Enum.reduce(resources, %{}, fn {_id, resource}, all ->
+        Map.merge(all, conversations_of(resource, fresh: Keyword.get(opts, :fresh, false)))
+      end)
+
     # ownership: list/3 and list_many/3 admitted these rows through Access.open_tracks/2;
     # these are read markers on tracks within that project.
     reads = People.Store.reads_of(user.id, project.id)
@@ -217,6 +229,8 @@ defmodule Ravix.Tracks do
     comments = comment_activity(user, Enum.flat_map(Map.values(thread_rows), & &1))
 
     Enum.map(rows, fn row ->
+      project = Map.fetch!(resources, row.resource_id)
+
       threads =
         thread_views(
           row.id,
@@ -864,7 +878,7 @@ defmodule Ravix.Tracks do
       vault_id:
         if(track.sandbox_layout == :dedicated, do: track.vault_id, else: project.vault_id),
       sandbox_id: sandbox_id,
-      channel_id: Ids.track_channel(project.id, track.slug, track.rev, id),
+      channel_id: Ids.track_channel(project.resource_id || project.id, track.slug, track.rev, id),
       prompt: nil
     }
 
@@ -1025,11 +1039,14 @@ defmodule Ravix.Tracks do
   transcript it will appear in); `opening_turn: :sync` waits for it, which
   tests want.
   """
-  @spec open(User.t(), String.t(), map(), opening_turn: :async | :sync) ::
+  @spec open(User.t(), String.t(), map(),
+          opening_turn: :async | :sync,
+          resource_id: String.t() | nil
+        ) ::
           {:ok, View.t()} | {:error, reason()}
   def open(%User{} = user, project_id, attrs, opts \\ []) do
     if Ravix.Config.dedicated_opens_enabled?(user),
-      do: open_dedicated(user, project_id, stringify(attrs)),
+      do: open_dedicated(user, project_id, stringify(attrs), opts),
       else: open_shared(user, project_id, stringify(attrs), opts)
   end
 
@@ -1038,10 +1055,12 @@ defmodule Ravix.Tracks do
   # have connected themselves can start it, their set is admitted on the
   # agent, and the row records them as its payer. Web, MCP, plans and
   # schedules all open through here, so this is the one server check.
-  defp open_dedicated(user, project_id, attrs) do
+  defp open_dedicated(user, project_id, attrs, opts) do
     creator? = Billing.creator_opening?()
 
     with {:ok, %{project: project, role: role}} <- Access.project_access(user, project_id, :write),
+         # ownership: Access.project_access/3 admits this persisted schedule/routine binding.
+         project = Ravix.Projects.Store.for_resource(project, Keyword.get(opts, :resource_id)),
          :ok <- not_legacy_duplicate(project),
          :ok <- plan_origin_access(user, project_id, attrs["origin"]),
          {:ok, attrs} <- resolve_pr_origin(project, attrs),
@@ -1107,10 +1126,12 @@ defmodule Ravix.Tracks do
 
   defp open_shared(user, project_id, attrs, opts) do
     with {:ok, %{project: project}} <- Access.project_access(user, project_id),
+         # ownership: Access.project_access/3 admits this persisted schedule/routine binding.
+         project = Ravix.Projects.Store.for_resource(project, Keyword.get(opts, :resource_id)),
          :ok <- not_legacy_duplicate(project),
          {:ok, visibility} <- visibility(attrs["visibility"] || "project"),
          :ok <- visibility_layout(visibility, :shared) do
-      Ravix.Tracks.Sandbox.Store.shared_open(project_id, fn ->
+      Ravix.Tracks.Sandbox.Store.shared_open(project, fn ->
         open_shared_available(user, project_id, attrs, opts)
       end)
     end
@@ -1130,6 +1151,8 @@ defmodule Ravix.Tracks do
 
   defp open_shared_available(user, project_id, attrs, opts) do
     with {:ok, %{project: project, role: role}} <- Access.project_access(user, project_id, :write),
+         # ownership: Access.project_access/3 admits this persisted schedule/routine binding.
+         project = Ravix.Projects.Store.for_resource(project, Keyword.get(opts, :resource_id)),
          :ok <- plan_origin_access(user, project_id, attrs["origin"]),
          {:ok, attrs} <- resolve_pr_origin(project, attrs),
          {:ok, client} <- fountain(),
@@ -1238,7 +1261,9 @@ defmodule Ravix.Tracks do
     # spent. A *slug* is only spent while the track is open (the worktree is
     # what clashes, and a closed track's is gone), so the same read answers
     # both questions and `free_slug/2` asks the database nothing more.
-    rows = Store.tracks_of(project.id, :all)
+    rows =
+      Enum.filter(Store.tracks_of(project.id, :all), &(&1.resource_id == project.resource_id))
+
     taken = Enum.flat_map(rows, &[&1.slug, String.replace_prefix(&1.branch, "ravix/", "")])
     open_slugs = for %Track{closed_at: nil, slug: slug} <- rows, into: MapSet.new(), do: slug
     name = attrs["branch_name"] || attrs["title"] || ""
@@ -1321,6 +1346,7 @@ defmodule Ravix.Tracks do
     title = branch
 
     %Opening{
+      resource_id: project.resource_id,
       id: id,
       project_id: project.id,
       rev: project.rev,
@@ -1336,7 +1362,7 @@ defmodule Ravix.Tracks do
         environment_id: project.environment_id,
         vault_id: project.vault_id,
         sandbox_id: machine && machine.sandbox_id,
-        channel_id: Ids.track_channel(project.id, slug, project.rev, id),
+        channel_id: Ids.track_channel(project.resource_id || project.id, slug, project.rev, id),
         # On the launch that *provisions* the machine the opening turn rides
         # along, because a fresh conversation with no prompt is what made
         # provisioning start answering 422. On an attach it is sent separately
@@ -3197,10 +3223,13 @@ defmodule Ravix.Tracks do
           {:ok, MachineCache.machine()} | {:error, reason()}
   def machine_of_track(project, track, opts \\ [])
 
-  def machine_of_track(project, %Track{sandbox_layout: :shared}, []), do: machine_of(project)
+  # ownership: Access.track_access/2 or the admitted lifecycle operation owns this track.
+  def machine_of_track(project, %Track{sandbox_layout: :shared} = track, []),
+    do: machine_of(Ravix.Projects.Store.for_track(project, track))
 
-  def machine_of_track(project, %Track{sandbox_layout: :shared}, opts),
-    do: machine_of(project, opts)
+  # ownership: Access.track_access/2 or the admitted lifecycle operation owns this track.
+  def machine_of_track(project, %Track{sandbox_layout: :shared} = track, opts),
+    do: machine_of(Ravix.Projects.Store.for_track(project, track), opts)
 
   def machine_of_track(project, %Track{sandbox_layout: :dedicated} = track, opts) do
     with {:ok, client} <- fountain(),

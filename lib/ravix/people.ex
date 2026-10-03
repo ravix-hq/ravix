@@ -1128,8 +1128,14 @@ defmodule Ravix.People do
     hash = Ravix.Crypto.sha256(token)
 
     case Store.track_for_link(hash) do
-      %Track{} = track -> redeem_track(user_id, track)
-      nil -> redeem_project(user_id, Store.project_for_link(hash))
+      %Track{} = track ->
+        redeem_track(user_id, track)
+
+      nil ->
+        case Store.project_for_link(hash) do
+          %Project{} = project -> redeem_project(user_id, project, hash)
+          nil -> redeem_resource(user_id, Store.resource_for_link(hash))
+        end
     end
   end
 
@@ -1165,8 +1171,14 @@ defmodule Ravix.People do
     hash = Ravix.Crypto.sha256(token)
 
     case Store.track_for_link(hash) do
-      %Track{} = track -> track_target(track, hash, user)
-      nil -> project_target(Store.project_for_link(hash), hash, user)
+      %Track{} = track ->
+        track_target(track, hash, user)
+
+      nil ->
+        case Store.project_for_link(hash) do
+          %Project{} = project -> project_target(project, hash, user)
+          nil -> resource_target(Store.resource_for_link(hash), user)
+        end
     end
   end
 
@@ -1194,7 +1206,38 @@ defmodule Ravix.People do
     }
   end
 
-  defp project_target(nil, _hash, _user), do: :error
+  defp resource_target(nil, _user), do: :error
+
+  defp resource_target({project, _resource_id, inviter}, user) do
+    if workspace_sharing?(project) do
+      :retired
+    else
+      {:ok,
+       %LinkTarget{
+         kind: :project,
+         project: project.name,
+         project_view: invite_project(project, user),
+         track: nil,
+         invited_by: inviter
+       }}
+    end
+  end
+
+  defp redeem_resource(_user_id, nil), do: :error
+
+  defp redeem_resource(user_id, {project, resource_id, _inviter}) do
+    if workspace_sharing?(project) do
+      :retired
+    else
+      tracks = Store.seat_resource(user_id, resource_id, "link")
+      Ravix.Hub.publish(project.id, :people)
+
+      case tracks do
+        [track | _] -> {:ok, "/p/#{project.id}/t/#{track.id}"}
+        [] -> {:ok, "/p/#{project.id}"}
+      end
+    end
+  end
 
   defp project_target(%Project{} = project, hash, user) do
     if workspace_sharing?(project),
@@ -1245,12 +1288,21 @@ defmodule Ravix.People do
     {:ok, "/p/#{project.id}/t/#{track.id}"}
   end
 
-  defp redeem_project(_user_id, nil), do: :error
-
   # RAV-32: as a track link, a workspace project's link admits nobody,
   # workspace member or not. People who came in on one before stay.
-  defp redeem_project(user_id, %Project{} = project) do
-    if workspace_sharing?(project), do: :retired, else: seat_project_by_link(user_id, project)
+  defp redeem_project(user_id, %Project{} = project, hash) do
+    cond do
+      workspace_sharing?(project) ->
+        :retired
+
+      Store.scoped_project_link?(hash) ->
+        Store.seat_default_resource(user_id, project.id, "link")
+        Ravix.Hub.publish(project.id, :people)
+        {:ok, "/p/#{project.id}"}
+
+      true ->
+        seat_project_by_link(user_id, project)
+    end
   end
 
   defp seat_project_by_link(user_id, project) do

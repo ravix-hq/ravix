@@ -6,8 +6,14 @@ export const SettingsFrame = {
   mounted() {
     this.section = this.el.dataset.section
     this.reveal()
+    this.revealErrors()
+    this.onInvalid = event => openDetails(event.target)
+    this.onHash = () => this.reveal()
+    this.el.addEventListener('invalid', this.onInvalid, true)
+    window.addEventListener('hashchange', this.onHash)
   },
   updated() {
+    this.revealErrors()
     if (this.el.dataset.section === this.section) return
     this.section = this.el.dataset.section
     this.reveal()
@@ -15,7 +21,23 @@ export const SettingsFrame = {
   reveal() {
     const id = decodeURIComponent(window.location.hash.slice(1))
     const part = id && document.getElementById(id)
-    if (part && this.el.contains(part)) part.scrollIntoView({block: 'start'})
+    if (part && this.el.contains(part)) {
+      openDetails(part)
+      part.scrollIntoView({block: 'start'})
+    }
     else this.el.scrollTop = 0
   },
+  revealErrors() {
+    for (const error of this.el.querySelectorAll('.error')) openDetails(error)
+  },
+  destroyed() {
+    this.el.removeEventListener('invalid', this.onInvalid, true)
+    window.removeEventListener('hashchange', this.onHash)
+  },
+}
+
+function openDetails(element) {
+  for (let details = element.closest('details'); details; details = details.parentElement?.closest('details')) {
+    details.open = true
+  }
 }

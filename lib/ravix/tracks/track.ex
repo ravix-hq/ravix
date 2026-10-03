@@ -52,6 +52,7 @@ defmodule Ravix.Tracks.Track do
 
   schema "tracks" do
     belongs_to :project, Ravix.Projects.Project
+    field :resource_id, :string
     field :sandbox_layout, Ecto.Enum, values: [:shared, :dedicated], default: :shared
     field :sandbox_stage, :string
     field :secrets_generation, :integer, default: 0
@@ -137,7 +138,7 @@ defmodule Ravix.Tracks.Track do
     has_one :preview, Ravix.Previews.Preview
   end
 
-  @fields ~w(visibility created_by last_runtime sandbox_layout sandbox_id sandbox_generation sandbox_state sandbox_action sandbox_suspended_at vault_id id project_id conversation_id slug title branch branch_reserved workdir origin_kind origin_base
+  @fields ~w(resource_id visibility created_by last_runtime sandbox_layout sandbox_id sandbox_generation sandbox_state sandbox_action sandbox_suspended_at vault_id id project_id conversation_id slug title branch branch_reserved workdir origin_kind origin_base
              origin_number origin_title origin_url origin_plan_id origin_item_id rev setup_state setup_attempts setup_request_id setup_started_at setup_retry_at setup_error setup_error_code setup_lease setup_lease_until opened_at closed_at created_at created_by_login)a
   @required ~w(id project_id slug title branch workdir origin_kind rev created_at created_by_login)a
 
@@ -157,7 +158,7 @@ defmodule Ravix.Tracks.Track do
   def payer(%__MODULE__{project_id: id} = track, %Ravix.Projects.Project{id: id} = project) do
     case track.billing_policy do
       :creator -> {:creator, track.payer_user_id}
-      _legacy -> {:legacy_owner, project.user_id}
+      _legacy -> {:legacy_owner, project.resource_owner_id || project.user_id}
     end
   end
 

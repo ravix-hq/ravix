@@ -1,8 +1,11 @@
-// Apply the saved palette before the stylesheet paints.
+// Resolve Auto before the stylesheet paints, including the first visit.
+let appearance = "auto"
 try {
-  const saved = localStorage.getItem("ravix.theme")
-  if (saved) document.documentElement.setAttribute("data-theme", saved)
+  appearance = localStorage.getItem("ravix.theme") || "auto"
 } catch {}
+document.documentElement.setAttribute("data-theme",
+  appearance === "auto" ? (matchMedia("(prefers-color-scheme: dark)").matches ? "slate" : "ravix") :
+  appearance === "light" ? "ravix" : appearance === "dark" ? "slate" : appearance)
 
 // Sidebar visibility is the same kind of preference. The keys match
 // PanelToggle in assets/js/hooks/panel_toggle.js; layouts tests keep them

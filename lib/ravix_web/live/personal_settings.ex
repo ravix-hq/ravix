@@ -51,7 +51,7 @@ defmodule RavixWeb.Live.PersonalSettings do
   @impl true
   def render(assigns) do
     ~H"""
-    <div id="personal-settings" class="settings-host">
+    <div id="personal-settings" class="settings-host settings-shell">
       <Settings.frame
         kind={:personal}
         section={@section}
@@ -95,56 +95,69 @@ defmodule RavixWeb.Live.PersonalSettings do
 
   defp profile(assigns) do
     ~H"""
-    <section id="settings-profile" class="personal-section" aria-labelledby="settings-title">
-      <div class="profile-identity">
-        <img
-          :if={@user.avatar_url}
-          src={@user.avatar_url}
-          alt=""
-          class="profile-avatar"
-          width="64"
-          height="64"
-        />
-        <span :if={!@user.avatar_url} class="profile-avatar" aria-hidden="true">
-          <.icon name="person" size={28} />
-        </span>
-        <div class="profile-names">
-          <strong id="profile-name">{@user.name || @user.login}</strong>
-          <span id="profile-login" class="dim">@{@user.login}</span>
+    <section id="settings-profile" class="settings-row" aria-labelledby="settings-title">
+      <div class="settings-row-copy">
+        <div class="profile-identity">
+          <img
+            :if={@user.avatar_url}
+            src={@user.avatar_url}
+            alt=""
+            class="profile-avatar"
+            width="40"
+            height="40"
+          />
+          <span :if={!@user.avatar_url} class="profile-avatar" aria-hidden="true">
+            <.icon name="person" size={20} />
+          </span>
+          <div class="profile-names">
+            <strong id="profile-name">{@user.name || @user.login}</strong>
+            <span id="profile-login" class="dim">@{@user.login}</span>
+          </div>
         </div>
+        <p class="hint">
+          Your name, login and picture come from GitHub and update when you next sign in.
+        </p>
       </div>
-      <p class="hint">
-        Your name, login and picture come from GitHub and update when you next sign in.
-        <a href="https://github.com/settings/profile" target="_blank" rel="noopener noreferrer">
-          Change them on GitHub ↗
-        </a>
-      </p>
-    </section>
-    <section class="personal-section" aria-labelledby="profile-github-title">
-      <h2 id="profile-github-title">Repository access</h2>
-      <p class="hint">
-        Ravix works only in the repositories you let its GitHub App read.
-      </p>
-      <p>
-        <a id="profile-repository-access" href="/api/auth/install">
-          Change which GitHub repositories Ravix may work in ↗
-        </a>
-      </p>
-      <p :if={@workspace}>
-        <.link
-          id="profile-workspace-repositories"
-          patch={Settings.section_path(:workspace, @workspace.id, "repositories")}
+      <div class="settings-row-controls">
+        <a
+          class="link-button"
+          href="https://github.com/settings/profile"
+          target="_blank"
+          rel="noopener noreferrer"
         >
-          See the repositories {@workspace.name} uses →
-        </.link>
-      </p>
+          Edit on GitHub ↗
+        </a>
+      </div>
     </section>
-    <section class="personal-section" aria-labelledby="profile-session-title">
-      <h2 id="profile-session-title">Sessions</h2>
-      <p class="hint">
-        Sign out here, or everywhere you are signed in: every browser and device, this one included. Your projects and tracks carry on.
-      </p>
-      <div class="workspace-actions">
+    <section class="settings-row" aria-labelledby="profile-github-title">
+      <div class="settings-row-copy">
+        <h2 id="profile-github-title">Repository access</h2>
+        <p class="hint">
+          Ravix works only in the repositories you let its GitHub App read.
+        </p>
+        <p :if={@workspace} class="hint">
+          <.link
+            id="profile-workspace-repositories"
+            patch={Settings.section_path(:workspace, @workspace.id, "repositories")}
+          >
+            See the repositories {@workspace.name} uses →
+          </.link>
+        </p>
+      </div>
+      <div class="settings-row-controls">
+        <a id="profile-repository-access" class="link-button" href="/api/auth/install">
+          Manage repositories ↗
+        </a>
+      </div>
+    </section>
+    <section class="settings-row" aria-labelledby="profile-session-title">
+      <div class="settings-row-copy">
+        <h2 id="profile-session-title">Sessions</h2>
+        <p class="hint">
+          Sign out of this browser or all devices. Your projects and tracks keep running.
+        </p>
+      </div>
+      <div class="settings-row-controls">
         <.link id="profile-sign-out" href="/auth/signout" method="post" class="link-button">
           Sign out
         </.link>
@@ -170,7 +183,7 @@ defmodule RavixWeb.Live.PersonalSettings do
     ~H"""
     <section id="settings-agents" aria-labelledby="settings-title">
       <p class="lede">
-        Connect either or both agents and choose a default for new projects. Each project uses its selected agent, paid for by its owner’s subscription or API key, whoever is working.
+        Connect your agents and choose a default for new projects. The project owner’s subscription or API key pays for everyone’s turns.
       </p>
       <.live_component
         module={RavixWeb.Live.AgentPanel}
@@ -185,25 +198,28 @@ defmodule RavixWeb.Live.PersonalSettings do
 
   defp notifications(assigns) do
     ~H"""
-    <section id="settings-notifications" class="personal-section">
-      <div id="notify-setting" phx-hook="NotifyToggle" class="notify">
+    <section id="settings-notifications" class="settings-row" aria-labelledby="notify-setting-label">
+      <div class="settings-row-copy">
+        <h2 id="notify-setting-label">Desktop notifications</h2>
+        <p id="notify-setting-hint" class="hint">
+          Get notified when a track needs you while this tab is in the background.
+          Enable this in each browser you use.
+        </p>
+      </div>
+      <div id="notify-setting" phx-hook="NotifyToggle" class="notify settings-row-controls">
         <button
           type="button"
-          class="theme-trigger"
+          class="settings-row-toggle"
           data-notify-toggle
           aria-pressed="false"
+          aria-labelledby="notify-setting-label notify-setting-state"
           aria-describedby="notify-setting-hint"
         >
-          <span class="notify-dot" data-notify-dot></span><span class="col"><small>Desktop notifications</small><span
-            class="truncate"
-            data-notify-state
-          >Off</span></span>
+          <span class="sr-only">Desktop notifications</span>
+          <span id="notify-setting-state" data-notify-state>Off</span>
+          <span class="settings-row-switch" data-notify-dot aria-hidden="true"></span>
         </button>
       </div>
-      <p id="notify-setting-hint" class="hint">
-        Say so from the desktop when a track needs you and this tab is in the background.
-        This is a setting of this browser: turn it on in each browser you use. The same switch is in the You menu.
-      </p>
     </section>
     <section
       id="settings-inbox"
@@ -229,12 +245,31 @@ defmodule RavixWeb.Live.PersonalSettings do
 
   defp appearance(assigns) do
     ~H"""
-    <section id="settings-appearance" class="personal-section">
-      <.theme_picker id="appearance-theme" />
-      <p class="hint">
-        The theme is a setting of this browser. Hover a palette to preview it.
-      </p>
+    <section id="settings-appearance" class="settings-row" aria-labelledby="appearance-theme-label">
+      <div class="settings-row-copy">
+        <h2 id="appearance-theme-label">Color mode</h2>
+        <p class="hint">
+          Auto follows your device’s light or dark appearance. Saved for this browser.
+        </p>
+      </div>
+      <div class="settings-row-controls">
+        <.theme_picker id="appearance-mode" />
+      </div>
     </section>
+    <details id="appearance-advanced" class="settings-advanced">
+      <summary>Advanced / Experimental</summary>
+      <section class="settings-row" aria-labelledby="appearance-palette-label">
+        <div class="settings-row-copy">
+          <h2 id="appearance-palette-label">Custom theme</h2>
+          <p class="hint">
+            Extra palettes override Auto, Light, and Dark. Hover a palette to preview it.
+          </p>
+        </div>
+        <div class="settings-row-controls">
+          <.theme_picker id="appearance-theme" experimental />
+        </div>
+      </section>
+    </details>
     """
   end
 end

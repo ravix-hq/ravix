@@ -165,6 +165,7 @@ defmodule Ravix.Workspaces.RepositoriesTest do
                Repositories.add(ctx.owner, ctx.team.id, "acme/web")
 
       assert %Project{
+               name: "acme/web",
                repo_full_name: "acme/web",
                normalized_repo_full_name: "acme/web",
                workspace_id: team_id,
@@ -286,7 +287,11 @@ defmodule Ravix.Workspaces.RepositoriesTest do
       assert {:ok, %{renamed: ["acme/website"]}} = Repositories.refresh(ctx.owner, ctx.team.id)
       assert_receive {:hub, %Ravix.Hub.Event{name: :settings}}
 
-      assert %Project{repo_full_name: "acme/website", normalized_repo_full_name: "acme/website"} =
+      assert %Project{
+               name: "acme/website",
+               repo_full_name: "acme/website",
+               normalized_repo_full_name: "acme/website"
+             } =
                Repo.get!(Project, project.id)
 
       assert {:ok, %{project: %{id: id}, created: false}} =

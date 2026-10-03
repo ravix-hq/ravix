@@ -2,14 +2,13 @@ defmodule RavixWeb.StagePagesTest do
   # RAV-100: Home, Inbox, Schedules and Not found share one page container;
   # Home lists recent tracks rather than look-alike project rows; an address
   # nothing answers is a 404 inside the app shell for somebody signed in; the
-  # Inbox's and the Add a repository dialog's loading states hold the shape of
-  # what arrives.
+  # Inbox's loading states hold the shape of what arrives.
   use RavixWeb.ConnCase, async: true
   import Phoenix.LiveViewTest
   import Mimic
 
-  alias Ravix.{Accounts, Projects, Repo, Tracks}
   alias Ravix.Fountain.Client
+  alias Ravix.{Projects, Repo, Tracks}
   alias RavixWeb.Live.Guard
 
   setup :verify_on_exit!
@@ -129,11 +128,6 @@ defmodule RavixWeb.StagePagesTest do
                view,
                "#home-track-#{newer.id}[aria-label^='tidy-router in ravix, by @sasha']"
              )
-
-      # "Add a repository" in the sidebar is the way in; Home's one action is New track.
-      refute has_element?(view, "#home button", "repository")
-      assert has_element?(view, "#home #home-new-track[data-new-track-trigger]", "New track")
-      assert has_element?(view, "#yard button.yard-item", "Add a repository")
     end
 
     test "Mine leaves other people's tracks out, and no tracks says so", %{conn: conn} do
@@ -280,41 +274,6 @@ defmodule RavixWeb.StagePagesTest do
       assert has_element?(view, "#schedules-empty .empty h3", "No schedules yet")
       assert has_element?(view, "#schedules-empty .empty button", "Create schedule")
       assert has_element?(view, "#schedule-form p.hint", "Times are in the schedule's time zone")
-    end
-  end
-
-  describe "the Add a repository dialog" do
-    test "holds the GitHub account field's place while repositories load", %{conn: conn} do
-      stub(Accounts, :capabilities, fn -> %{github: true} end)
-      test = self()
-
-      stub(Projects, :repos, fn _user, _id ->
-        send(test, {:repos_asked, self()})
-
-        receive do
-          :answer ->
-            {:ok, %{installations: [%{account: "acme", id: 42}], repos: [], selected: 42}}
-        end
-      end)
-
-      user = insert_user()
-      insert_project(user: user)
-      view = live_at(conn, user, "/home")
-      view |> element("#yard button.yard-item", "Add a repository") |> render_click()
-      assert_receive {:repos_asked, loader}
-
-      assert has_element?(view, "#project-repos-loading[role=status] .skeleton-control")
-      assert has_element?(view, "#project-repos-loading", "Loading GitHub repositories…")
-      assert has_element?(view, "#project-repo[aria-busy=true]")
-      refute has_element?(view, "#project-repositories")
-      refute has_element?(view, "#installation")
-
-      send(loader, :answer)
-      render_async(view)
-      refute has_element?(view, "#project-repos-loading")
-      assert has_element?(view, "#installation")
-      assert has_element?(view, "#project-repositories-none", "No GitHub repositories")
-      assert has_element?(view, "#project-repo .repo-scratch input[checked]")
     end
   end
 end

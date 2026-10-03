@@ -89,7 +89,6 @@ defmodule Ravix.Projects.Settings do
   @type change :: %{optional(atom()) => term()}
 
   @attrs %{
-    name: :string,
     runtime: :string,
     rebuild: :boolean,
     model: :string,
@@ -151,13 +150,15 @@ defmodule Ravix.Projects.Settings do
 
   `attrs` (string or atom keys), each optional: `rebuild: true` explicitly
   authorizes a runtime switch and disk replacement; `runtime` and `model`
-  (validated together against the catalog, then set on the agent), `name`,
+  (validated together against the catalog, then set on the agent),
   `setup_script` and `packages` (the environment), `instructions` (the
   agent's system prompt), and `secret` as `%{store: "vault" | "env", key,
   value}` where an empty value deletes. The harness, the instructions and a
-  secret or readable environment-variable change bumps the revision; a name,
+  secret or readable environment-variable change bumps the revision;
   a setup script or a package list does not, because Fountain applies those when the disk is built rather than
   when a session starts.
+
+  The legacy `name` field is ignored; project names cannot be edited.
 
   The first failure stops remaining mutations. Successful session-start
   mutations still bump the revision when a later mutation fails.
@@ -168,10 +169,6 @@ defmodule Ravix.Projects.Settings do
          :ok <- validate_env_secrets(project, change, client),
          {:ok, project, bumps} <- harness(project, change, client) do
       steps = [
-        fn bumps ->
-          :ok = rename(project, change)
-          {:ok, bumps}
-        end,
         &instructions(project, change, client, &1),
         &secret(project, change, client, &1),
         &environment(project, change, client, &1)
@@ -380,15 +377,6 @@ defmodule Ravix.Projects.Settings do
 
   defp invalid_model,
     do: {:error, {:unprocessable, "invalid_model", "Choose one of this agent's models."}}
-
-  defp rename(project, %{name: name}) do
-    case name |> str(120) |> String.trim() do
-      "" -> :ok
-      trimmed -> Projects.Store.rename(project.id, trimmed)
-    end
-  end
-
-  defp rename(_project, _change), do: :ok
 
   defp environment(project, change, client, bumps) do
     Ravix.Cluster.project_mutation(project.id, :env_vars_change, fn ->

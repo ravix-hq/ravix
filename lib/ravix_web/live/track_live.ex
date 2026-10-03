@@ -136,6 +136,10 @@ defmodule RavixWeb.TrackLive do
         # Empty when the catalog could not be read: the model is then shown
         # without a menu.
         models: [],
+        # The full runtime/model menu for starting another thread. It is read
+        # lazily when the model chip opens, so ordinary track refreshes stay
+        # as cheap as they were.
+        thread_options: nil,
         page: Transcript.empty(""),
         # The markdown of every block on the page, rendered once per body.
         # See `memoize/1`.
@@ -402,16 +406,21 @@ defmodule RavixWeb.TrackLive do
   # else. The thread itself is made by the first message; see `start/2`.
   # Pressing it again goes back to the draft there is rather than making a
   # second one.
+  def handle_event("draft-thread", %{"runtime" => runtime, "model" => model}, socket)
+      when is_binary(runtime) and is_binary(model) do
+    draft =
+      (socket.assigns.thread_draft || new_draft())
+      |> Map.merge(%{runtime: runtime, model: model, explicit?: true})
+
+    {:noreply,
+     socket
+     |> assign(thread_draft: draft, thread_error: nil)
+     |> show_draft()
+     |> draft_options()}
+  end
+
   def handle_event("draft-thread", _, %{assigns: %{thread_draft: nil}} = socket) do
-    draft = %{
-      id: Ecto.UUID.generate(),
-      selected?: false,
-      options: nil,
-      runtime: nil,
-      model: nil,
-      source: nil,
-      explicit?: false
-    }
+    draft = new_draft()
 
     {:noreply,
      socket
@@ -431,9 +440,9 @@ defmodule RavixWeb.TrackLive do
   def handle_event("discard-draft", _, %{assigns: %{thread_draft: %{} = draft}} = socket) do
     socket =
       socket
-      |> cancel_async(:thread_options)
+      |> cancel_async({:thread_options, socket.assigns.track_id})
       |> settle(:thread_options)
-      |> assign(thread_draft: nil, thread_connect: nil, thread_error: nil)
+      |> assign(thread_draft: nil, thread_connect: nil, thread_error: nil, thread_options: nil)
       |> push_event("composer:forget", %{key: draft_key(socket.assigns.track_id, draft)})
 
     if draft.selected?,
@@ -620,6 +629,8 @@ defmodule RavixWeb.TrackLive do
       do: {:noreply, socket},
       else: {:noreply, begin(socket, :model, &Tracks.set_model(&1, &2, thread_id, model))}
   end
+
+  def handle_event("model-options", _, socket), do: {:noreply, draft_options(socket)}
 
   # RAV-52: one of the shown conversation's session config options (effort
   # or Fast), from its next prompt. Checked here against the options this
@@ -939,7 +950,12 @@ defmodule RavixWeb.TrackLive do
 
       {:noreply,
        socket
-       |> assign(current_user: user, thread_connect: nil, thread_draft: draft)
+       |> assign(
+         current_user: user,
+         thread_connect: nil,
+         thread_draft: draft,
+         thread_options: nil
+       )
        |> draft_options()}
     else
       {:noreply, socket}
@@ -1231,20 +1247,32 @@ defmodule RavixWeb.TrackLive do
 
   # The default the draft opens on, and every agent it may switch to. A
   # draft picked before the answer (the inline connect, say) keeps its pick.
-  defp async_result(:thread_options, {:ok, {:ok, options}}, socket) do
+  defp async_result(
+         {:thread_options, track_id},
+         _response,
+         %{assigns: %{track_id: current}} = socket
+       )
+       when track_id != current,
+       do: socket
+
+  defp async_result({:thread_options, _track_id}, {:ok, {:ok, options}}, socket) do
     socket = settle(socket, :thread_options)
 
     case socket.assigns.thread_draft do
       nil ->
-        socket
+        assign(socket, thread_options: options)
 
       draft ->
         draft = %{draft | options: options, source: options.source}
-        assign(socket, thread_draft: pick(draft, draft.runtime, draft.model))
+
+        assign(socket,
+          thread_options: options,
+          thread_draft: pick(draft, draft.runtime, draft.model)
+        )
     end
   end
 
-  defp async_result(:thread_options, {:ok, {:error, reason}}, socket),
+  defp async_result({:thread_options, _track_id}, {:ok, {:error, reason}}, socket),
     do: socket |> settle(:thread_options) |> assign(thread_error: Error.from(reason).message)
 
   defp async_result({:start_thread, draft_id}, {:ok, {:ok, thread}}, socket) do
@@ -1701,7 +1729,7 @@ defmodule RavixWeb.TrackLive do
       |> settle(:start_thread)
       |> assign(thread_error: thread_failure(socket, :unavailable))
 
-  defp async_result(:thread_options, {:exit, _reason}, socket),
+  defp async_result({:thread_options, _track_id}, {:exit, _reason}, socket),
     do:
       socket
       |> settle(:thread_options)
@@ -1877,9 +1905,38 @@ defmodule RavixWeb.TrackLive do
   defp show_draft(socket), do: socket
 
   defp draft_options(socket) do
-    if MapSet.member?(socket.assigns.pending, :thread_options),
-      do: socket,
-      else: begin(socket, :thread_options, &Tracks.thread_options/2)
+    cond do
+      socket.assigns.thread_options ->
+        if socket.assigns.thread_draft do
+          options = socket.assigns.thread_options
+          draft = %{socket.assigns.thread_draft | options: options, source: options.source}
+          assign(socket, thread_draft: pick(draft, draft.runtime, draft.model))
+        else
+          socket
+        end
+
+      MapSet.member?(socket.assigns.pending, :thread_options) ->
+        socket
+
+      true ->
+        %{current_user: user, track_id: id} = socket.assigns
+
+        socket
+        |> update(:pending, &MapSet.put(&1, :thread_options))
+        |> traced_async({:thread_options, id}, fn -> Tracks.thread_options(user, id) end)
+    end
+  end
+
+  defp new_draft do
+    %{
+      id: Ecto.UUID.generate(),
+      selected?: false,
+      options: nil,
+      runtime: nil,
+      model: nil,
+      source: nil,
+      explicit?: false
+    }
   end
 
   # Settle a pick against the agents on offer: an agent that is not one of
@@ -2109,6 +2166,7 @@ defmodule RavixWeb.TrackLive do
     end
 
     socket
+    |> cancel_async({:thread_options, socket.assigns.track_id})
     |> unfollow_siblings()
     |> unfollow()
     |> drop_pending()
@@ -2132,6 +2190,7 @@ defmodule RavixWeb.TrackLive do
       starters: [],
       queue: [],
       thread_draft: nil,
+      thread_options: nil,
       thread_connect: nil,
       thread_error: nil,
       billing_notice: nil,
@@ -2159,7 +2218,7 @@ defmodule RavixWeb.TrackLive do
       commit_message: "",
       # A commit or push still running belongs to the track it was for; its
       # answer is dropped when it arrives here. See `async_result/3`.
-      pending: MapSet.delete(socket.assigns.pending, :git)
+      pending: socket.assigns.pending |> MapSet.delete(:git) |> MapSet.delete(:thread_options)
     )
     |> assign_turn()
   end
