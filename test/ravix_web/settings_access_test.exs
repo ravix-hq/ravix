@@ -13,7 +13,7 @@ defmodule RavixWeb.SettingsAccessTest do
 
     {:ok, view, _} = live(log_in_user(conn, member), "/p/#{project.id}")
     render_patch(view, "/p/#{project.id}/settings/general")
-    refute has_element?(view, "#settings-form")
+    refute has_element?(view, "#settings-page")
 
     {:ok, stranger, _} = live(log_in_user(conn, insert_user()), "/p/#{project.id}")
     render_async(stranger)

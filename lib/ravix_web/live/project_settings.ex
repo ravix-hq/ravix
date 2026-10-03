@@ -4,7 +4,7 @@ defmodule RavixWeb.Live.ProjectSettings do
   in the settings frame (`RavixWeb.Live.Settings`, RAV-72), laid out as
   RAV-74 has them.
 
-    * **General**: the name, the repository, and the workspace the project
+    * **General**: the repository and the workspace the project
       is in, with the move to another.
     * **Access**: everyone who reaches the project and where their role
       comes from (RAV-75), the People dialog drawn as a page
@@ -131,19 +131,6 @@ defmodule RavixWeb.Live.ProjectSettings do
   end
 
   # ── General ───────────────────────────────────────────────────────────
-
-  defp settings_event("save-general", %{"settings" => params}, socket) do
-    socket =
-      assign(socket,
-        switching_agent: false,
-        settings_form: Form.new(:settings, Map.merge(socket.assigns.settings_form.params, params))
-      )
-
-    {:noreply, save_settings(socket, Map.take(params, ["name"]))}
-  end
-
-  defp settings_event("discard-general", _, socket),
-    do: {:noreply, assign(socket, settings_form: settings_form(socket.assigns.settings))}
 
   defp settings_event("choose-move-target", %{"workspace" => id}, socket) do
     case socket.assigns.move_targets &&
@@ -1054,7 +1041,6 @@ defmodule RavixWeb.Live.ProjectSettings do
 
   defp settings_form(settings) do
     Form.new(:settings, %{
-      "name" => settings.name,
       "runtime" => settings.runtime,
       "model" => settings.model,
       "instructions" => settings.instructions
@@ -1170,7 +1156,7 @@ defmodule RavixWeb.Live.ProjectSettings do
   @impl true
   def render(assigns) do
     ~H"""
-    <div class="settings-host">
+    <div class="settings-host project-settings">
       <Settings.frame
         kind={:project}
         section={@section}
@@ -1204,32 +1190,6 @@ defmodule RavixWeb.Live.ProjectSettings do
 
   defp general(assigns) do
     ~H"""
-    <Settings.unsaved_changes
-      id="project-general"
-      form="settings-form"
-      saved={@save_version}
-      discard="discard-general"
-      target={@myself}
-    >
-      <.form
-        :let={f}
-        for={@settings_form}
-        id="settings-form"
-        phx-target={@myself}
-        phx-submit="save-general"
-      >
-        <.input
-          field={f[:name]}
-          id="settings-name"
-          label="Name"
-          required
-          aria-describedby="settings-name-help"
-        />
-        <p id="settings-name-help" class="settings-help">
-          For example, “Customer portal”. The new name appears after you save; it does not change the repository or open tracks.
-        </p>
-      </.form>
-    </Settings.unsaved_changes>
     <section id="general-repository" class="settings-part" aria-labelledby="general-repository-title">
       <h2 id="general-repository-title">Repository</h2>
       <p :if={@project.repo} class="settings-repo">
@@ -1248,6 +1208,12 @@ defmodule RavixWeb.Live.ProjectSettings do
       <p :if={@project.repo} class="settings-help">
         Every track is a branch of this repository.
       </p>
+      <dl :if={@project.repo} class="project-repository-facts">
+        <div>
+          <dt>Default branch</dt>
+          <dd><.icon name="branch" size={14} /><code>{@project.default_branch || "main"}</code></dd>
+        </div>
+      </dl>
     </section>
     <section
       :if={@move_targets}
@@ -1377,7 +1343,8 @@ defmodule RavixWeb.Live.ProjectSettings do
       discard="discard-agent"
       target={@myself}
     >
-      <div class="field" role="group" aria-label="Agent">
+      <div class="field project-agent-row" role="group" aria-labelledby="settings-agent-label">
+        <span id="settings-agent-label" class="label">Default agent</span>
         <div class="agent-choices">
           <button
             :for={{label, agent} <- RavixWeb.AgentName.options()}
@@ -1401,7 +1368,7 @@ defmodule RavixWeb.Live.ProjectSettings do
           </button>
         </div>
         <p class="settings-help">
-          Every turn in this project uses your {RavixWeb.AgentName.label(@runtime)} subscription or API key, whoever is working.
+          Your {RavixWeb.AgentName.label(@runtime)} subscription or API key pays for everyone’s turns in this project.
         </p>
         <p :if={@agent_error} class="error">{@agent_error}</p>
         <button
@@ -1440,20 +1407,22 @@ defmodule RavixWeb.Live.ProjectSettings do
             Current agent: {RavixWeb.AgentName.label(@runtime)}. Choose Claude Code or Codex to switch.
           </p>
         </div>
-        <.input
-          field={f[:model]}
-          id="settings-model"
-          disabled={@switch_confirmation != nil or (@switching_agent and MapSet.size(@pending) > 0)}
-          label="Model"
-          type="select"
-          options={
-            model_options(Catalog.models_for(@settings.catalog, f[:runtime].value), f[:model].value)
-          }
-          aria-describedby="settings-model-help"
-        />
-        <p id="settings-model-help" class="settings-help">
-          Models available to this agent. Your saved choice is kept if the catalog is unavailable.
-        </p>
+        <div class="project-setting-row">
+          <.input
+            field={f[:model]}
+            id="settings-model"
+            disabled={@switch_confirmation != nil or (@switching_agent and MapSet.size(@pending) > 0)}
+            label="Model"
+            type="select"
+            options={
+              model_options(Catalog.models_for(@settings.catalog, f[:runtime].value), f[:model].value)
+            }
+            aria-describedby="settings-model-help"
+          />
+          <p id="settings-model-help" class="settings-help">
+            Models available to this agent. Your saved choice is kept if the catalog is unavailable.
+          </p>
+        </div>
         <.input
           type="textarea"
           field={f[:instructions]}
@@ -1570,23 +1539,35 @@ defmodule RavixWeb.Live.ProjectSettings do
           <p id="settings-setup-help" class="settings-help">
             Commands to prepare the project, such as <code>npm ci</code>. Keep credentials in Secrets.
           </p>
-          <.input
-            :for={kind <- MachineChanges.managers()}
-            field={@environment_form[String.to_existing_atom(kind)]}
-            id={"packages-#{kind}"}
-            label={"#{kind} packages"}
-            aria-describedby="settings-packages-help"
-          />
-          <p id="settings-packages-help" class="settings-help">
-            Separate names with spaces or commas. Leave blank to remove that package list.
-          </p>
+          <details id="machine-packages-advanced" class="settings-advanced">
+            <summary>Advanced · Package overrides</summary>
+            <div :for={kind <- MachineChanges.managers()} class="project-setting-row">
+              <.input
+                field={@environment_form[String.to_existing_atom(kind)]}
+                id={"packages-#{kind}"}
+                label={"#{kind} packages"}
+                aria-describedby="settings-packages-help"
+              />
+            </div>
+            <p id="settings-packages-help" class="settings-help">
+              Separate names with spaces or commas. Leave blank to remove that package list.
+            </p>
+          </details>
         </section>
         <section
           id="machine-variables"
           class="settings-part"
           aria-labelledby="machine-variables-title"
         >
-          <h2 id="machine-variables-title">Environment variables</h2>
+          <div class="project-section-heading">
+            <h2 id="machine-variables-title">Environment variables</h2>
+            <button
+              type="button"
+              class="ghost"
+              phx-click={JS.dispatch("unsaved:dirty") |> JS.push("add-env-var", target: @myself)}
+              disabled={length(@variable_rows) >= 100}
+            >Add variable</button>
+          </div>
           <p class="settings-help">
             These values are visible to anyone who can see project settings. Keep secrets in Secrets.
             Up to 100 variables; names up to 200 bytes and values up to 16 KiB.
@@ -1623,16 +1604,17 @@ defmodule RavixWeb.Live.ProjectSettings do
                 aria-label={"Remove variable #{index + 1}"}
               >Remove</button>
             </div>
-            <button
-              type="button"
-              class="ghost"
-              phx-click={JS.dispatch("unsaved:dirty") |> JS.push("add-env-var", target: @myself)}
-              disabled={length(@variable_rows) >= 100}
-            >Add variable</button>
           </fieldset>
         </section>
         <section id="machine-secrets" class="settings-part" aria-labelledby="machine-secrets-title">
-          <h2 id="machine-secrets-title">Secrets</h2>
+          <div class="project-section-heading">
+            <h2 id="machine-secrets-title">Secrets</h2>
+            <button
+              type="button"
+              class="ghost"
+              phx-click={JS.dispatch("unsaved:dirty") |> JS.push("add-secret", target: @myself)}
+            >Add secret</button>
+          </div>
           <p class="settings-help">
             Values are never shown again. Environment secrets become machine environment variables. Vault secrets are inserted into outgoing requests and stay off the machine. The same key can exist in both.
           </p>
@@ -1731,11 +1713,6 @@ defmodule RavixWeb.Live.ProjectSettings do
               aria-label={if row.existing, do: "Keep #{row.key}", else: "Remove this secret row"}
             >{if row.existing, do: "Undo", else: "Remove"}</button>
           </div>
-          <button
-            type="button"
-            class="ghost"
-            phx-click={JS.dispatch("unsaved:dirty") |> JS.push("add-secret", target: @myself)}
-          >Add secret</button>
         </section>
         <section
           id="machine-run-script"
@@ -1746,42 +1723,53 @@ defmodule RavixWeb.Live.ProjectSettings do
           <p class="settings-help">
             The run script inherited by each track. Saving it stops tracks using this default; run them again to apply it. Leave the command blank for none.
           </p>
-          <.input
-            field={@defaults_form[:directory]}
-            id="default-directory"
-            label="App directory"
-            aria-describedby="default-directory-help"
-          />
-          <p id="default-directory-help" class="settings-help">
-            Relative path, such as apps/web. Use . for the repository root.
-          </p>
-          <.input
-            field={@defaults_form[:command]}
-            id="default-command"
-            label="Run command"
-            aria-describedby="default-command-help"
-          />
-          <p id="default-command-help" class="settings-help">
-            Start the app on the assigned port and fail if it is occupied. For example: <code>npm run dev -- --host 0.0.0.0 --port "$PORT" --strictPort</code>.
-          </p>
-          <.input
-            field={@defaults_form[:readiness_path]}
-            id="default-readiness"
-            label="Readiness path (optional)"
-            aria-describedby="default-readiness-help"
-          />
-          <p id="default-readiness-help" class="settings-help">
-            An HTTP path that responds when the app is ready, for example /health or /. Leave blank to run a process without a preview.
-          </p>
-          <.input
-            field={@defaults_form[:stop_command]}
-            id="default-stop-command"
-            label="Stop command (optional)"
-            aria-describedby="default-stop-command-help"
-          />
-          <p id="default-stop-command-help" class="settings-help">
-            Runs in the same directory with the same $PORT. Leave blank to signal the process group. Stop always ends the managed service, even if this command fails.
-          </p>
+          <div class="project-setting-row">
+            <.input
+              field={@defaults_form[:directory]}
+              id="default-directory"
+              label="App directory"
+              aria-describedby="default-directory-help"
+            />
+            <p id="default-directory-help" class="settings-help">
+              Relative path, such as apps/web. Use . for the repository root.
+            </p>
+          </div>
+          <div class="project-setting-row">
+            <.input
+              field={@defaults_form[:command]}
+              id="default-command"
+              label="Run command"
+              aria-describedby="default-command-help"
+            />
+            <p id="default-command-help" class="settings-help">
+              Start the app on the assigned port and fail if it is occupied. For example: <code>npm run dev -- --host 0.0.0.0 --port "$PORT" --strictPort</code>.
+            </p>
+          </div>
+          <details id="machine-run-advanced" class="settings-advanced">
+            <summary>Advanced · Readiness and shutdown</summary>
+            <div class="project-setting-row">
+              <.input
+                field={@defaults_form[:readiness_path]}
+                id="default-readiness"
+                label="Readiness path (optional)"
+                aria-describedby="default-readiness-help"
+              />
+              <p id="default-readiness-help" class="settings-help">
+                An HTTP path that responds when the app is ready, for example /health or /. Leave blank to run a process without a preview.
+              </p>
+            </div>
+            <div class="project-setting-row">
+              <.input
+                field={@defaults_form[:stop_command]}
+                id="default-stop-command"
+                label="Stop command (optional)"
+                aria-describedby="default-stop-command-help"
+              />
+              <p id="default-stop-command-help" class="settings-help">
+                Runs in the same directory with the same $PORT. Leave blank to signal the process group. Stop always ends the managed service, even if this command fails.
+              </p>
+            </div>
+          </details>
         </section>
         <div
           :if={@machine_review}
@@ -1896,10 +1884,9 @@ defmodule RavixWeb.Live.ProjectSettings do
         aria-describedby="change-repository-review"
       >
         <div class="dialog-head">
-          <h2 id="change-repository-dialog-title">Change the repository of {@project.name}</h2>
+          <h2 id="change-repository-dialog-title">Change repository · {@project.name}</h2>
         </div>
         <div class="dialog-body">
-          <h3>1. Choose the repository</h3>
           <div id="change-repository-picker" class="repo-picker" data-jump-scope>
             <form
               id="change-repository-query-form"
@@ -1907,13 +1894,13 @@ defmodule RavixWeb.Live.ProjectSettings do
               phx-submit="filter-change-repository"
               phx-target={@myself}
             >
-              <label for="change-repository-query">Filter repositories</label>
+              <label for="change-repository-query">Repository</label>
               <input
                 id="change-repository-query"
                 name="q"
                 type="search"
                 value={@query}
-                placeholder="owner/repo"
+                placeholder="Search repositories…"
                 autocomplete="off"
                 phx-debounce="100"
                 phx-mounted={JS.focus()}
@@ -1924,7 +1911,7 @@ defmodule RavixWeb.Live.ProjectSettings do
               />
             </form>
             <p id="change-repository-offer" class="settings-help">
-              Only repositories the Ravix GitHub App can read are offered. To offer another, install the App on it first.
+              Only repositories connected to the Ravix GitHub App are listed.
             </p>
             <p :if={@choices == :loading} class="hint" role="status">Loading repositories…</p>
             <RavixWeb.Live.RepoPicker.repositories
@@ -1943,11 +1930,10 @@ defmodule RavixWeb.Live.ProjectSettings do
               }
             />
           </div>
-          <h3>2. What happens</h3>
+          <h3>Before you change repositories</h3>
           <p id="change-repository-review">
             The machine is rebuilt from {if @picked, do: @picked, else: "the new repository"}. <strong id="change-repository-closing">{@closing}</strong>, including private tracks you cannot see; their branches stay on GitHub, and unpushed work on the machine is lost. Settings, secrets, environment variables, members and history are kept.
           </p>
-          <h3>3. Confirm</h3>
           <form
             id="change-repository-form"
             phx-change="edit-change-repository"

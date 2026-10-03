@@ -54,30 +54,10 @@
     >
     </div>
     <aside id="yard" class={["yard", @yard_open && "forced"]} aria-label="Projects">
-      <%!-- Create stays the first tab stop (RAV-98): the nav comes first in
-        the document, `.yard-top` is drawn above it with `order`, and the
-        rows are ordered Home, Create, Routines, Inbox, Add a repository, Search. --%>
+      <%!-- New tracks start from their project row; the rail's top level is navigation. --%>
       <div class="workspace-actions yard-nav">
-        <button
-          id="top-new-track"
-          class="primary"
-          data-new-track-trigger
-          aria-keyshortcuts="Control+N Meta+N"
-          data-tip="New track"
-          data-tip-kbd="Mod+N"
-          phx-click={new_track_click(@rail_loaded, @projects)}
-        >
-          <.icon name="plus" />Create
-        </button>
         <.link patch="/home" class={["yard-item", @live_action == :projects && "on"]}>
           <.icon name="home" />Home
-        </.link>
-        <.link patch="/schedules" class={["yard-item", @live_action == :schedules && "on"]}>
-          <.icon name="clock" />Routines
-        </.link>
-        <.link patch="/inbox" class={["yard-item", @live_action in [:home, :inbox] && "on"]}>
-          <.icon name="terminal" />Inbox<span class="spacer"></span>
-          <span :if={@attention > 0} class="badge">{@attention}</span>
         </.link>
         <button
           class="yard-item"
@@ -86,9 +66,22 @@
         >
           <.icon name="folder" />Add a repository
         </button>
-        <.link navigate="/search" class="yard-item">
-          <.icon name="search" />Search conversations
+        <.link patch="/schedules" class={["yard-item", @live_action == :schedules && "on"]}>
+          <.icon name="clock" />Routines
         </.link>
+        <.link patch="/inbox" class={["yard-item", @live_action in [:home, :inbox] && "on"]}>
+          <.icon name="terminal" />Inbox<span class="spacer"></span>
+          <span :if={@attention > 0} class="badge">{@attention}</span>
+        </.link>
+        <button
+          type="button"
+          class="yard-item"
+          data-quick-jump-trigger
+          phx-click={JS.push_focus() |> JS.push("dialog")}
+          phx-value-name="search"
+        >
+          <.icon name="search" />Search conversations
+        </button>
       </div>
       <%!-- Account preferences live in the sidebar footer; the native popover
         retains light dismiss, Escape and focus return. --%>
@@ -202,7 +195,7 @@
       </div>
       <div class="yard-scroll">
         <div class="section-label">
-          <strong>My workspaces</strong><span class="spacer"></span>
+          <strong>Projects</strong><span class="spacer"></span>
           <button
             type="button"
             id="manage-sections"
@@ -458,10 +451,15 @@
                       id={"new-track-#{project.id}"}
                       phx-click={JS.push_focus()}
                       class="project-action project-add"
+                      data-new-track-trigger={@project && @project.id == project.id}
+                      aria-keyshortcuts={
+                        if @project && @project.id == project.id, do: "Control+N Meta+N"
+                      }
+                      data-tip-kbd={if @project && @project.id == project.id, do: "Mod+N"}
                       aria-label={"New track in #{label(project, @current_workspace)}"}
-                      data-tip="New track"
+                      data-tip="Open draft track"
                     >
-                      <.icon name="plus" size={13} />
+                      <.icon name="plus" size={14} />
                     </.link>
                   </div>
                   <nav
@@ -618,7 +616,12 @@
           <.icon name="chevron" size={13} open={@yard_open} class="ico" />Menu
         </button>
         <.link patch="/home" aria-current={@live_action == :projects && "page"}>Home</.link>
-        <.link navigate="/search">Search conversations</.link>
+        <button
+          type="button"
+          class="ghost"
+          phx-click={JS.push_focus() |> JS.push("dialog")}
+          phx-value-name="search"
+        >Search conversations</button>
         <.link patch="/schedules">Routines</.link>
         <.link patch="/inbox" aria-current={@live_action in [:home, :inbox] && "page"}>Inbox</.link>
         <button
@@ -811,10 +814,7 @@
             </ul>
           <% end %>
         </section>
-        <%!-- Home (RAV-100): the recent tracks across the rail, in the same
-          page container as the Inbox and Schedules. Its one action is New
-          track, as in the sidebar and on the phone (RAV-37); adding a
-          repository is the sidebar's "Add a repository". --%>
+        <%!-- Home lists recent work; each project's rail row opens its next track. --%>
         <.stage_page
           :if={is_nil(@project) && @live_action == :projects}
           id="home"
@@ -832,19 +832,6 @@
           <:subtitle :if={!@rail_loaded || !fresh_start?(@projects)}>
             Pick up where you left off.
           </:subtitle>
-          <:actions>
-            <button
-              id="home-new-track"
-              class="primary"
-              data-new-track-trigger
-              aria-keyshortcuts="Control+N Meta+N"
-              data-tip="New track"
-              data-tip-kbd="Mod+N"
-              phx-click={new_track_click(@rail_loaded, @projects)}
-            >
-              <.icon name="plus" />New track
-            </button>
-          </:actions>
           <section
             :if={@rail_loaded && fresh_start?(@projects)}
             id="home-start"
@@ -858,7 +845,6 @@
               loading={@repos_loading}
               busy={@quick_busy}
             />
-            <QuickStart.explainer id="home-explainer" />
             <p class="hint first-prompt-alt">
               To add a repository without starting a track yet, use Add a repository in the sidebar.
             </p>
@@ -915,7 +901,7 @@
               id="home-no-tracks"
               class="hint"
             >
-              No open tracks yet. New track starts one in any of your projects.
+              No open tracks yet. Open a new track from a project in the sidebar.
             </p>
           </section>
         </.stage_page>
@@ -1249,8 +1235,6 @@
         session_hash={@session_hash}
         repos={@repos}
         repos_loading={@repos_loading}
-        installations={@installations}
-        installation={@installation}
         busy={@busy}
       />
     </.dialog>

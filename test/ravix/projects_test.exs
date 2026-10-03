@@ -734,15 +734,30 @@ defmodule Ravix.ProjectsTest do
           {%{method: "POST", path: "/api/agents"}, {201, [], %{data: %{id: "new-agent"}}}}
         ])
 
-      assert {:ok, project} = Projects.create(me, %{repo: "Owner/Repo", installation_id: "1"})
+      assert {:ok, project} =
+               Projects.create(me, %{
+                 repo: "Owner/Repo",
+                 installation_id: "1",
+                 name: "Custom name"
+               })
 
-      assert %{name: "repo", repo: "owner/repo", repo_path: "/workspace/repo", repo_private: true} =
+      assert %{
+               name: "owner/repo",
+               repo: "owner/repo",
+               repo_path: "/workspace/repo",
+               repo_private: true
+             } =
                project
 
       assert project.default_branch == "main"
       assert GH.request_count("access_tokens") == 1
 
-      assert %Project{repo_full_name: "owner/repo", installation_id: 1, repo_private: true} =
+      assert %Project{
+               name: "owner/repo",
+               repo_full_name: "owner/repo",
+               installation_id: 1,
+               repo_private: true
+             } =
                Repo.get!(Project, project.id)
 
       assert body_of(client, "POST", "/api/environments")["repositories"] == [
@@ -1632,10 +1647,15 @@ defmodule Ravix.ProjectsTest do
                Repo.get!(Project, project.id)
     end
 
-    test "catalog outages allow unrelated edits and preserve current selection", %{
+    test "legacy name overrides are ignored and catalog outages preserve current selection", %{
       owner: owner,
       project: project
     } do
+      project =
+        project
+        |> Ecto.Changeset.change(name: "owner/repo", repo_full_name: "owner/repo")
+        |> Repo.update!()
+
       fountain([])
 
       assert {:ok, %{rev: 1}} =
@@ -1645,7 +1665,7 @@ defmodule Ravix.ProjectsTest do
                  model: "anthropic/claude-opus-5"
                })
 
-      assert %Project{name: "Renamed", rev: 1} = Repo.get!(Project, project.id)
+      assert %Project{name: "owner/repo", rev: 1} = Repo.get!(Project, project.id)
       assert_received {:hub, %Event{name: :settings}}
     end
 
@@ -2109,6 +2129,7 @@ defmodule Ravix.ProjectsTest do
                Projects.change_repository(owner, project.id, " Owner/New ")
 
       assert %Project{
+               name: "owner/new",
                repo_full_name: "owner/new",
                normalized_repo_full_name: "owner/new",
                repo_private: false,
@@ -2188,7 +2209,10 @@ defmodule Ravix.ProjectsTest do
         )
 
       assert {:ok, %Rebuild{}} = Projects.change_repository(owner, scratch.id, "owner/new")
-      assert %Project{repo_full_name: "owner/new", installation_id: 1} = Repo.get!(Project, "s")
+
+      assert %Project{name: "owner/new", repo_full_name: "owner/new", installation_id: 1} =
+               Repo.get!(Project, "s")
+
       assert [_] = body_of(client, "PUT", "/api/environments/e")["repositories"]
     end
 
@@ -2421,6 +2445,44 @@ defmodule Ravix.ProjectsTest do
   # ── GitHub, for the picker ────────────────────────────────────────────
 
   describe "repos/2" do
+    test "the default list combines accounts and retains each repository's installation" do
+      github([
+        {"GET", "/user/installations",
+         %{
+           installations: [
+             %{id: 1, account: %{login: "zebra"}},
+             %{id: 2, account: %{login: "acme"}},
+             %{id: 3, account: %{login: "empty"}}
+           ]
+         }},
+        repositories_route(1, [repo("zebra/api")]),
+        repositories_route(2, [repo("acme/web"), repo("acme/api")]),
+        repositories_route(3, [])
+      ])
+
+      assert {:ok, %{repos: repos}} = Projects.repos(person("me", "me-token"))
+
+      assert Enum.map(repos, &{&1.full_name, &1.installation_id}) ==
+               [{"acme/api", 2}, {"acme/web", 2}, {"zebra/api", 1}]
+    end
+
+    test "a failed account read refuses the combined list instead of hiding its repositories" do
+      github([
+        {"GET", "/user/installations",
+         %{
+           installations: [
+             %{id: 1, account: %{login: "acme"}},
+             %{id: 2, account: %{login: "tools"}}
+           ]
+         }},
+        repositories_route(1, [repo("acme/api")]),
+        {"GET", "/user/installations/2/repositories",
+         {403, %{message: "Resource not accessible"}}}
+      ])
+
+      assert {:error, %Ravix.GitHub.Error{status: 403}} = Projects.repos(person("me", "me-token"))
+    end
+
     test "the person's installations and the repositories of the chosen one" do
       github([
         {"GET", "/user/installations",
@@ -2549,7 +2611,6 @@ defmodule Ravix.ProjectsTest do
       assert :ok = Projects.Store.rebind_agent(project.id, "agent-2", "set-2")
       assert :ok = Projects.Store.set_harness(project.id, "codex", "openai/x")
       assert :ok = Projects.Store.set_instructions(project.id, "hi")
-      assert :ok = Projects.Store.rename(project.id, "new name")
 
       assert %Project{
                agent_id: "agent-2",
@@ -2557,7 +2618,6 @@ defmodule Ravix.ProjectsTest do
                runtime: "codex",
                model: "openai/x",
                instructions: "hi",
-               name: "new name",
                rev: 3
              } =
                Projects.Store.get_project(project.id)

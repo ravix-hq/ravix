@@ -207,7 +207,6 @@ defmodule RavixWeb.WorkspaceManagementTest do
       assert user.id == ctx.user.id
 
       assert attrs == %{
-               "name" => "Selected",
                "repo" => "acme/app",
                "installation_id" => 42,
                "runtime" => "codex"
@@ -224,7 +223,7 @@ defmodule RavixWeb.WorkspaceManagementTest do
 
     ctx.view
     |> form("#new-project-form",
-      new_project: [name: "Selected", repo: "acme/app", runtime: "codex"]
+      new_project: [repo: "acme/app", runtime: "codex"]
     )
     |> render_change()
 
@@ -232,12 +231,12 @@ defmodule RavixWeb.WorkspaceManagementTest do
 
     ctx.view
     |> form("#new-project-form",
-      new_project: [name: "Selected", repo: "acme/app", runtime: "codex"]
+      new_project: [repo: "acme/app", runtime: "codex"]
     )
     |> render_submit()
 
     assert render_async(ctx.view, 1000) =~ "Provisioning is offline"
-    assert has_element?(ctx.view, "input[name='new_project[name]'][value=Selected]")
+    assert has_element?(ctx.view, "input[name='new_project[repo]'][value='acme/app'][checked]")
     assert has_element?(ctx.view, "#project-agent-codex[aria-pressed=true]")
     refute has_element?(ctx.view, "#new-project-form button[disabled]")
   end
@@ -475,12 +474,12 @@ defmodule RavixWeb.WorkspaceManagementTest do
 
   test "saving settings runs off the page, and the page still answers until Fountain does",
        ctx do
-    settings(ctx)
+    settings(ctx, [], "agent")
     parent = self()
 
     stub(Projects, :update_settings, fn _, _, attrs ->
       send(parent, {:saving, self()})
-      assert attrs["name"] == "Renamed"
+      assert attrs["instructions"] == "Renamed"
 
       receive do
         :finish -> :ok
@@ -489,12 +488,14 @@ defmodule RavixWeb.WorkspaceManagementTest do
       end
     end)
 
-    ctx.view |> form("#settings-form", settings: [name: "Renamed"]) |> render_submit()
+    ctx.view
+    |> form("#agent-settings-form", settings: [instructions: "Renamed"])
+    |> render_submit()
 
     assert_receive {:saving, saving}, 1000
     # A second Save while the first is out starts nothing.
-    ctx.view |> form("#settings-form", settings: [name: "Again"]) |> render_submit()
-    assert render_patch(ctx.view, "/p/#{ctx.project.id}/settings/general") =~ "settings-form"
+    ctx.view |> form("#agent-settings-form", settings: [instructions: "Again"]) |> render_submit()
+    assert render_patch(ctx.view, "/p/#{ctx.project.id}/settings/agent") =~ "agent-settings-form"
 
     send(saving, :finish)
     render_async(ctx.view, 1000)
@@ -503,15 +504,17 @@ defmodule RavixWeb.WorkspaceManagementTest do
 
   @tag capture_log: true
   test "a save that crashes re-enables its button and says so", ctx do
-    settings(ctx)
+    settings(ctx, [], "agent")
     stub(Projects, :update_settings, fn _, _, _ -> raise "Fountain fell over" end)
 
-    ctx.view |> form("#settings-form", settings: [name: "Renamed"]) |> render_submit()
+    ctx.view
+    |> form("#agent-settings-form", settings: [instructions: "Renamed"])
+    |> render_submit()
 
     render_async(ctx.view, 1000)
     assert render(ctx.view) =~ "The operation could not finish"
     # What was typed is still there to try again with.
-    assert has_element?(ctx.view, "#settings-name[value=Renamed]")
+    assert has_element?(ctx.view, "#settings-instructions", "Renamed")
   end
 
   test "agent switch counts only this project's open tracks and Cancel makes no write", ctx do
@@ -960,7 +963,6 @@ defmodule RavixWeb.WorkspaceManagementTest do
   end
 
   for {section, form_id, params, expected} <- [
-        {"general", "settings-form", %{name: "Only a name"}, %{"name" => "Only a name"}},
         {"agent", "agent-settings-form",
          %{runtime: "claude", model: "model", instructions: "Be clear"},
          %{"runtime" => "claude", "model" => "model", "instructions" => "Be clear"}}
@@ -1292,7 +1294,7 @@ defmodule RavixWeb.WorkspaceManagementTest do
     {:ok, view, _} =
       live(Plug.Test.init_test_session(ctx.conn, session_token: token), "/p/#{ctx.project.id}")
 
-    settings(%{ctx | view: view})
+    settings(%{ctx | view: view}, [], "agent")
     parent = self()
 
     expect(Projects, :update_settings, fn _, _, _ ->
@@ -1305,7 +1307,7 @@ defmodule RavixWeb.WorkspaceManagementTest do
       end
     end)
 
-    view |> form("#settings-form", settings: [name: "Delayed"]) |> render_submit()
+    view |> form("#agent-settings-form", settings: [instructions: "Delayed"]) |> render_submit()
     assert_receive {:saving_settings, task}, 1000
     Repo.delete!(session)
     send(task, :finish)
@@ -1365,12 +1367,12 @@ defmodule RavixWeb.WorkspaceManagementTest do
   end
 
   test "a second section's save is not started while the first is still out", ctx do
-    settings(ctx)
+    settings(ctx, [], "agent")
     parent = self()
 
     expect(Projects, :update_settings, 1, fn _, _, attrs ->
       send(parent, {:saving, self()})
-      assert attrs == %{"name" => "First"}
+      assert attrs["instructions"] == "First"
 
       receive do
         :finish -> :ok
@@ -1379,16 +1381,16 @@ defmodule RavixWeb.WorkspaceManagementTest do
       end
     end)
 
-    ctx.view |> form("#settings-form", settings: [name: "First"]) |> render_submit()
+    ctx.view |> form("#agent-settings-form", settings: [instructions: "First"]) |> render_submit()
     assert_receive {:saving, saving}, 1000
-    render_patch(ctx.view, "/p/#{ctx.project.id}/settings/agent")
+    render_patch(ctx.view, "/p/#{ctx.project.id}/settings/machine")
 
     ctx.view
-    |> form("#agent-settings-form", settings: [instructions: "Second"])
+    |> form("#machine-form", settings: [setup_script: "Second"])
     |> render_submit()
 
     # The second form keeps what was typed, so nothing is lost by waiting.
-    assert has_element?(ctx.view, "#settings-instructions", "Second")
+    assert has_element?(ctx.view, "#settings-setup", "Second")
     send(saving, :finish)
     assert settled(ctx.view) =~ "Settings saved."
   end
@@ -1407,11 +1409,13 @@ defmodule RavixWeb.WorkspaceManagementTest do
     # `RavixWeb.Live.Hooks`, a revoked session could keep saving settings
     # and deleting projects until the page happened to receive a message.
     test "cannot save settings through the page", ctx do
-      view = revoked(ctx, "general")
+      view = revoked(ctx, "agent")
       reject(&Projects.update_settings/3)
 
       assert {:error, {:redirect, %{to: "/login"}}} =
-               view |> form("#settings-form", settings: [name: "Renamed"]) |> render_submit()
+               view
+               |> form("#agent-settings-form", settings: [instructions: "Renamed"])
+               |> render_submit()
     end
 
     for {section, id} <- [{"agent", "agent-settings-form"}, {"machine", "machine-form"}] do

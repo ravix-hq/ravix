@@ -149,20 +149,6 @@
         <p class="lede">
           Pick a repository and say what you want done. Ravix builds its machine and opens a track, and your agent starts as soon as setup is ready.
         </p>
-        <form
-          :if={length(@installations || []) > 1}
-          id="installation-form"
-          phx-change="installation"
-        >
-          <.input
-            name="installation"
-            id="installation"
-            label="GitHub account"
-            type="select"
-            value={@installation}
-            options={Enum.map(@installations, &{&1.account, &1.id})}
-          />
-        </form>
         <RavixWeb.Live.QuickStart.composer
           id="first-prompt"
           form={@quick_form}

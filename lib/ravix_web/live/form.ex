@@ -121,7 +121,6 @@ defmodule RavixWeb.Live.Form do
     preview_defaults: @preview_config,
     settings:
       {%{
-         name: :string,
          runtime: :string,
          model: :string,
          instructions: :string,
@@ -137,7 +136,6 @@ defmodule RavixWeb.Live.Form do
        %{
          "invalid_runtime" => :runtime,
          "invalid_model" => :model,
-         "no_name" => :name,
          "agent_not_connected" => :runtime,
          "rebuild_required" => :runtime
        }},

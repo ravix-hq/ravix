@@ -12,7 +12,7 @@ defmodule Ravix.Workspaces.RaviSeed do
       grants stay as they are, so every legacy door still admits whoever
       it did.
     * ravix2 (`d2fe4837-0e69-4a51-8201-e41d000fcb45`) is canonical for
-      `ravix-hq/ravix` and is renamed "ravix".
+      `ravix-hq/ravix` and uses the full repository name.
     * Raunak's `ravix` (`a7782c96-2407-4f0d-a62f-4c2215039d6f`) is marked
       its legacy duplicate through
       `Ravix.Workspaces.Store.mark_legacy_duplicate/3` with an explicit
@@ -41,7 +41,7 @@ defmodule Ravix.Workspaces.RaviSeed do
   @owners ["jhgaylor", "raunaksingwi"]
   @org "ravix-hq"
   @canonical "d2fe4837-0e69-4a51-8201-e41d000fcb45"
-  @canonical_name "ravix"
+  @canonical_name "ravix-hq/ravix"
   @duplicate "a7782c96-2407-4f0d-a62f-4c2215039d6f"
 
   @type action :: :move | :in_place | :conflict | :elsewhere

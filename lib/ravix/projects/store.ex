@@ -184,15 +184,11 @@ defmodule Ravix.Projects.Store do
     )
   end
 
-  @doc "Rename a project. Unscoped: called beside a `project_of/2` that established ownership."
-  @spec rename(String.t(), String.t()) :: :ok
-  def rename(id, name), do: update_fields(id, name: name)
-
-  @doc "Replace the person's extra instructions. Unscoped, as `rename/2`."
+  @doc "Replace the person's extra instructions. Unscoped; the caller establishes project ownership."
   @spec set_instructions(String.t(), String.t()) :: :ok
   def set_instructions(id, instructions), do: update_fields(id, instructions: instructions)
 
-  @doc "Record the harness the agent now runs. Unscoped, as `rename/2`."
+  @doc "Record the harness the agent now runs. Unscoped; the caller establishes project ownership."
   @spec set_harness(String.t(), String.t(), String.t()) :: :ok
   def set_harness(id, runtime, model),
     do: update_fields(id, runtime: runtime, model: model, home_runtime: runtime)
@@ -406,7 +402,7 @@ defmodule Ravix.Projects.Store do
 
   @doc """
   Point a project's row at another repository (RAV-76), or back at the one
-  it had. `fields` are the repository columns: `repo_full_name`,
+  it had. `fields` are the project name and repository columns: `repo_full_name`,
   `repo_private`, `default_branch`, `installation_id`, and for a workspace
   project `workspace_installation_id` and `github_repo_id`. The comparison
   name is derived here.
@@ -416,7 +412,7 @@ defmodule Ravix.Projects.Store do
   pull request and checks are still looked up there. A track stamped
   before keeps its stamp. `{:error, :taken}` when the workspace already has
   a project for the new one (`projects_workspace_repo`). `stamp: false`
-  puts a refused change back without stamping. Unscoped, as `rename/2`.
+  puts a refused change back without stamping. Unscoped; the caller establishes project ownership.
   """
   @spec change_repository(String.t(), map(), keyword()) ::
           {:ok, Project.t()} | {:error, :taken | :not_found}

@@ -1082,6 +1082,8 @@ defmodule RavixWeb.Live.AgentPanel do
         <RavixWeb.Live.ModelMenu.chip
           id={"agent-menu-#{@agent}"}
           label={"More for #{agent_name(@agent)}"}
+          data-tip={"More for #{agent_name(@agent)}"}
+          title=""
           menu_label={agent_name(@agent)}
           class="ghost agent-card-more"
           menu_class="chip-popover-below chip-popover-end agent-card-menu"
@@ -1182,7 +1184,7 @@ defmodule RavixWeb.Live.AgentPanel do
 
   defp kinds(assigns) do
     ~H"""
-    <div class="workspace-actions" role="group" aria-label="How it is paid for">
+    <div class="workspace-actions agent-payment-methods" role="group" aria-label="How it is paid for">
       <button
         :for={kind <- Inference.kinds(@agent)}
         type="button"

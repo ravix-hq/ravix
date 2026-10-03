@@ -35,3 +35,25 @@ test('a URL naming a part of the page opens at that part', () => {
   expect(hook.el.scrollTop).toBe(0)
   window.location.hash = ''
 })
+
+test('deep links and validation reveal fields inside collapsed advanced sections', () => {
+  document.body.innerHTML = '<div id="page" data-section="machine"><details id="advanced"><summary>Advanced</summary><details id="nested"><summary>More</summary><input id="option" required><p id="error"></p></details></details></div>'
+  const advanced = document.getElementById('advanced')
+  const nested = document.getElementById('nested')
+  const option = document.getElementById('option')
+  option.scrollIntoView = () => {}
+  window.location.hash = '#option'
+  const {hook} = mountHook(SettingsFrame, '#page')
+  expect(advanced.open && nested.open).toBe(true)
+
+  advanced.open = nested.open = false
+  option.dispatchEvent(new Event('invalid', {cancelable: true}))
+  expect(advanced.open && nested.open).toBe(true)
+
+  advanced.open = nested.open = false
+  document.getElementById('error').className = 'error'
+  document.getElementById('error').textContent = 'A value is required'
+  hook.updated()
+  expect(advanced.open && nested.open).toBe(true)
+  window.location.hash = ''
+})

@@ -2,8 +2,9 @@ defmodule Ravix.Projects.Project do
   @moduledoc """
   Which project is which.
 
-  A row, because a project's name and its repository are Ravix's ideas
-  rather than Fountain's. The three Fountain ids are the project. They are
+  Repository projects use GitHub’s full `owner/repository` name. Scratch
+  projects receive a name at creation. Neither can be renamed independently.
+  These identities belong to Ravix rather than Fountain. The three Fountain ids are the project. They are
   written once, at creation, and never updated: the sandbox is built from
   them, so a row that changed one would be a row pointing at a different
   machine. The one exception is `agent_id`, which moves on a rebuild and

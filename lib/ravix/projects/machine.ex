@@ -434,6 +434,7 @@ defmodule Ravix.Projects.Machine do
   defp repoint_row(project, %{repo: repo} = target) do
     fields =
       %{
+        name: repo.full_name,
         repo_full_name: repo.full_name,
         repo_private: repo.private == true,
         default_branch: repo.default_branch,
@@ -474,7 +475,7 @@ defmodule Ravix.Projects.Machine do
             project.id,
             Map.take(
               project,
-              ~w(repo_full_name repo_private default_branch installation_id github_repo_id workspace_installation_id)a
+              ~w(name repo_full_name repo_private default_branch installation_id github_repo_id workspace_installation_id)a
             ),
             stamp: false
           )

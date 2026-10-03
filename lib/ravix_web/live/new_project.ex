@@ -112,7 +112,10 @@ defmodule RavixWeb.Live.NewProject do
     cond do
       repo ->
         attrs =
-          Map.merge(attrs, %{"repo" => repo.full_name, "installation_id" => repo.installation_id})
+          Map.merge(Map.delete(attrs, "name"), %{
+            "repo" => repo.full_name,
+            "installation_id" => repo.installation_id
+          })
 
         socket
         |> assign(busy: true)
@@ -185,8 +188,6 @@ defmodule RavixWeb.Live.NewProject do
   attr :session_hash, :any, required: true
   attr :repos, :list, required: true
   attr :repos_loading, :boolean, default: false
-  attr :installations, :any, required: true
-  attr :installation, :any, required: true
   attr :busy, :boolean, required: true
 
   def render_form(assigns) do
@@ -209,7 +210,7 @@ defmodule RavixWeb.Live.NewProject do
       data-focus={if @project_mode == "scratch", do: "#project-name", else: "#project-repo-query"}
     >
       <div
-        class="field"
+        class="field new-project-agent-row"
         id="project-runtime"
         role="group"
         aria-labelledby="project-agent-label"
@@ -232,7 +233,7 @@ defmodule RavixWeb.Live.NewProject do
               usable?(@project_agents, agent) -> "Connected"
               @project_agent_error -> "Connection status unavailable"
               is_nil(@project_agents) -> "Checking connection…"
-              true -> "Not connected — connect to use"
+              true -> "Not connected"
             end}</small>
           </button>
         </div>
@@ -247,10 +248,10 @@ defmodule RavixWeb.Live.NewProject do
           phx-click="refresh-project-agents"
         >Check connections again</button>
         <p :if={@runtime in ["claude", "codex"]} class="hint">
-          Every turn in this project uses your {RavixWeb.AgentName.label(@runtime)} subscription or API key, whoever is working.
+          Your {RavixWeb.AgentName.label(@runtime)} subscription or API key pays for everyone’s turns in this project.
         </p>
       </div>
-      <%!-- The connect step, a card of its own under the agent it is for
+      <%!-- The connect step sits under the agent it is for
         (RAV-133). It folds up once the agent is usable, so the fields under
         it move with it rather than jumping (RAV-135). --%>
       <div
@@ -268,8 +269,6 @@ defmodule RavixWeb.Live.NewProject do
           session_hash={@session_hash}
         />
       </div>
-      <%!-- The GitHub account select's place, held while the repositories
-        load, so the fields under it do not move when it arrives (RAV-100). --%>
       <div
         :if={@repos_loading and @project_mode != "scratch"}
         id="project-repos-loading"
@@ -280,20 +279,6 @@ defmodule RavixWeb.Live.NewProject do
         <span class="skeleton skeleton-label" aria-hidden="true"></span>
         <span class="skeleton skeleton-control" aria-hidden="true"></span>
       </div>
-      <form
-        :if={@project_mode != "scratch" and @installations not in [nil, []]}
-        id="installation-form"
-        phx-change="installation"
-      >
-        <.input
-          name="installation"
-          id="installation"
-          label="GitHub account"
-          type="select"
-          value={@installation}
-          options={Enum.map(@installations, &{&1.account, &1.id})}
-        />
-      </form>
       <%!-- The search is its own form, so Enter in it picks the first match
         rather than submitting the project form. --%>
       <form
@@ -309,7 +294,7 @@ defmodule RavixWeb.Live.NewProject do
           name="new_project[query]"
           type="search"
           value={@query}
-          placeholder="owner/repo"
+          placeholder="Search repositories…"
           autocomplete="off"
           phx-debounce="100"
           aria-controls="project-repositories"
@@ -344,6 +329,7 @@ defmodule RavixWeb.Live.NewProject do
                   checked={@chosen == repo.full_name}
                   disabled={@busy}
                 />
+                <.icon name="folder" size={15} />
                 <span class="truncate">{repo.full_name}</span>
               </label>
             </li>
@@ -368,36 +354,34 @@ defmodule RavixWeb.Live.NewProject do
           <p class="hint">
             Missing a repository?
             <a id="configure-github" href="/api/auth/install">Configure on GitHub ↗</a>
-            to choose which ones Ravix can reach.
           </p>
         </fieldset>
         <input :if={@project_mode == "scratch"} type="hidden" name="new_project[repo]" value="" />
         <.input
+          :if={@scratch?}
           field={f[:name]}
           id="project-name"
-          label="Project name"
+          label="Scratch project name"
           maxlength="120"
-          placeholder={
-            if @scratch?,
-              do: "Name the scratch project",
-              else: "Defaults to the repository's name"
-          }
+          placeholder="Name the scratch project"
         />
         <.loading_status :if={@busy}>Creating project and preparing its machine…</.loading_status>
-        <button
-          class={@submit_class}
-          disabled={
-            @busy or (@repos_loading and @project_mode != "scratch") or
-              not usable?(@project_agents, @runtime)
-          }
-          phx-disable-with="Creating…"
-        >
-          {cond do
-            @busy -> "Creating project…"
-            @scratch? -> "Create scratch project"
-            true -> "Add repository"
-          end}
-        </button>
+        <div class="new-project-actions">
+          <button
+            class={@submit_class}
+            disabled={
+              @busy or (@repos_loading and @project_mode != "scratch") or
+                not usable?(@project_agents, @runtime)
+            }
+            phx-disable-with="Creating…"
+          >
+            {cond do
+              @busy -> "Creating project…"
+              @scratch? -> "Create scratch project"
+              true -> "Add repository"
+            end}
+          </button>
+        </div>
       </.form>
     </div>
     """
