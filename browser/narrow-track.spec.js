@@ -1,6 +1,7 @@
 import { test, expect } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
 import { signIn } from './sign-in.js';
+import { openAddRepository } from './new-track.js';
 
 // Count the visible vertical scroll surfaces, including empty panes: a short
 // fixture must not hide a second scroll container that real content would fill.
@@ -12,12 +13,12 @@ async function scrollSurfaces(page) {
 test('narrow track views give the conversation space and preserve drafts', async ({ page }) => {
   test.setTimeout(120_000);
   await signIn(page, 'eli', '/home');
-  await page.getByRole('button', { name: 'Add a repository', exact: true }).first().click();
+  await openAddRepository(page);
   await page.getByLabel('Project name', { exact: true }).fill('Narrow track');
   await expect(page.locator('#project-repositories input[type=radio]')).not.toHaveCount(0);
   await page.getByRole('radio', { name: 'mockuser/atlas-api', exact: true }).check();
   await page.getByRole('dialog', { name: 'Add a repository' }).getByRole('button', { name: 'Add repository', exact: true }).click();
-  await page.locator('#yard .workspace-project.current .project-add').click();
+  await page.locator('#top-new-track').click();
   await page.getByRole('button', { name: 'Create track', exact: true }).click();
   const composer = page.getByRole('textbox', { name: 'Message', exact: true });
   await expect(composer).toBeEnabled();
@@ -33,8 +34,8 @@ test('narrow track views give the conversation space and preserve drafts', async
   const views = page.getByRole('navigation', { name: 'Track views', exact: true });
   for (const width of [400, 535, 600]) {
     await page.setViewportSize({ width, height: 900 });
-    await views.getByRole('button', { name: 'Conversation', exact: true }).click();
-    await expect(views.getByRole('button', { name: 'Conversation', exact: true })).toHaveAttribute('aria-pressed', 'true');
+    await views.getByRole('button', { name: /^Threads/ }).click();
+    await expect(views.getByRole('button', { name: /^Threads/ })).toHaveAttribute('aria-pressed', 'true');
     expect((await page.locator('.track-conversation').boundingBox()).height).toBeGreaterThan(600);
     expect((await page.locator('.transcript-scroll').boundingBox()).height).toBeGreaterThan(400);
     expect(await scrollSurfaces(page)).toBe(1);
@@ -46,27 +47,33 @@ test('narrow track views give the conversation space and preserve drafts', async
     await expect(composer).toBeHidden();
     expect(await scrollSurfaces(page)).toBe(1);
     await page.screenshot({ path: `tmp/narrow-files-${width}.png` });
-    await views.getByRole('button', { name: 'Commands', exact: true }).click();
+    await views.getByRole('button', { name: 'Terminal', exact: true }).click();
+    await page.getByRole('button', { name: 'Commands', exact: true }).click();
     const command = page.getByRole('textbox', { name: 'Command', exact: true });
     await expect(command).toBeVisible();
     await page.getByRole('button', { name: 'Open Preview', exact: true }).click();
-    await expect(views.getByRole('button', { name: 'Files', exact: true })).toHaveAttribute('aria-pressed', 'true');
+    await expect(views.getByRole('button', { name: 'Files', exact: true })).toHaveAttribute('aria-pressed', 'false');
     await expect(page.getByRole('navigation', { name: 'Inspector panels' })).toBeVisible();
-    await expect(page.getByRole('navigation', { name: 'Inspector panels' }).getByRole('button', { name: 'Preview', exact: true })).toHaveClass('selected');
-    await views.getByRole('button', { name: 'Commands', exact: true }).click();
+    await expect(views.getByRole('button', { name: 'Preview', exact: true })).toHaveAttribute('aria-pressed', 'true');
+    await views.getByRole('button', { name: 'Terminal', exact: true }).click();
+    await page.getByRole('button', { name: 'Commands', exact: true }).click();
     await command.fill('echo preserved');
     expect(await scrollSurfaces(page)).toBe(1);
     await page.screenshot({ path: `tmp/narrow-terminal-${width}.png` });
-    await views.getByRole('button', { name: 'Conversation', exact: true }).click();
+    await views.getByRole('button', { name: /^Threads/ }).click();
     await expect(composer).toHaveValue('Keep this conversation draft');
-    await views.getByRole('button', { name: 'Commands', exact: true }).click();
+    await views.getByRole('button', { name: 'Terminal', exact: true }).click();
     await expect(command).toHaveValue('echo preserved');
     const result = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa']).analyze();
     expect(result.violations).toEqual([]);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   }
+  // A desktop keeps the same tabs: one view at a time, the inspector no
+  // longer pinned beside the conversation.
   await page.setViewportSize({ width: 1480, height: 900 });
-  await expect(views).toBeHidden();
+  await expect(views).toBeVisible();
+  await views.getByRole('button', { name: /^Threads/ }).click();
   await expect(composer).toBeVisible();
-  await expect(page.getByRole('navigation', { name: 'Inspector panels' })).toBeVisible();
+  await expect(composer).toHaveValue('Keep this conversation draft');
+  await expect(page.getByRole('complementary', { name: 'Track inspector' })).toBeHidden();
 });

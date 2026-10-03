@@ -167,6 +167,7 @@
           id="first-prompt"
           form={@quick_form}
           groups={targets(@repos)}
+          repos={@repos}
           loading={@repos_loading}
           busy={@quick_busy}
           disabled={!Inference.connected?(@current_user)}

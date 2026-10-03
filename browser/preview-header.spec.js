@@ -1,40 +1,43 @@
 import { test, expect } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
 import { signIn, connectClaude } from './sign-in.js';
+import { openAddRepository } from './new-track.js';
 
 // RAV-42: the header says whether the track has a preview and opens the
-// Preview tab, on a desktop with the inspector shut and on a phone where
-// the inspector is a view of its own. It never starts one itself.
+// Preview tab, from the conversation at desktop and phone widths (the
+// inspector is the track tabs' page of its own at every width now). It never
+// starts one itself.
 test('RAV-42: the header Preview control opens the Preview tab at desktop and phone width', async ({ page }) => {
   test.setTimeout(180_000);
   await page.setViewportSize({ width: 1440, height: 900 });
   await signIn(page, 'threadruntime', '/home');
   await connectClaude(page);
-  await page.getByRole('button', { name: 'Add a repository', exact: true }).first().click();
+  await openAddRepository(page);
   const dialog = page.getByRole('dialog', { name: 'Add a repository', exact: true });
   await dialog.getByLabel('Project name', { exact: true }).fill('Preview header');
   await dialog.getByRole('button', { name: 'Create scratch project', exact: true }).click();
   await expect(dialog).toHaveCount(0);
-  await page.locator('#yard .workspace-project.current .project-add').click();
+  await page.locator('#top-new-track').click();
   await page.getByRole('button', { name: 'Create track', exact: true }).click();
   await expect(page).toHaveURL(url => url.pathname.includes('/t/') && !url.search);
   await expect(page.locator('#track-setup-status')).toHaveCount(0, { timeout: 45_000 });
 
   const control = page.locator('#track-header #track-preview');
-  const tabs = page.locator('#inspector > .workspace-tabs');
+  const tabs = page.locator('#track-header .track-tabs');
   const empty = page.locator('#preview-empty');
 
-  // Nothing has run: the header offers to start one, from the Files tab.
+  // Nothing has run: the header offers to start one, from the conversation.
   await expect(control).toHaveText('Start preview');
   await expect(control).toHaveClass(/preview-stopped/);
-  await expect(tabs.locator('button.selected')).toHaveText('Files');
+  await expect(tabs.locator('button.on')).toHaveText(/Threads/);
+  await expect(page.locator('#inspector')).toBeHidden();
 
-  // With the inspector shut, the control opens it on the Preview tab.
-  await page.locator('#inspector-toggle').click();
-  await expect(page.locator('html')).toHaveAttribute('data-inspector', 'closed');
+  // The control opens the inspector on the Preview tab, in the
+  // conversation's place.
   await control.click();
-  await expect(page.locator('html')).not.toHaveAttribute('data-inspector', 'closed');
-  await expect(tabs.locator('button.selected')).toHaveText('Preview');
+  await expect(page.locator('#inspector')).toBeVisible();
+  await expect(page.locator('.track-conversation')).toBeHidden();
+  await expect(tabs.locator('button.on')).toHaveText('Preview');
   await expect(empty.locator('h3')).toHaveText('No preview running');
   await expect(empty.getByRole('button', { name: 'Run', exact: true })).toBeEnabled();
   await expect(empty.locator('.empty-hint')).toHaveText('or ask the agent to start one');
@@ -60,11 +63,11 @@ test('RAV-42: the header Preview control opens the Preview tab at desktop and ph
   await expect(control.locator('.dot.ready')).toBeVisible();
 
   // A phone: the control is in the header on the conversation, and opens
-  // the inspector as the page's own Files button does.
+  // the inspector as the track's Files tab does.
   await page.setViewportSize({ width: 390, height: 844 });
   await page.reload();
   await expect(page.locator('[data-phx-main].phx-connected')).toHaveCount(1);
-  await page.getByRole('button', { name: 'Conversation', exact: true }).click();
+  await page.locator('#track-tab-threads').click();
   await expect(page.locator('.track-conversation')).toBeVisible();
   await expect(page.locator('#inspector')).toBeHidden();
   await expect(control).toBeVisible();
@@ -72,7 +75,7 @@ test('RAV-42: the header Preview control opens the Preview tab at desktop and ph
   await control.click();
   await expect(page.locator('#inspector')).toBeVisible();
   await expect(page.locator('.track-conversation')).toBeHidden();
-  await expect(tabs.locator('button.selected')).toHaveText('Preview');
+  await expect(tabs.locator('button.on')).toHaveText('Preview');
   await expect(page.locator('#run-status')).toHaveText('Status: ready');
 
   // Stopped again, the phone's control offers to start one and opens the
@@ -81,7 +84,7 @@ test('RAV-42: the header Preview control opens the Preview tab at desktop and ph
   await page.locator('button[phx-value-action="stop"]').click();
   await expect(empty.locator('h3')).toHaveText('No preview running', { timeout: 30_000 });
   await expect(control).toHaveClass(/preview-stopped/);
-  await page.getByRole('button', { name: 'Conversation', exact: true }).click();
+  await page.locator('#track-tab-threads').click();
   await control.click();
   await expect(empty).toBeVisible();
   await expect(empty.locator('.empty-hint')).toHaveText('or ask the agent to start one');

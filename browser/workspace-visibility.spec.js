@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { test, expect } from '@playwright/test';
 import { signIn, connectClaude } from './sign-in.js';
-import { chooseSharing } from './new-track.js';
+import { chooseSharing, openAddRepository } from './new-track.js';
 import { spoken } from './track-label.js';
 
 // ADR 0009 phase 3b, with RAVIX_WORKSPACE_ACCESS on: `bun run
@@ -25,13 +25,13 @@ const idOf = path => {
 };
 
 async function openTrack(page, visibility, branch) {
-  await page.locator('#yard .workspace-project.current .project-add').click();
+  await page.locator('#top-new-track').click();
   const track = page.getByRole('dialog', { name: 'New track', exact: true });
   await chooseSharing(track, visibility);
   await track.getByRole('button', { name: 'Options', exact: true }).click();
   await track.getByLabel('Branch name', { exact: true }).fill(branch);
   await track.getByRole('button', { name: 'Create track', exact: true }).click();
-  await expect(page.locator('.track-crumbs')).toContainText(spoken(branch));
+  await expect(page.locator('#track-header')).toContainText(spoken(branch));
   return new URL(page.url()).pathname;
 }
 
@@ -44,7 +44,7 @@ async function settled(page) {
   await expect(page.locator('#track-setup-status')).toHaveCount(0, { timeout: 45_000 });
 }
 
-test('a private track stays out of another workspace member\'s rail, search and badges', async ({ page, browser }) => {
+test('a private track stays out of another workspace member\'s project page, Home, search and badges', async ({ page, browser }) => {
   // The harness runs the app with the switch as the run sets it: off for
   // `test:browser`, on for `test:browser:workspace-access`.
   test.skip(process.env.RAVIX_WORKSPACE_ACCESS !== 'true', 'Runs under test:browser:workspace-access');
@@ -59,7 +59,7 @@ test('a private track stays out of another workspace member\'s rail, search and 
 
   await signIn(page, 'workspacecreator');
   await connectClaude(page);
-  await page.getByRole('button', { name: 'Add a repository', exact: true }).first().click();
+  await openAddRepository(page);
   const project = page.getByRole('dialog', { name: 'Add a repository', exact: true });
   await project.getByLabel('Project name', { exact: true }).fill(projectName);
   await project.getByRole('button', { name: 'Create scratch project', exact: true }).click();
@@ -79,8 +79,10 @@ test('a private track stays out of another workspace member\'s rail, search and 
   // page marks it read before the track is drawn, so once the crumbs are
   // there the read is recorded. It is then no reply of theirs to count.
   await page.goto(openPath);
-  await expect(page.locator('.track-crumbs')).toContainText(spoken(openBranch));
-  await expect(page.locator(`#project-track-tab-${openId} .dot.unread`)).toHaveCount(0);
+  await expect(page.locator('#track-header')).toContainText(spoken(openBranch));
+  await page.locator('#topbar .topbar-crumbs a[href^="/p/"]').click();
+  await expect(page.locator(`#tracks-graph-row-${openId}`)).toBeVisible();
+  await expect(page.locator(`#tracks-graph-row-${openId} .dot.unread`)).toHaveCount(0);
 
   const colleagueContext = await browser.newContext();
   try {
@@ -103,12 +105,16 @@ test('a private track stays out of another workspace member\'s rail, search and 
     // The colleague has never read the open track, so its settled reply is
     // exactly one unread for them; the private track would make it two.
     await colleague.goto(projectPath);
-    await expect(colleague.locator('#project-sections[aria-busy="false"]')).toBeAttached();
-    await expect(colleague.locator(`#project-track-tab-${openId}`)).toBeVisible();
-    await expect(colleague.locator(`#project-track-tab-${openId} .dot.unread`)).toHaveCount(1);
-    await expect(colleague.locator(`#project-track-tab-${secretId}`)).toHaveCount(0);
+    await expect(colleague.locator('[data-phx-main]')).toHaveClass(/phx-connected/);
+    await expect(colleague.locator(`#tracks-graph-row-${openId}`)).toBeVisible();
+    await expect(colleague.locator(`#tracks-graph-row-${openId} .dot.unread`)).toHaveCount(1);
+    await expect(colleague.locator(`#tracks-graph-row-${openId} .dot.unread`)).toHaveAttribute('aria-label', 'Unread reply');
+    await expect(colleague.locator(`#tracks-graph-row-${secretId}`)).toHaveCount(0);
+    await expect(colleague.locator('#crumb-tracks .count')).toHaveText('1');
     await expect(colleague.locator('body')).not.toContainText(spoken(secretBranch));
-    await expect(colleague.locator(`#project-link-${projectId} .badge`)).toHaveAttribute('aria-label', '1 track needs you');
+    await colleague.goto('/home');
+    await expect(colleague.locator(`#home-project-${projectId} .badge`)).toHaveAttribute('aria-label', '1 track needs you');
+    await expect(colleague.locator('body')).not.toContainText(spoken(secretBranch));
 
     await colleague.locator('#quick-jump-trigger').click();
     const search = colleague.getByLabel('Search projects, tracks and plans');
@@ -119,7 +125,7 @@ test('a private track stays out of another workspace member\'s rail, search and 
     await colleague.keyboard.press('Escape');
 
     await colleague.goto('/inbox');
-    await expect(colleague.locator('#project-sections[aria-busy="false"]')).toBeAttached();
+    await expect(colleague.locator('#inbox:not(:has(#inbox-loading))')).toBeAttached();
     await expect(colleague.locator('body')).toContainText(spoken(openBranch));
     await expect(colleague.locator('body')).not.toContainText(spoken(secretBranch));
 
@@ -131,9 +137,11 @@ test('a private track stays out of another workspace member\'s rail, search and 
     // The creator, meanwhile, sees it, and it is their one unread: the open
     // track was read after it settled.
     await page.goto(projectPath);
-    await expect(page.locator(`#project-track-tab-${secretId}`)).toBeVisible();
-    await expect(page.locator(`#project-track-tab-${openId} .dot.unread`)).toHaveCount(0);
-    await expect(page.locator(`#project-link-${projectId} .badge`)).toHaveAttribute('aria-label', '1 track needs you');
+    await expect(page.locator(`#tracks-graph-row-${secretId}`)).toBeVisible();
+    await expect(page.locator(`#tracks-graph-row-${openId}`)).toBeVisible();
+    await expect(page.locator(`#tracks-graph-row-${openId} .dot.unread`)).toHaveCount(0);
+    await page.goto('/home');
+    await expect(page.locator(`#home-project-${projectId} .badge`)).toHaveAttribute('aria-label', '1 track needs you');
 
     // Shared with the colleague by a permission row, it reaches them.
     sql(`INSERT INTO ravix.track_permissions (track_id, user_id, workspace_id, granted_by_user_id, created_at)
@@ -141,8 +149,8 @@ test('a private track stays out of another workspace member\'s rail, search and 
            FROM ravix.projects p, ravix.users u
            WHERE p.id = '${projectId}' AND u.login = 'workspacecolleague'`);
     await colleague.goto(secretPath);
-    await expect(colleague.locator('.track-crumbs')).toContainText(spoken(secretBranch));
-    await expect(colleague.locator('.track-crumbs')).toContainText('Private');
+    await expect(colleague.locator('#track-header')).toContainText(spoken(secretBranch));
+    await expect(colleague.locator('#track-header')).toContainText('Private');
   } finally {
     await colleagueContext.close();
   }

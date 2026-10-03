@@ -170,3 +170,77 @@ test("typing on a highlighted result goes on typing in the query", () => {
   key(result, "c", {ctrlKey: true})
   expect(document.activeElement).toBe(result)
 })
+
+// Arrow keys and Enter over the results, moved here from the project tree's
+// tests when the sidebar went.
+// `dispatchEvent`'s answer: false when the hook took the key.
+const press = (el, name, options = {}) =>
+  el.dispatchEvent(new KeyboardEvent('keydown', {key: name, bubbles: true, cancelable: true, ...options}))
+test('quick-jump chooses the visible trigger, arrows wrap and Enter opens the first result', () => {
+  document.body.innerHTML = `<div id="workspace"><button data-quick-jump-trigger id="desktop">Search</button><button data-quick-jump-trigger id="mobile">Search</button></div>`
+  const mobile = document.querySelector('#mobile')
+  document.querySelector('#desktop').getClientRects = () => []
+  mobile.getClientRects = () => [{}]
+  let opened = 0
+  mobile.onclick = () => { opened++ }
+  const {hook} = mountHook(QuickJump, '#workspace')
+  press(window, 'K', {ctrlKey: true})
+  press(window, 'k', {ctrlKey: true})
+  expect(opened).toBe(2)
+  document.querySelector('#workspace').insertAdjacentHTML('beforeend', `<div id="search-dialog" class="scrim"><div role="dialog"><input id="search-query"><a href="#a" data-jump-result>A</a><a href="#b" data-jump-result>B</a></div></div>`)
+  press(window, 'k', {ctrlKey: true})
+  expect(opened).toBe(2)
+  const input = document.querySelector('input'), [a,b] = document.querySelectorAll('a')
+  input.focus(); press(input, 'ArrowDown'); expect(document.activeElement).toBe(a)
+  press(a, 'ArrowUp'); expect(document.activeElement).toBe(b)
+  press(b, 'ArrowDown'); expect(document.activeElement).toBe(a)
+  input.focus(); press(input, 'ArrowUp'); expect(document.activeElement).toBe(b)
+  let selected = 0; a.onclick = event => { event.preventDefault(); selected++ }
+  input.focus(); press(input, 'Enter'); expect(selected).toBe(1)
+  press(input, 'x'); press(mobile, 'ArrowDown')
+  a.remove(); b.remove(); press(input, 'ArrowDown')
+  hook.destroyed()
+  document.querySelector('#search-dialog').remove()
+  press(window, 'k', {ctrlKey: true}); expect(opened).toBe(2)
+})
+
+test('quick-jump keeps selected result focus when filtering moves its row', () => {
+  document.body.innerHTML = `<div id="workspace"><input id="search-query"><a id="result" data-jump-result href="#project">Project</a></div>`
+  const {hook} = mountHook(QuickJump, '#workspace')
+  const input = document.querySelector('input'), link = document.querySelector('a')
+  link.focus(); hook.beforeUpdate()
+  link.remove(); document.querySelector('#workspace').append(link)
+  hook.updated(); expect(document.activeElement).toBe(link)
+  hook.beforeUpdate(); input.focus(); hook.updated(); expect(document.activeElement).toBe(input)
+  hook.beforeUpdate(); hook.updated(); expect(document.activeElement).toBe(input)
+  link.focus(); hook.beforeUpdate(); link.remove(); hook.updated()
+  expect(document.activeElement).toBe(document.body)
+})
+
+test('quick-jump keys also move through a data-jump-scope list, skipping disabled results', () => {
+  document.body.innerHTML = `<div id="workspace"><div id="repo-picker" data-jump-scope>
+    <input id="repo-picker-query" data-jump-query>
+    <button id="a" data-jump-result>acme/api</button>
+    <button id="off" data-jump-result disabled>acme/busy</button>
+    <button id="b" data-jump-result>acme/web</button>
+  </div><input id="elsewhere"></div>`
+  const {hook} = mountHook(QuickJump, '#workspace')
+  const query = document.querySelector('#repo-picker-query')
+  let picked = null
+  document.querySelector('#a').addEventListener('click', () => { picked = 'a' })
+  query.focus()
+  expect(press(query, 'ArrowDown')).toBe(false)
+  expect(document.activeElement.id).toBe('a')
+  press(document.activeElement, 'ArrowDown')
+  expect(document.activeElement.id).toBe('b')
+  press(document.activeElement, 'ArrowDown')
+  expect(document.activeElement.id).toBe('a')
+  press(document.activeElement, 'ArrowUp')
+  expect(document.activeElement.id).toBe('b')
+  expect(press(query, 'Enter')).toBe(false)
+  expect(picked).toBe('a')
+  // Outside any scope the keys are left alone.
+  const elsewhere = document.querySelector('#elsewhere')
+  expect(press(elsewhere, 'ArrowDown')).toBe(true)
+  hook.destroyed()
+})

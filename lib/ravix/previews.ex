@@ -279,6 +279,34 @@ defmodule Ravix.Previews do
   def unsubscribe(track_id),
     do: Phoenix.PubSub.unsubscribe(Ravix.PubSub, Lifecycle.topic(track_id))
 
+  @doc """
+  The previews that are up or coming up on the open tracks this person may
+  see in these projects, by project: each one's track, hostname and state.
+  Read only --- unlike `status/2`, nothing is created for a track that has no
+  preview --- and scoped by the same visibility as the tracks themselves, so
+  another person's private track's preview is never counted. Empty when
+  previews are not available on this deployment.
+  """
+  @spec for_projects(User.t(), [String.t()]) :: %{String.t() => [map()]}
+  def for_projects(%User{}, []), do: %{}
+
+  def for_projects(%User{} = user, project_ids) do
+    if unavailable() do
+      %{}
+    else
+      visible =
+        for {track, project} <- Access.open_tracks(user, project_ids),
+            is_nil(track.closed_at),
+            into: %{},
+            do: {track.id, project.id}
+
+      visible
+      |> Map.keys()
+      |> Store.live_for()
+      |> Enum.group_by(&Map.fetch!(visible, &1.track_id))
+    end
+  end
+
   @doc "The info for a track the user may see."
   @spec status(User.t(), String.t()) :: {:ok, View.t()} | {:error, reason()}
   def status(%User{} = user, track_id) do

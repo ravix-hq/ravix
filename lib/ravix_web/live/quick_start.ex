@@ -265,6 +265,15 @@ defmodule RavixWeb.Live.QuickStart do
   attr :groups, :list, default: [], doc: "`targets/2`; ignored when `project` is given"
   attr :project, :any, default: nil, doc: "a fixed target: the project page's own"
   attr :agent, :boolean, default: true, doc: "whether to offer the agent for a new project"
+
+  attr :repos, :list,
+    default: nil,
+    doc: "the repositories behind `groups`, to list them richly rather than in a select"
+
+  attr :add_repository, :boolean,
+    default: false,
+    doc: "whether to offer Add another repository, which opens the page's dialog"
+
   attr :label, :string, default: "What do you want to work on?"
   attr :submit, :string, default: "Start"
   attr :submit_class, :string, default: "primary"
@@ -284,7 +293,71 @@ defmodule RavixWeb.Live.QuickStart do
         phx-submit="quick-start"
       >
         <input :if={@project} type="hidden" name={f[:target].name} value={"project:" <> @project.id} />
-        <div :if={!@project} class="quick-start-target">
+        <%!-- The repositories, the way a code host lists them: most recently
+          pushed first, each with whether it is private, its language and
+          when it last moved, then scratch and a way to add another. --%>
+        <fieldset
+          :if={!@project && is_list(@repos)}
+          id={"#{@id}-target"}
+          class="quick-start-repos"
+          disabled={@busy}
+        >
+          <legend>Choose a repository</legend>
+          <ul class="quick-repo-list">
+            <li :for={repo <- @repos}>
+              <label class={["quick-repo", f[:target].value == "repo:" <> repo.full_name && "on"]}>
+                <input
+                  type="radio"
+                  name={f[:target].name}
+                  value={"repo:" <> repo.full_name}
+                  checked={f[:target].value == "repo:" <> repo.full_name}
+                />
+                <.icon name="folder" size={15} />
+                <span class="quick-repo-main">
+                  <strong class="truncate">{repo.full_name}</strong>
+                  <small :if={Map.get(repo, :description)} class="truncate">
+                    {Map.get(repo, :description)}
+                  </small>
+                </span>
+                <span :if={is_boolean(Map.get(repo, :private))} class="chip">
+                  {if Map.get(repo, :private), do: "Private", else: "Public"}
+                </span>
+                <small :if={Map.get(repo, :language)} class="quick-repo-meta">
+                  {Map.get(repo, :language)}
+                </small>
+                <small :if={pushed(repo)} class="quick-repo-meta">{pushed(repo)}</small>
+              </label>
+            </li>
+            <li>
+              <label class={["quick-repo", f[:target].value == "scratch" && "on"]}>
+                <input
+                  type="radio"
+                  name={f[:target].name}
+                  value="scratch"
+                  checked={f[:target].value == "scratch"}
+                />
+                <.icon name="machine" size={15} />
+                <span class="quick-repo-main">
+                  <strong>No repository</strong>
+                  <small>A scratch machine to try something out</small>
+                </span>
+              </label>
+            </li>
+          </ul>
+          <p :for={{message, _} <- f[:target].errors} class="error" role="alert">{message}</p>
+          <.loading_status :if={@loading}>Loading GitHub repositories…</.loading_status>
+          <button
+            :if={@add_repository}
+            type="button"
+            id={"#{@id}-add-repository"}
+            class="ghost quick-repo-add"
+            phx-click={JS.push_focus() |> JS.push("dialog")}
+            phx-value-name="new-project"
+          >
+            <.icon name="plus" size={14} />Add another repository
+          </button>
+        </fieldset>
+        <div :if={!@project && !is_list(@repos)} class="quick-start-target">
           <.input
             field={f[:target]}
             id={"#{@id}-target"}
@@ -296,15 +369,20 @@ defmodule RavixWeb.Live.QuickStart do
           />
           <.loading_status :if={@loading}>Loading GitHub repositories…</.loading_status>
         </div>
-        <.input
-          field={f[:prompt]}
-          id={"#{@id}-prompt"}
-          type="textarea"
-          label={@label}
-          rows="3"
-          placeholder="Describe a change, a question, or a bug to chase"
-          disabled={@busy}
-        />
+        <%!-- The first prompt is the whole ask: the track and its first
+          thread are named from it, so the form asks no other question. The
+          label stays, for a screen reader, and is not drawn. --%>
+        <div class="quick-start-prompt">
+          <.input
+            field={f[:prompt]}
+            id={"#{@id}-prompt"}
+            type="textarea"
+            label={@label}
+            rows="3"
+            placeholder="Describe a change, a question, or a bug to chase. The track is named from it."
+            disabled={@busy}
+          />
+        </div>
         <div class="quick-start-suggestions" role="group" aria-label="Suggested first prompts">
           <button
             :for={suggestion <- suggestions()}
@@ -352,6 +430,16 @@ defmodule RavixWeb.Live.QuickStart do
     </div>
     """
   end
+
+  # When a repository last moved, in words, from GitHub's `pushed_at`.
+  defp pushed(%{pushed_at: at}) when is_binary(at) do
+    case DateTime.from_iso8601(at) do
+      {:ok, at, _} -> "Updated " <> RavixWeb.LocalTime.ago_words(at)
+      _ -> nil
+    end
+  end
+
+  defp pushed(_repo), do: nil
 
   # The question names where the answer goes, once that is decided.
   defp label(%{project: %{} = project}),

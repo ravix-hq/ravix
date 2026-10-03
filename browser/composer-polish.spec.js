@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { signIn, connectClaude } from './sign-in.js';
+import { openAddRepository } from './new-track.js';
 
 // RAV-94: the composer's focus hint gives way to the focused box (and to a
 // window under 1360px), Ask agent / Comment switches without waiting for the
@@ -8,15 +9,18 @@ import { signIn, connectClaude } from './sign-in.js';
 // bubble with Edit and Cancel.
 test('the composer switches mode at once, keeps one row, and hides its hint while focused', async ({ page }) => {
   test.setTimeout(120_000);
-  await page.setViewportSize({ width: 1440, height: 800 });
+  // Wide enough that, beside the sidebar, the thread list and the inspector,
+  // the composer's row still has room for its hint (it had at 1440px when
+  // the conversation stood beside the rail alone).
+  await page.setViewportSize({ width: 1920, height: 800 });
   await signIn(page, 'dana');
   await connectClaude(page);
-  await page.getByRole('button', { name: 'Add a repository', exact: true }).first().click();
+  await openAddRepository(page);
   const project = page.getByRole('dialog', { name: 'Add a repository', exact: true });
   await project.getByLabel('Project name', { exact: true }).fill('Composer polish');
   await project.getByRole('button', { name: 'Create scratch project', exact: true }).click();
   await expect(project).toHaveCount(0);
-  await page.locator('#yard .workspace-project.current .project-add').click();
+  await page.locator('#top-new-track').click();
   await page.getByRole('dialog', { name: 'New track', exact: true })
     .getByRole('button', { name: 'Create track', exact: true }).click();
   const message = page.getByRole('textbox', { name: 'Message', exact: true });

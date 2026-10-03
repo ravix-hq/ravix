@@ -18,8 +18,8 @@
 //
 //   ThreadTabs      keyboard navigation and overflow visibility for conversation threads
 //   Theme           the palette picker (reads and writes `ravix.theme`)
-//   PanelResize     the drag handle between the rail, the stage and the inspector
-//   PanelToggle     whether those sidebars are open; a preference of this browser
+//   PanelResize     the drag handle between the stage and the inspector
+//   PanelToggle     whether the inspector is open; a preference of this browser
 //   TranscriptTail  a scrollback that follows new output while you are at the bottom
 //   Composer        the prompt box: Enter sends, pasted images become uploads
 //   Terminal        the Commands panel: history, Ctrl+L, output that follows itself
@@ -28,18 +28,15 @@
 //   NotifyToggle    the switch for them, on the Notifications settings page
 //   UnsavedChanges  a settings page's unsaved-changes bar and leave confirmation
 //   SettingsFrame   a settings page opens each section at its top
-//   ProjectTree     viewer-local collapse preferences for project and section rows
 //   QuickJump       Cmd/Ctrl-K, Cmd/Ctrl-N and keyboard selection in navigation search
 //   QuickJumpQuery  search's query: focused as it mounts, with the keys typed on the way
-//   ProjectSections drag a sidebar project onto one of your sections
 //   ProjectFormFocus synchronous dialog focus that never steals later typing
 //   SectionForm     the New section field, emptied and refocused once the section exists
 //   CopyCode        copy a Help example exactly, with success or failure feedback
 //   TurnTimer       a running turn's elapsed time, ticking without a round-trip
-//   RelativeTime    a sidebar row's "22h" age, kept current without server ticks
+//   RelativeTime    a row's "22h" age, kept current without server ticks
 //   LocalTime       a timestamp in the viewer's own zone and locale
 //   SubmitOnEnter   the create dialog's first prompt: Enter creates, Shift+Enter is a new line
-//   HeaderFit       a track header's status chips: whole words or just their icons
 //   ChipMenu        a chip's popover: aria-expanded, Escape and focus return inside a dialog
 //   SharePopover    the Share popover placed under its button; Share again closes it
 //   CredentialField the agent panel's token field: the paste survives patches, never the server
@@ -66,12 +63,10 @@ import {Composer} from "./hooks/composer"
 import {Terminal} from "./hooks/terminal"
 import {Shell} from "./hooks/shell"
 import {Notify, NotifyToggle} from "./hooks/notify"
-import {ProjectTree} from "./hooks/project_tree"
 import {QuickJump, QuickJumpQuery} from "./hooks/quick_jump"
 import {AgentConfirmation} from "./hooks/agent_confirmation"
 import {UnsavedChanges} from "./hooks/unsaved_changes"
 import {SettingsFrame} from "./hooks/settings_frame"
-import {ProjectSections} from "./hooks/project_sections"
 import {ProjectFormFocus} from "./hooks/project_form_focus"
 import {SectionForm} from "./hooks/section_form"
 import {CopyCode} from "./hooks/copy_code"
@@ -82,12 +77,11 @@ import {TurnTimer} from "./hooks/turn_timer"
 import {RelativeTime} from "./hooks/relative_time"
 import {LocalTime} from "./hooks/local_time"
 import {SubmitOnEnter} from "./hooks/submit_on_enter"
-import {HeaderFit} from "./hooks/header_fit"
 import {ChipMenu} from "./hooks/chip_menu"
 
 
 
-const hooks = {ThreadTabs, AgentConfirmation, Theme, PanelResize, PanelToggle, TranscriptTail, Composer, Terminal, Notify, NotifyToggle, UnsavedChanges, SettingsFrame, ProjectTree, QuickJump, QuickJumpQuery, ProjectSections, CopyCode, ProjectFormFocus, SectionForm, ShareMention, TurnTimer, RelativeTime, SubmitOnEnter, Shell, HeaderFit, LocalTime, ChipMenu, SharePopover, CredentialField}
+const hooks = {ThreadTabs, AgentConfirmation, Theme, PanelResize, PanelToggle, TranscriptTail, Composer, Terminal, Notify, NotifyToggle, UnsavedChanges, SettingsFrame, QuickJump, QuickJumpQuery, CopyCode, ProjectFormFocus, SectionForm, ShareMention, TurnTimer, RelativeTime, SubmitOnEnter, Shell, LocalTime, ChipMenu, SharePopover, CredentialField}
 
 const csrfToken = document.querySelector("meta[name='csrf-token']").getAttribute("content")
 clearTransportFallback(window)

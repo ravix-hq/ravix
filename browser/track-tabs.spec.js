@@ -2,61 +2,65 @@ import { test, expect } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
 import { signIn, connectClaude } from './sign-in.js';
 import { expectInlineChoice } from './controls.js';
+import { openAddRepository } from './new-track.js';
 
-test('project track links scroll vertically and preserve the mobile drawer', async ({ page }) => {
+test('a project page lists many tracks vertically at desktop and phone widths', async ({ page }) => {
   test.setTimeout(120_000);
   // Keep mockuser's first-visit state for the onboarding walkthrough.
   await signIn(page, 'eli');
   await connectClaude(page);
-  await page.getByRole('button', { name: 'Add a repository', exact: true }).first().click();
+  await openAddRepository(page);
   const project = page.getByRole('dialog', { name: 'Add a repository' });
   await project.getByLabel('Project name', { exact: true }).fill('Scrolling tracks');
   await expect(project.locator('#project-repositories input[type=radio]')).not.toHaveCount(0);
   await project.getByRole('radio', { name: 'mockuser/atlas-api', exact: true }).check();
   await project.getByRole('button', { name: 'Add repository' }).click();
   await expect(project).not.toBeVisible();
+  const seen = new Set();
   for (let index = 0; index < 12; index++) {
-    await page.locator('#yard .workspace-project.current .project-add').click();
+    await page.locator('#top-new-track').click();
     const dialog = page.getByRole('dialog', { name: 'New track', exact: true });
     await dialog.getByRole('button', { name: 'Options', exact: true }).click();
     await dialog.getByLabel('Branch name').fill(`scrolling-track-${index}`);
     await dialog.getByRole('button', { name: 'Create track', exact: true }).click();
     await expect(dialog).not.toBeVisible();
-    await expect(page.locator('#yard .workspace-project.current .workspace-track')).toHaveCount(index + 1);
+    await expect.poll(() => {
+      const id = new URL(page.url()).pathname.split('/t/')[1];
+      return !!id && !seen.has(id);
+    }).toBe(true);
+    seen.add(new URL(page.url()).pathname.split('/t/')[1]);
   }
-  const strip = page.locator('#yard .workspace-project.current .project-tree-tracks');
+  const projectPath = new URL(page.url()).pathname.split('/t/')[0];
   for (const width of [1280, 500, 390]) {
     await page.setViewportSize({ width, height: 600 });
-    if (width < 760) await page.getByRole('button', { name: 'Menu', exact: true }).click();
-    await expect(strip.getByRole('link')).toHaveCount(12);
-    const first = strip.getByRole('link').first();
+    await page.goto(projectPath);
+    await expect(page.locator('[data-phx-main]')).toHaveClass(/phx-connected/);
+    await expect(page.locator('#crumb-tracks .count')).toHaveText('12');
+    for (const view of ['graph', 'list']) {
+      await page.locator(`#project-tracks-${view}`).click();
+      const strip = page.locator(`#tracks-${view}`);
+      await expect(strip.locator('a.tracks-title')).toHaveCount(12);
+      // One under another, and the page scrolls to the rest. The graph
+      // draws the newest first.
+      const boxes = await strip.locator('a.tracks-title').evaluateAll(links => links.map(link => link.getBoundingClientRect().y));
+      expect(boxes).toEqual([...boxes].sort((a, b) => a - b));
+      if (view === 'graph') await expect(strip.locator('a.tracks-title').first()).toHaveText(/^\s*Scrolling track 11, /);
+      const last = strip.locator('a.tracks-title').last();
+      await last.scrollIntoViewIfNeeded();
+      await expect(last).toBeInViewport();
+      expect((await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa']).analyze()).violations).toEqual([]);
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    }
+    const first = page.locator('#tracks-list a.tracks-title', { hasText: /^\s*Scrolling track 0, / });
+    await expect(first).toHaveCount(1);
     await first.focus();
     await first.press('Enter');
-    if (width < 760) {
-      await expect(strip).not.toBeVisible();
-      await page.getByRole('button', { name: 'Menu', exact: true }).click();
-    }
-    await expect(first).toHaveAttribute('aria-current', 'page');
-    await expect(first.locator('.track-title')).toHaveText('Scrolling track 0');
-    await expect(first).toHaveAttribute('aria-label', /^Scrolling track 0, /);
-    const boxes = await strip.getByRole('link').evaluateAll(links => links.map(link => link.getBoundingClientRect().y));
-    expect(boxes).toEqual([...boxes].sort((a,b) => a-b));
-    const scroll = page.locator('.yard-scroll');
-    await scroll.evaluate(el => { el.scrollTop = 0; });
-    await scroll.hover();
-    await page.mouse.wheel(0, 150);
-    await expect.poll(() => scroll.evaluate(el => el.scrollTop)).toBeGreaterThan(0);
-    expect((await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa']).analyze()).violations).toEqual([]);
-    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
-    if (width < 760) {
-      await page.getByRole('button', { name: 'Close menu', exact: true }).click();
-      await expect(strip).not.toBeVisible();
-      expect((await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa']).analyze()).violations).toEqual([]);
-    }
+    await expect(page).toHaveURL(/\/t\//);
+    await expect(page.locator('#track-header .track-title-text')).toHaveText('Scrolling track 0');
   }
   // Close is in the header's ⋯ (RAV-82). It still confirms, and dismissing
   // returns focus to ⋯.
-  const header = page.locator('.track-crumbs');
+  const header = page.locator('#track-header');
   const more = header.getByRole('button', { name: 'More for this track', exact: true });
   const close = header.getByRole('button', { name: 'Close track', exact: true });
   await expect(header.getByRole('button', { name: 'Project settings', exact: true })).toHaveCount(0);

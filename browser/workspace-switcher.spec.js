@@ -14,7 +14,7 @@ test('the workspace switcher points down and ticks the current workspace', async
   await trigger.click();
   const menu = page.locator('#workspace-menu');
   await expect(menu).toBeVisible();
-  await page.screenshot({ path: 'tmp/sidebar-workspace-menu.png', clip: { x: 0, y: 0, width: 320, height: 360 } });
+  await page.screenshot({ path: 'tmp/topbar-workspace-menu.png', clip: { x: 0, y: 0, width: 640, height: 360 } });
 
   const chevron = trigger.locator('.workspace-chevron');
   expect(await chevron.evaluate(el => new DOMMatrix(getComputedStyle(el).transform).b)).toBeCloseTo(1);

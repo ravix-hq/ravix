@@ -2,20 +2,24 @@ import { test, expect } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
 import { signIn, connectClaude } from './sign-in.js';
 import { newThread } from './draft-runtime.js';
+import { openAddRepository } from './new-track.js';
 
 const bottom = (page, selector) => page.locator(selector).first().evaluate(el => el.getBoundingClientRect().bottom);
 
-// RAV-97: the thread tab strip. The active underline is the accent wherever
-// tabs are; tabs stop at about 180px and, once they overrun the row, fade
-// at the edges and gain ‹ ›; "+" is a menu; the active tab is renamed with
-// ✎, a double-click or F2; a hovered tab's × closes (archives) its thread;
-// and the three panes' top strips share one height and one hairline.
+// RAV-97: the thread tabs. The active mark is the tab colour wherever tabs
+// are; beside the conversation they stand on end, one per row with its state
+// and agent under its name; across the top (a narrow window) they stop at
+// about 180px and, once they overrun the row, fade at the edges and gain ‹ ›;
+// "+" is a menu; the active tab is renamed with ✎, a double-click or F2; a
+// hovered tab's × closes (archives) its thread; and the track's head sits
+// straight under the top bar with the thread list straight under its tabs'
+// hairline.
 test('thread tab strip: underline, overflow, + menu, rename, close and aligned pane heads', async ({ page }) => {
   test.setTimeout(150_000);
   await page.setViewportSize({ width: 1440, height: 900 });
   await signIn(page, 'eli');
   await connectClaude(page);
-  await page.getByRole('button', { name: 'Add a repository', exact: true }).first().click();
+  await openAddRepository(page);
   const dialog = page.getByRole('dialog', { name: 'Add a repository', exact: true });
   await dialog.getByLabel('Project name', { exact: true }).fill('Tab strip');
   await dialog.getByRole('button', { name: 'Create scratch project', exact: true }).click();
@@ -27,15 +31,16 @@ test('thread tab strip: underline, overflow, + menu, rename, close and aligned p
   const composer = page.getByRole('textbox', { name: 'Message', exact: true });
   await expect(composer).toBeEnabled({ timeout: 30_000 });
 
-  // The three panes' top strips: one height, one hairline, and the tab strip
-  // on the header's background.
-  const crumbs = await bottom(page, '.track-crumbs');
-  expect(crumbs).toBe(44);
-  expect(await bottom(page, '.yard-top')).toBe(crumbs);
-  expect(await bottom(page, '#inspector > .workspace-tabs')).toBe(crumbs);
-  const background = el => getComputedStyle(el).backgroundColor;
-  expect(await page.locator('#thread-switcher').evaluate(background))
-    .toBe(await page.locator('.track-crumbs').evaluate(background));
+  // The track's head under the top bar: its tabs end it on one hairline,
+  // and the thread list starts on that line. One thread is listed too.
+  const head = await bottom(page, '#track-header');
+  const top = await page.locator('#track-header').first().evaluate(el => el.getBoundingClientRect().top);
+  expect(top).toBe(await bottom(page, '#topbar'));
+  expect(await bottom(page, '#track-header .track-tabs')).toBe(head);
+  expect(await page.locator('#track-header .track-tabs').evaluate(el => getComputedStyle(el).borderBottomWidth)).toBe('1px');
+  await expect(page.locator('#thread-switcher')).toBeVisible();
+  expect(await page.locator('#thread-switcher').evaluate(el => el.getBoundingClientRect().top)).toBe(head);
+  await expect(page.locator('.thread-tab')).toHaveCount(1);
 
   // "+" opens a menu of 32px rows; New thread is the draft tab it always was.
   const add = page.getByRole('button', { name: 'Add thread', exact: true });
@@ -61,11 +66,11 @@ test('thread tab strip: underline, overflow, + menu, rename, close and aligned p
   const tabs = page.locator('.thread-tab');
   await expect(tabs).toHaveCount(6);
 
-  // The accent, not the ink, underlines the selected tab, here and in the
-  // inspector.
+  // The tab colour, not the ink, marks the selected tab, here and in the
+  // track's own tabs.
   const accent = await page.evaluate(() => {
     const probe = document.createElement('i');
-    probe.style.color = 'var(--accent)';
+    probe.style.color = 'var(--tab)';
     document.body.append(probe);
     const color = getComputedStyle(probe).color;
     probe.remove();
@@ -74,13 +79,32 @@ test('thread tab strip: underline, overflow, + menu, rename, close and aligned p
   const selected = page.locator('.thread-tab[aria-selected="true"]');
   expect(await selected.evaluate(el => getComputedStyle(el, '::after').backgroundColor)).toBe(accent);
   expect(await tabs.first().evaluate(el => getComputedStyle(el, '::after').backgroundColor)).not.toBe(accent);
-  const inspectorTab = page.locator('#inspector > .workspace-tabs button.selected').first();
-  expect(await inspectorTab.evaluate(el => getComputedStyle(el).borderBottomColor)).toBe(accent);
+  const trackTab = page.locator('#track-header .track-tabs > button.on');
+  await expect(trackTab).toHaveCount(1);
+  expect(await trackTab.evaluate(el => getComputedStyle(el).borderBottomColor)).toBe(accent);
 
-  // Six tabs overrun the row at 1024: each stops at about 180px and ends in
-  // "…", the tablist scrolls, and ‹ › move it.
-  await page.setViewportSize({ width: 1024, height: 800 });
+  // Beside the conversation: one 220px column, a row per thread, each with
+  // its state and agent under its name, and nothing to scroll sideways.
   const strip = page.locator('#thread-switcher');
+  await expect(page.locator('#thread-tablist')).toHaveAttribute('aria-orientation', 'vertical');
+  expect(Math.round((await strip.boundingBox()).width)).toBe(220);
+  const rows = await tabs.evaluateAll(els => els.map(el => {
+    const { left, top, width } = el.getBoundingClientRect();
+    return { left: Math.round(left), top, width: Math.round(width) };
+  }));
+  expect(new Set(rows.map(row => row.left)).size, `tab lefts ${rows.map(row => row.left)}`).toBe(1);
+  expect(new Set(rows.map(row => row.width)).size, `tab widths ${rows.map(row => row.width)}`).toBe(1);
+  expect(rows.every((row, i) => i === 0 || row.top > rows[i - 1].top)).toBe(true);
+  await expect(tabs.nth(1).locator('.thread-tab-meta')).toBeVisible();
+  await expect(tabs.nth(1).locator('.thread-tab-meta')).toHaveText(/^\S.* · \S/);
+  expect(await tabs.nth(2).locator('.thread-tab-title').evaluate(el => getComputedStyle(el).textOverflow)).toBe('ellipsis');
+  await expect(page.getByRole('button', { name: 'Scroll threads left', exact: true })).toBeHidden();
+  await expect(page.getByRole('button', { name: 'Scroll threads right', exact: true })).toBeHidden();
+
+  // Across the top of a narrow window, six tabs overrun the row: each stops
+  // at about 180px and ends in "…", the tablist scrolls, and ‹ › move it.
+  await page.setViewportSize({ width: 700, height: 800 });
+  await expect(tabs.nth(1).locator('.thread-tab-meta')).toBeHidden();
   await expect(strip).toHaveAttribute('data-overflow', /start|end/);
   for (const width of await tabs.evaluateAll(els => els.map(el => el.getBoundingClientRect().width))) {
     expect(width).toBeLessThanOrEqual(181);

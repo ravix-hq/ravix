@@ -20,6 +20,11 @@ defmodule RavixWeb.Live.SettingsAgentTest do
     stub(Inference, :held, fn _ -> {:ok, [{:claude, :subscription}]} end)
     stub(Inference, :subscription, fn _ -> {:ok, nil} end)
     stub(Inference, :link_status, fn _ -> {:ok, %{enabled?: true, pending: nil}} end)
+    # RAV-103: the project page's agent-health read is not what these tests
+    # are about, and one still out when `open/3` patches to settings is
+    # cancelled with the component; a cancelled read holding the sandbox
+    # connection takes it down, and the next session read finds no owner.
+    stub(Projects, :agent_health, fn _, _ -> {:error, :not_asked} end)
 
     stub(Projects, :settings, fn caller, id ->
       assert caller.id == user.id

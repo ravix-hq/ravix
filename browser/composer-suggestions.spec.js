@@ -1,6 +1,7 @@
 import { test, expect } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
 import { signIn, connectClaude } from './sign-in.js';
+import { openAddRepository } from './new-track.js';
 
 // The composer's `@` searches the track's files and its `/` offers the
 // agent's commands and Ravix's own; both are one listbox the textarea drives
@@ -9,20 +10,21 @@ test('@ mentions a file, / picks a command, and Ctrl+L focuses the composer', as
   test.setTimeout(120_000);
   await signIn(page, 'mentioner', '/home');
   await connectClaude(page);
-  await page.getByRole('button', { name: 'Add a repository', exact: true }).first().click();
+  await openAddRepository(page);
   await page.getByLabel('Project name', { exact: true }).fill('Mentions');
   await expect(page.locator('#project-repositories input[type=radio]')).not.toHaveCount(0);
   await page.getByRole('radio', { name: 'mockuser/atlas-api', exact: true }).check();
   await page.getByRole('dialog', { name: 'Add a repository' }).getByRole('button', { name: 'Add repository', exact: true }).click();
-  await page.locator('#yard .workspace-project.current .project-add').click();
+  await page.locator('#top-new-track').click();
   await page.getByRole('button', { name: 'Create track', exact: true }).click();
   const message = page.getByRole('textbox', { name: 'Message', exact: true });
   await expect(message).toBeEnabled();
   await expect(page.locator('#transcript-status')).toHaveText('Agent replied');
   await expect(message).toHaveAttribute('placeholder', 'Ask to make changes, @mention files, run /commands');
 
-  // Ctrl+L from elsewhere on the page. The hint shows from 1360px up.
-  await page.setViewportSize({ width: 1440, height: 900 });
+  // Ctrl+L from elsewhere on the page. The hint shows once the composer has
+  // room for it: beside the sidebar, threads and inspector, at 1920px.
+  await page.setViewportSize({ width: 1920, height: 900 });
   await page.locator('#transcript-scroll').click();
   await expect(page.locator('#composer-shortcut')).toBeVisible();
   await expect(message).not.toBeFocused();
@@ -111,7 +113,8 @@ test('@ mentions a file, / picks a command, and Ctrl+L focuses the composer', as
   await message.fill('');
   await message.pressSequentially('/chan');
   await page.keyboard.press('Enter');
-  await expect(page.locator('button[phx-click=panel][phx-value-name=changes]')).toHaveClass(/selected/);
-  await expect(message).toHaveValue('');
+  await expect(page.locator('#track-tab-changes')).toHaveAttribute('aria-pressed', 'true');
+  // Changes takes the page; the composer, out of sight, is left empty.
+  await expect(page.locator('#composer-form textarea')).toHaveValue('');
   await expect(page.locator('#transcript-turns > article')).toHaveCount(turns);
 });

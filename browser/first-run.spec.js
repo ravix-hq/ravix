@@ -75,9 +75,12 @@ test('a new person goes from welcome to a track with their first prompt waiting'
   await connected(page);
   await expect(page.getByRole('heading', { name: 'What do you want to work on?' })).toBeVisible();
   await expect(page.locator('#first-prompt-runtime')).toHaveValue('claude');
-  const target = page.getByLabel('Work in', { exact: true });
-  await expect(target.locator('option[value="repo:mockuser/atlas-api"]')).toBeAttached();
-  await target.selectOption('repo:mockuser/atlas-api');
+  // The repositories are a list, most recently pushed first, as on GitHub.
+  const repos = page.getByRole('group', { name: 'Choose a repository' });
+  const target = repos.locator('input[type=radio][value="repo:mockuser/atlas-api"]');
+  await expect(target).toBeAttached();
+  await repos.locator('.quick-repo', { hasText: 'mockuser/atlas-api' }).click();
+  await expect(target).toBeChecked();
   const prompt = page.getByLabel('What do you want to work on in mockuser/atlas-api?', { exact: true });
   await page.getByRole('button', { name: 'Explain how this codebase is organized', exact: true }).click();
   await expect(prompt).toHaveValue('Explain how this codebase is organized');

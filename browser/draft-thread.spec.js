@@ -2,6 +2,7 @@ import { test, expect } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
 import { signIn, connectClaude } from './sign-in.js';
 import { chooseDraft, draftChoice, draftModelLabel, draftModels, draftPill, newThread } from './draft-runtime.js';
+import { openAddRepository } from './new-track.js';
 
 // RAV-30: "+" adds a draft tab on the person's default agent and model; the
 // first message creates the thread and sends that prompt as one step.
@@ -9,12 +10,12 @@ test('a draft thread becomes a real thread with its first message running, wide 
   test.setTimeout(120_000);
   await signIn(page, 'threadruntime', '/home');
   await connectClaude(page);
-  await page.getByRole('button', { name: 'Add a repository', exact: true }).first().click();
+  await openAddRepository(page);
   const project = page.getByRole('dialog', { name: 'Add a repository', exact: true });
   await project.getByLabel('Project name', { exact: true }).fill('Draft threads');
   await project.getByRole('button', { name: 'Create scratch project', exact: true }).click();
   await expect(project).toHaveCount(0);
-  await page.locator('#yard .workspace-project.current .project-add').click();
+  await page.locator('#top-new-track').click();
   await page.getByRole('button', { name: 'Create track', exact: true }).click();
   await expect(page.getByRole('dialog', { name: 'New track', exact: true })).toHaveCount(0);
   await expect(page.locator('#track-setup-status')).toHaveCount(0, { timeout: 45_000 });

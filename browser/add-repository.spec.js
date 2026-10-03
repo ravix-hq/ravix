@@ -3,17 +3,19 @@ import AxeBuilder from '@axe-core/playwright';
 import { signIn, connectClaude } from './sign-in.js';
 
 // RAV-37: adding a repository is its own flow, apart from daily work. New
-// track starts work, from the sidebar, Home and the phone alike; Add a
+// track starts work, from the top bar, Home and the phone alike; Add a
 // repository connects a repository as a project, with scratch as the list's
-// last choice.
+// last choice. It is Home's to offer (the first run's "Add another
+// repository", then its New project), not the top bar's.
 test('Add a repository searches, picks with Enter, keeps scratch, and hands work to New track', async ({ page }) => {
   await signIn(page, 'addrepository', '/home');
   await connectClaude(page);
-  const nav = page.locator('#yard .yard-nav');
+  const nav = page.locator('#topbar');
   await expect(nav.getByRole('button', { name: 'New track' })).toBeVisible();
   await expect(nav.getByRole('button', { name: 'New project' })).toHaveCount(0);
+  await expect(nav.getByRole('button', { name: /Add a repository|Add another repository/ })).toHaveCount(0);
 
-  await nav.getByRole('button', { name: 'Add a repository', exact: true }).click();
+  await page.locator('#home-quick-start').getByRole('button', { name: 'Add another repository', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: 'Add a repository', exact: true });
   await expect(dialog).toContainText('Start work in it from New track');
   const search = dialog.getByRole('searchbox', { name: 'Repository', exact: true });
@@ -42,7 +44,7 @@ test('Add a repository searches, picks with Enter, keeps scratch, and hands work
   await atlas.check();
   await add.click();
   await expect(dialog).toHaveCount(0);
-  await expect(page.locator('.crumbs')).toContainText('atlas-api');
+  await expect(page.locator('#topbar .topbar-crumbs')).toContainText('atlas-api');
 
   // Work in it starts from New track, with the new repository preselected.
   await nav.getByRole('button', { name: 'New track' }).click();
@@ -63,20 +65,21 @@ test('Add a repository searches, picks with Enter, keeps scratch, and hands work
   await page.keyboard.press('Escape');
   await expect(newTrack).toHaveCount(0);
 
-  // Home's New track is the same action.
+  // On Home, New track is the top bar's alone: Home draws no second one,
+  // and the top bar's opens the same dialog there.
   await page.goto('/home');
   await expect(page.locator('[data-phx-main]')).toHaveClass(/phx-connected/);
-  await page.locator('#home').getByRole('button', { name: 'New track', exact: true }).click();
+  await expect(page.locator('#home').getByRole('button', { name: 'New track', exact: true })).toHaveCount(0);
+  await nav.getByRole('button', { name: 'New track', exact: true }).click();
   await expect(newTrack).toBeVisible();
   await page.keyboard.press('Escape');
   await expect(newTrack).toHaveCount(0);
 
-  // On a phone, the nav's last item is New track, not New project.
+  // On a phone, the top bar keeps New track, and still has no New project.
   await page.setViewportSize({ width: 390, height: 780 });
-  const phone = page.getByRole('navigation', { name: 'Workspace navigation' });
-  const last = phone.getByRole('button').last();
-  await expect(last).toHaveText('New track');
-  await expect(phone.getByRole('button', { name: /project|repository/ })).toHaveCount(0);
-  await last.click();
+  await expect(nav.getByRole('button', { name: 'New project' })).toHaveCount(0);
+  const phoneNew = nav.getByRole('button', { name: 'New track', exact: true });
+  await expect(phoneNew).toBeInViewport();
+  await phoneNew.click();
   await expect(newTrack).toBeVisible();
 });

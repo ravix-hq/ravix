@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { signIn, connectClaude } from './sign-in.js';
+import { openAddRepository } from './new-track.js';
 
 // RAV-68: a dialog closed with Escape used to stay on screen until the
 // server's re-render removed it, so the scrim caught the next click and the
@@ -16,7 +17,7 @@ async function clickAt(page, locator) {
 }
 
 async function newTrack(page, branch) {
-  await page.locator('#yard .workspace-project.current .project-add').click();
+  await page.locator('#top-new-track').click();
   const dialog = page.getByRole('dialog', { name: 'New track', exact: true });
   await dialog.getByRole('button', { name: 'Options', exact: true }).click();
   await dialog.getByLabel('Branch name').fill(branch);
@@ -29,7 +30,7 @@ test('the first click after Escape closes a dialog reaches what is under it', as
   await page.setViewportSize({ width: 1280, height: 900 });
   await signIn(page, 'escaper');
   await connectClaude(page);
-  await page.getByRole('button', { name: 'Add a repository', exact: true }).first().click();
+  await openAddRepository(page);
   const project = page.getByRole('dialog', { name: 'Add a repository' });
   await project.getByLabel('Project name', { exact: true }).fill('Escape hatch');
   await expect(project.locator('#project-repositories input[type=radio]')).not.toHaveCount(0);
@@ -37,57 +38,52 @@ test('the first click after Escape closes a dialog reaches what is under it', as
   await project.getByRole('button', { name: 'Add repository' }).click();
   await expect(project).not.toBeVisible();
   await newTrack(page, 'escape-first');
+  const firstPath = new URL(page.url()).pathname;
   await newTrack(page, 'escape-second');
-  const links = page.locator('#yard .workspace-project.current .project-tree-tracks').getByRole('link');
-  await expect(links).toHaveCount(2);
-  const [first, second] = [links.nth(0), links.nth(1)];
-  await first.click();
-  await expect(first).toHaveAttribute('aria-current', 'page');
-  const secondPath = await second.getAttribute('href');
+  await expect(page).toHaveURL(url => url.pathname !== firstPath && url.pathname.includes('/t/'));
+  // The project's page (the top bar's crumb) lists both.
+  await page.locator('#topbar .topbar-crumbs a[href^="/p/"]').click();
+  const first = page.locator(`#tracks-graph-row-${firstPath.split('/t/')[1]} a.tracks-title`);
+  await expect(first).toBeVisible();
 
   await page.evaluate(ms => window.liveSocket.enableLatencySim(ms), LATENCY_MS);
   try {
-    // New track, Escape, and straight on to another track in the sidebar.
-    await page.locator('#yard .workspace-project.current .project-add').click();
+    // New track, Escape, and straight on to another track in the list.
+    await page.locator('#top-new-track').click();
     const dialog = page.getByRole('dialog', { name: 'New track', exact: true });
     await expect(dialog).toBeVisible();
     await page.keyboard.press('Escape');
-    await clickAt(page, second);
+    await clickAt(page, first);
     await expect(dialog).toHaveCount(0);
-    await expect(page).toHaveURL(new RegExp(`${secondPath}$`));
-    await expect(second).toHaveAttribute('aria-current', 'page');
+    await expect(page).toHaveURL(new RegExp(`${firstPath}$`));
+    await expect(page.locator('#track-header')).toBeVisible();
 
-    // Sharing, Escape, and straight on to the inspector's Preview tab.
+    // Sharing, Escape, and straight on to the track's Preview tab.
     await page.getByRole('button', { name: /^Track sharing/ }).click();
     const sharing = page.getByRole('dialog');
     await expect(sharing).toBeVisible();
-    const preview = page.getByRole('navigation', { name: 'Inspector panels' })
+    const preview = page.getByRole('navigation', { name: 'Track views' })
       .getByRole('button', { name: 'Preview', exact: true });
-    await expect(preview).not.toHaveClass(/selected/);
+    await expect(preview).toHaveAttribute('aria-pressed', 'false');
     await page.keyboard.press('Escape');
     await clickAt(page, preview);
     await expect(sharing).toHaveCount(0);
-    await expect(preview).toHaveClass(/selected/);
+    await expect(preview).toHaveAttribute('aria-pressed', 'true');
 
-    // One Escape closes the topmost thing: on a phone, a dialog opened from
-    // the menu closes and the menu stays.
+    // On a phone the top bar keeps search: Escape closes it, and the next
+    // open (a later round trip than anything Escape pushed) still opens it.
     await page.setViewportSize({ width: 500, height: 900 });
-    await page.getByRole('button', { name: 'Menu', exact: true }).click();
-    await expect(page.locator('aside#yard.forced')).toBeVisible();
+    const trackPath = new URL(page.url()).pathname;
     await page.locator('#quick-jump-trigger').click();
     const search = page.getByRole('dialog', { name: 'Search', exact: true });
     await expect(search).toBeVisible();
     await page.keyboard.press('Escape');
     await expect(search).toHaveCount(0);
-    // Opening it again is a later round trip than anything that Escape
-    // pushed, so the menu is still open only if nothing closed it.
     await page.locator('#quick-jump-trigger').click();
     await expect(search).toBeVisible();
-    await expect(page.locator('aside#yard.forced')).toBeVisible();
     await page.keyboard.press('Escape');
     await expect(search).toHaveCount(0);
-    await page.keyboard.press('Escape');
-    await expect(page.locator('aside#yard.forced')).toHaveCount(0);
+    await expect(page).toHaveURL(url => url.pathname === trackPath);
   } finally {
     await page.evaluate(() => window.liveSocket.disableLatencySim());
   }

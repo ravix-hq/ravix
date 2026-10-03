@@ -93,6 +93,17 @@ defmodule RavixWeb.WorkspaceScopeLiveTest do
     Workspaces.members_changed(workspace_id)
   end
 
+  # On a project or track page the top bar is a breadcrumb, and its first
+  # link names the current workspace; the switcher lives everywhere else.
+  defp crumb_workspace(view) do
+    view
+    |> element("#topbar .topbar-crumbs a[href='/home']")
+    |> render()
+    |> LazyHTML.from_fragment()
+    |> LazyHTML.text()
+    |> String.trim()
+  end
+
   defp search(view, query) do
     render_click(view, "dialog", %{name: "search"})
     view |> form("#search-form", q: query) |> render_change()
@@ -103,13 +114,20 @@ defmodule RavixWeb.WorkspaceScopeLiveTest do
     view = open(ctx.conn, "/inbox")
 
     assert has_element?(view, "#workspace-switcher-trigger", "me")
-    assert has_element?(view, "#project-row-#{ctx.mine.id}")
-    assert has_element?(view, "#project-row-#{ctx.shared.id}")
-    refute has_element?(view, "#project-row-#{ctx.team_project.id}")
-    assert has_element?(view, ".yard-nav a[href='/inbox'] .badge", "2")
+    assert has_element?(view, "nav.topbar-nav a[href='/inbox'] .badge", "2")
     assert has_element?(view, ".inbox-item", "mine-track")
     refute has_element?(view, ".inbox-item", "team-track")
     assert has_element?(view, "#inbox-elsewhere", "1 in other workspaces")
+
+    render_patch(view, "/home")
+    assert has_element?(view, "#home-project-#{ctx.mine.id}")
+    assert has_element?(view, "#home-project-#{ctx.shared.id}")
+    refute has_element?(view, "#home-project-#{ctx.team_project.id}")
+    # Every track has an unread reply, so Home's Needs you lists this
+    # workspace's and no other's.
+    assert has_element?(view, "#home-needs-#{ctx.tracks.mine.id}")
+    refute has_element?(view, "#home-needs-#{ctx.tracks.team.id}")
+    render_patch(view, "/inbox")
 
     search(view, "track")
     assert has_element?(view, "#search-track-link-#{ctx.tracks.mine.id}")
@@ -128,13 +146,17 @@ defmodule RavixWeb.WorkspaceScopeLiveTest do
 
     assert Repo.reload!(ctx.me).current_workspace_id == ctx.team.id
     assert has_element?(view, "#workspace-switcher-trigger", "Team")
-    assert has_element?(view, "#project-row-#{ctx.team_project.id}")
-    refute has_element?(view, "#project-row-#{ctx.mine.id}")
-    refute has_element?(view, "#project-row-#{ctx.shared.id}")
-    assert has_element?(view, ".yard-nav a[href='/inbox'] .badge", "1")
+    assert has_element?(view, "nav.topbar-nav a[href='/inbox'] .badge", "1")
     assert has_element?(view, ".inbox-item", "team-track")
     refute has_element?(view, ".inbox-item", "mine-track")
     assert has_element?(view, "#inbox-elsewhere", "2 in other workspaces")
+
+    render_patch(view, "/home")
+    assert has_element?(view, "#home-project-#{ctx.team_project.id}")
+    refute has_element?(view, "#home-project-#{ctx.mine.id}")
+    refute has_element?(view, "#home-project-#{ctx.shared.id}")
+    assert has_element?(view, "#home-needs-#{ctx.tracks.team.id}")
+    refute has_element?(view, "#home-needs-#{ctx.tracks.mine.id}")
 
     search(view, "track")
     assert has_element?(view, "#search-track-link-#{ctx.tracks.team.id}")
@@ -149,15 +171,24 @@ defmodule RavixWeb.WorkspaceScopeLiveTest do
     # It persists: a fresh page opens where this person left off.
     view = open(ctx.conn, "/home")
     assert has_element?(view, "#workspace-switcher-trigger", "Team")
-    assert has_element?(view, "#project-row-#{ctx.team_project.id}")
-    refute has_element?(view, "#project-row-#{ctx.mine.id}")
+    assert has_element?(view, "#home-project-#{ctx.team_project.id}")
+    refute has_element?(view, "#home-project-#{ctx.mine.id}")
   end
 
   test "switching away from an open project leaves it for the new workspace's home", ctx do
+    {:ok, _} = Accounts.put_current_workspace(ctx.me, ctx.team.id)
     view = open(ctx.conn, "/p/#{ctx.team_project.id}")
-    view |> element("#workspace-select-#{ctx.personal.id}") |> render_click()
+    assert crumb_workspace(view) == "Team"
+
+    # A project page has no switcher: its breadcrumb goes Home, and the
+    # switch is made there.
+    refute has_element?(view, "#workspace-switcher-trigger")
+    view |> element("#topbar .topbar-crumbs a[href='/home']") |> render_click()
     assert_patch(view, "/home")
-    refute has_element?(view, "#project-row-#{ctx.team_project.id}")
+    view |> element("#workspace-select-#{ctx.personal.id}") |> render_click()
+    assert Repo.reload!(ctx.me).current_workspace_id == ctx.personal.id
+    refute has_element?(view, "#home-project-#{ctx.team_project.id}")
+    assert has_element?(view, "#home-project-#{ctx.mine.id}")
   end
 
   test "a workspace the viewer is not in cannot be made current", ctx do
@@ -182,7 +213,7 @@ defmodule RavixWeb.WorkspaceScopeLiveTest do
 
     view = open(ctx.conn, "/home")
     assert has_element?(view, "#workspace-switcher-trigger", "Boss Team")
-    assert has_element?(view, "#project-row-#{boss_project.id}")
+    assert has_element?(view, "#home-project-#{boss_project.id}")
 
     :ok = Workspaces.remove_member(boss, boss_team.id, ctx.me.id)
     render_async(view)
@@ -190,8 +221,8 @@ defmodule RavixWeb.WorkspaceScopeLiveTest do
     # Personal, even though a team workspace is still there (RAV-33).
     assert has_element?(view, "#workspace-switcher-trigger", "me")
     refute has_element?(view, "#workspace-select-#{boss_team.id}")
-    refute has_element?(view, "#project-row-#{boss_project.id}")
-    assert has_element?(view, "#project-row-#{ctx.mine.id}")
+    refute has_element?(view, "#home-project-#{boss_project.id}")
+    assert has_element?(view, "#home-project-#{ctx.mine.id}")
 
     view = open(ctx.conn, "/home")
     assert has_element?(view, "#workspace-switcher-trigger", "me")
@@ -206,8 +237,8 @@ defmodule RavixWeb.WorkspaceScopeLiveTest do
     track = insert_track(project: boss_project, title: "boss-track", created_by: boss.id)
 
     view = open(ctx.conn, "/p/#{boss_project.id}/t/#{track.id}")
-    assert has_element?(view, "#workspace-switcher-trigger", "Boss Team")
-    assert render(view) =~ "boss-track"
+    assert crumb_workspace(view) == "Boss Team"
+    assert page_title(view) =~ "boss-track"
 
     :ok = Workspaces.remove_member(boss, boss_team.id, ctx.me.id)
 
@@ -219,6 +250,9 @@ defmodule RavixWeb.WorkspaceScopeLiveTest do
     assert has_element?(view, "#workspace-switcher-trigger", "me")
     refute has_element?(view, "#workspace-select-#{boss_team.id}")
     refute render(view) =~ "boss-track"
+    refute render(view) =~ "BossApp"
+    render_patch(view, "/home")
+    refute has_element?(view, "#home-project-#{boss_project.id}")
     refute render(view) =~ "BossApp"
 
     # The link itself is now not found, not a crash either.
@@ -239,7 +273,7 @@ defmodule RavixWeb.WorkspaceScopeLiveTest do
     {:ok, _} = Accounts.put_current_workspace(ctx.me, here.id)
 
     view = open(ctx.conn, "/p/#{moving.id}")
-    assert has_element?(view, "#workspace-switcher-trigger", "Here")
+    assert crumb_workspace(view) == "Here"
 
     # Still reachable in There, but a background read does not follow it.
     move(moving, there.id)
@@ -248,7 +282,8 @@ defmodule RavixWeb.WorkspaceScopeLiveTest do
 
     assert_patch(view, "/")
     assert has_element?(view, "#workspace-switcher-trigger", "Here")
-    refute has_element?(view, "#project-row-#{moving.id}")
+    render_patch(view, "/home")
+    refute has_element?(view, "#home-project-#{moving.id}")
     assert Repo.reload!(ctx.me).current_workspace_id == here.id
   end
 
@@ -262,12 +297,13 @@ defmodule RavixWeb.WorkspaceScopeLiveTest do
 
     assert_patch(view, "/")
     assert has_element?(view, "#workspace-switcher-trigger", "Team")
-    refute has_element?(view, "#project-row-#{ctx.team_project.id}")
+    render_patch(view, "/home")
+    refute has_element?(view, "#home-project-#{ctx.team_project.id}")
     assert Repo.reload!(ctx.me).current_workspace_id == ctx.team.id
 
-    # It is in the target's rail once the owner switches there.
+    # It is in the target's Home once the owner switches there.
     view |> element("#workspace-select-#{ctx.personal.id}") |> render_click()
-    assert has_element?(view, "#project-row-#{ctx.team_project.id}")
+    assert has_element?(view, "#home-project-#{ctx.team_project.id}")
   end
 
   test "the page moving a project from its settings goes with it", ctx do
@@ -295,8 +331,10 @@ defmodule RavixWeb.WorkspaceScopeLiveTest do
     render(view)
     render_async(view)
 
-    assert has_element?(view, "#workspace-switcher-trigger", "me")
-    assert has_element?(view, "#project-row-#{ctx.team_project.id}.current")
+    assert crumb_workspace(view) == "me"
+    # Still on this project's settings page.
+    assert has_element?(view, "#settings-title")
+    assert page_title(view) =~ ctx.team_project.name
     assert Repo.reload!(ctx.me).current_workspace_id == ctx.personal.id
   end
 
@@ -307,22 +345,29 @@ defmodule RavixWeb.WorkspaceScopeLiveTest do
     view = open(ctx.conn, "/home")
     assert has_element?(view, "#workspace-switcher-trigger", "me")
     render_patch(view, "/p/#{ctx.team_project.id}/t/#{ctx.tracks.team.id}")
-    assert has_element?(view, "#workspace-switcher-trigger", "Team")
-    assert has_element?(view, "#project-row-#{ctx.team_project.id}.current")
-    refute has_element?(view, "#project-row-#{ctx.mine.id}")
+    assert crumb_workspace(view) == "Team"
+    assert page_title(view) == "team-track · TeamApp · Ravix"
     assert Repo.reload!(ctx.me).current_workspace_id == ctx.team.id
 
     # And as the first page, before the rail has arrived.
     {:ok, _} = Accounts.put_current_workspace(Repo.reload!(ctx.me), ctx.personal.id)
     view = open(ctx.conn, "/p/#{ctx.team_project.id}")
-    assert has_element?(view, "#workspace-switcher-trigger", "Team")
-    assert has_element?(view, "#project-row-#{ctx.team_project.id}.current")
+    assert crumb_workspace(view) == "Team"
+    assert has_element?(view, "header.repo-head", "TeamApp")
+    assert has_element?(view, "#crumb-tracks[href='/p/#{ctx.team_project.id}']")
     assert Repo.reload!(ctx.me).current_workspace_id == ctx.team.id
 
     # A legacy share lives in the personal workspace, so a link to it goes there.
     render_patch(view, "/p/#{ctx.shared.id}")
-    assert has_element?(view, "#workspace-switcher-trigger", "me")
-    assert has_element?(view, "#section-shared #project-row-#{ctx.shared.id}")
+    assert crumb_workspace(view) == "me"
+    assert has_element?(view, "header.repo-head", "Friendly")
+
+    # Home lists it, and the switch left the team's project behind.
+    render_patch(view, "/home")
+    refute has_element?(view, "#home-project-#{ctx.team_project.id}")
+    view |> element("#home-section-shared") |> render_click()
+    assert has_element?(view, "#home-project-#{ctx.shared.id}")
+    refute has_element?(view, "#home-project-#{ctx.mine.id}")
   end
 
   test "a /p/:id link into a workspace the viewer is not in is not found", ctx do
@@ -379,7 +424,6 @@ defmodule RavixWeb.WorkspaceScopeLiveTest do
     assert switcher_name(html) == "Team"
     refute html =~ ~s(id="workspace-switcher-skeleton")
     assert html =~ ~r/id="workspace-select-#{ctx.team.id}"[^>]*aria-current="true"/
-    assert html =~ "rail-row-skeleton"
     assert html =~ "inbox-item-skeleton"
     refute html =~ "all caught up"
     refute html =~ "Loading projects…</p>"
@@ -387,7 +431,6 @@ defmodule RavixWeb.WorkspaceScopeLiveTest do
     {:ok, view, _} = live(dead)
     assert_receive {:rail_started, worker}
     assert has_element?(view, "#workspace-switcher-trigger", "Team")
-    assert has_element?(view, "#rail-loading .rail-row-skeleton")
     assert has_element?(view, "#inbox-loading .inbox-item-skeleton")
     refute has_element?(view, ".inbox-empty")
 
@@ -414,24 +457,26 @@ defmodule RavixWeb.WorkspaceScopeLiveTest do
     refute html =~ "/w/#{theirs.id}"
   end
 
-  test "a first page naming a project in another workspace shows a switcher skeleton until it follows",
-       ctx do
+  # A project page has no switcher, so there is no skeleton to show: its
+  # breadcrumb names the workspace the project follows into once the rail
+  # has answered. (Before that it falls back to the personal "@login".)
+  test "a first page naming a project in another workspace names it once it follows", ctx do
     {:ok, _} = Accounts.put_current_workspace(ctx.me, ctx.personal.id)
     hold_rail()
 
     html = ctx.conn |> get("/p/#{ctx.team_project.id}") |> html_response(200)
-    assert html =~ ~s(id="workspace-switcher-skeleton")
-    assert switcher_name(html) == ""
+    refute html =~ ~s(id="workspace-switcher-trigger")
+    refute html =~ ~s(id="workspace-switcher-skeleton")
 
     {:ok, view, _} = live(ctx.conn, "/p/#{ctx.team_project.id}")
     assert_receive {:rail_started, worker}
-    assert has_element?(view, "#workspace-switcher-skeleton")
     refute has_element?(view, "#workspace-switcher-trigger")
 
     send(worker, :release_rail)
     render_async(view)
-    refute has_element?(view, "#workspace-switcher-skeleton")
-    assert has_element?(view, "#workspace-switcher-trigger", "Team")
+    assert crumb_workspace(view) == "Team"
+    assert Repo.reload!(ctx.me).current_workspace_id == ctx.team.id
+    refute has_element?(view, "#workspace-switcher-trigger")
   end
 
   test "the gear and the workspace menu open the current workspace's settings", ctx do
@@ -477,18 +522,27 @@ defmodule RavixWeb.WorkspaceScopeLiveTest do
     scratch = insert_project(user: ctx.me, name: "Sandbox", repo_full_name: nil)
     view = open(ctx.conn, "/home")
 
-    assert has_element?(view, "#section-shared", "Shared with you")
-    assert has_element?(view, "#section-shared #project-row-#{ctx.shared.id}")
-    refute has_element?(view, "#section-shared[data-section-drop]")
-    assert has_element?(view, "#section-other #project-row-#{ctx.mine.id}")
-    assert has_element?(view, "#section-scratch #project-row-#{scratch.id}")
-    refute has_element?(view, "#section-shared #project-row-#{ctx.mine.id}")
+    assert has_element?(view, "#home-section-shared", "Shared with you")
+
+    view |> element("#home-section-shared") |> render_click()
+    assert has_element?(view, "#home-section-shared[aria-pressed=true]")
+    assert has_element?(view, "#home-project-#{ctx.shared.id}")
+    refute has_element?(view, "#home-project-#{ctx.mine.id}")
+    refute has_element?(view, "#home-project-#{scratch.id}")
+
+    view |> element("#home-section-other") |> render_click()
+    assert has_element?(view, "#home-project-#{ctx.mine.id}")
+    refute has_element?(view, "#home-project-#{ctx.shared.id}")
+
+    view |> element("#home-section-scratch") |> render_click()
+    assert has_element?(view, "#home-project-#{scratch.id}")
+    refute has_element?(view, "#home-project-#{ctx.mine.id}")
 
     # Once its owner moves it into a workspace this person is in, it lives there.
     Store.move_project(ctx.shared.id, ctx.team.id)
     view = open(ctx.conn, "/home")
-    refute has_element?(view, "#section-shared")
-    refute has_element?(view, "#project-row-#{ctx.shared.id}")
+    refute has_element?(view, "#home-section-shared")
+    refute has_element?(view, "#home-project-#{ctx.shared.id}")
   end
 
   test "the rail stays one track query however many workspaces it spans", ctx do
@@ -502,7 +556,7 @@ defmodule RavixWeb.WorkspaceScopeLiveTest do
         )
 
       {:ok, _} = Accounts.put_current_workspace(Repo.reload!(ctx.me), ctx.personal.id)
-      assert has_element?(view, "#project-row-#{ctx.team_project.id}")
+      assert has_element?(view, "#home-project-#{ctx.team_project.id}")
       sources
     end
 
@@ -522,12 +576,12 @@ defmodule RavixWeb.WorkspaceScopeLiveTest do
   end
 
   # RAV-128: a project's name is read against the container it lives in,
-  # and only where the viewer is not already inside it. The sidebar, the
+  # and only where the viewer is not already inside it. Home, the
   # crumbs, the title and quick-jump are scoped to the current workspace;
   # Schedules spans every workspace the viewer reaches.
   describe "project names" do
     # The track page, with the track's own reads stood in for, as
-    # `RavixWeb.TrackLiveTest` does: the crumb is the parent's project view.
+    # `RavixWeb.TrackLiveTest` does: the crumb is the parent's top bar.
     defp open_track(conn, project, track) do
       stub(Tracks, :get, fn _, id, _opts ->
         row = Repo.get!(Track, id)
@@ -571,22 +625,26 @@ defmodule RavixWeb.WorkspaceScopeLiveTest do
         {:ok, _} = Accounts.put_current_workspace(user, ctx.team.id)
         conn = log_in_user(build_conn(), user)
 
-        view = open(conn, "/p/#{project.id}")
+        view = open(conn, "/home")
         assert has_element?(view, "#workspace-switcher-trigger", "Team")
 
         assert view |> element("#project-link-#{project.id} .project-label") |> render() =~
                  "TeamApp"
 
         refute has_element?(view, "#project-link-#{project.id} .project-label .dim")
-        assert has_element?(view, ~s|[aria-label="Tracks in TeamApp"]|)
+
+        view = open(conn, "/p/#{project.id}")
+        assert has_element?(view, ".topbar-crumbs a", "Team")
+        assert has_element?(view, ".topbar-crumbs .project-label", "TeamApp")
+        refute has_element?(view, ".topbar-crumbs .project-label .dim")
         assert has_element?(view, "#workspace-stage .crumbs .project-label", "TeamApp")
         refute has_element?(view, "#workspace-stage .crumbs .project-label .dim")
         assert page_title(view) == "TeamApp · Ravix"
 
-        {parent, child} = open_track(conn, project, track)
+        {parent, _child} = open_track(conn, project, track)
         assert page_title(parent) == "team-track · TeamApp · Ravix"
-        assert has_element?(child, "#track-header .project-crumb .project-label", "TeamApp")
-        refute has_element?(child, "#track-header .project-crumb .project-label .dim")
+        assert has_element?(parent, ".topbar-crumbs .project-label", "TeamApp")
+        refute has_element?(parent, ".topbar-crumbs .project-label .dim")
       end
     end
 
@@ -608,23 +666,24 @@ defmodule RavixWeb.WorkspaceScopeLiveTest do
     test "a legacy project somebody shared still says whose it is, and the viewer's own does not",
          ctx do
       {:ok, _} = Accounts.put_current_workspace(ctx.me, ctx.personal.id)
-      view = open(ctx.conn, "/p/#{ctx.shared.id}")
+      view = open(ctx.conn, "/home")
 
       assert has_element?(view, "#project-link-#{ctx.shared.id} .project-label .dim", "friend /")
 
       assert view |> element("#project-link-#{ctx.shared.id} .project-label") |> render() =~
                "Friendly"
 
-      assert has_element?(view, ~s|[aria-label="Tracks in friend / Friendly"]|)
-      assert has_element?(view, "#workspace-stage .crumbs .project-label .dim", "friend /")
-      assert page_title(view) == "friend / Friendly · Ravix"
-
       assert view |> element("#project-link-#{ctx.mine.id} .project-label") |> render() =~ "Mine"
       refute has_element?(view, "#project-link-#{ctx.mine.id} .project-label .dim")
 
-      {parent, child} = open_track(ctx.conn, ctx.shared, ctx.tracks.shared)
+      view = open(ctx.conn, "/p/#{ctx.shared.id}")
+      assert has_element?(view, ".topbar-crumbs .project-label .dim", "friend /")
+      assert has_element?(view, "#workspace-stage .crumbs .project-label .dim", "friend /")
+      assert page_title(view) == "friend / Friendly · Ravix"
+
+      {parent, _child} = open_track(ctx.conn, ctx.shared, ctx.tracks.shared)
       assert page_title(parent) == "shared-track · friend / Friendly · Ravix"
-      assert has_element?(child, "#track-header .project-crumb .project-label .dim", "friend /")
+      assert has_element?(parent, ".topbar-crumbs .project-label .dim", "friend /")
     end
 
     test "quick-jump finds a workspace project by its workspace's name and a legacy one by its owner's",
@@ -636,7 +695,7 @@ defmodule RavixWeb.WorkspaceScopeLiveTest do
       search(view, "orbit")
       assert has_element?(view, "#search-project-link-#{ctx.team_project.id}")
       assert has_element?(view, "#search-track-link-#{ctx.tracks.team.id}")
-      # Drawn as the sidebar draws it: inside the workspace, bare.
+      # Drawn as Home draws it: inside the workspace, bare.
       assert has_element?(
                view,
                "#search-project-link-#{ctx.team_project.id} .search-label",
@@ -674,12 +733,14 @@ defmodule RavixWeb.WorkspaceScopeLiveTest do
       view = open(ctx.conn, "/inbox")
 
       refute has_element?(view, "#workspace-switcher")
-      refute has_element?(view, "#section-shared")
       refute has_element?(view, "#inbox-elsewhere")
-      assert has_element?(view, "#project-row-#{ctx.mine.id}")
-      assert has_element?(view, "#project-row-#{ctx.shared.id}")
-      assert has_element?(view, "#project-row-#{ctx.team_project.id}")
-      assert has_element?(view, ".yard-nav a[href='/inbox'] .badge", "3")
+      assert has_element?(view, "nav.topbar-nav a[href='/inbox'] .badge", "3")
+
+      render_patch(view, "/home")
+      refute has_element?(view, "#home-section-shared")
+      assert has_element?(view, "#home-project-#{ctx.mine.id}")
+      assert has_element?(view, "#home-project-#{ctx.shared.id}")
+      assert has_element?(view, "#home-project-#{ctx.team_project.id}")
 
       # The workspace does not count yet, so its project is labelled the
       # legacy way (RAV-128): the owner's, bare; a share, the owner's login.

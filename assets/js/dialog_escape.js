@@ -1,6 +1,6 @@
 // One Escape closes the topmost thing. LiveView runs every
-// `phx-window-keydown` binding for a key, so an open dialog, the phone's
-// yard scrim and the plan items popover all heard the same press. Whether a
+// `phx-window-keydown` binding for a key, so an open dialog and the plan
+// items popover both heard the same press. Whether a
 // dialog was open is noted in the capture phase, before any binding runs and
 // before the dialog's own close hides it, and each keydown event carries that
 // as `dialog`; the handlers underneath a dialog ignore an Escape that has it.

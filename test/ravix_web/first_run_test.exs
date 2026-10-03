@@ -80,19 +80,95 @@ defmodule RavixWeb.FirstRunTest do
   end
 
   describe "/home with nothing started" do
+    test "lists the repositories as GitHub orders them, with scratch and a way to add another",
+         %{conn: conn} do
+      repos([
+        %Ravix.GitHub.Shapes.RepoRef{
+          full_name: "acme/recent",
+          owner: "acme",
+          name: "recent",
+          private: true,
+          default_branch: "main",
+          description: "The one pushed last",
+          pushed_at: DateTime.utc_now() |> DateTime.add(-2, :hour) |> DateTime.to_iso8601(),
+          language: "Elixir",
+          installation_id: 42
+        },
+        %Ravix.GitHub.Shapes.RepoRef{
+          full_name: "acme/older",
+          owner: "acme",
+          name: "older",
+          private: false,
+          default_branch: "main",
+          description: nil,
+          pushed_at: nil,
+          language: nil,
+          installation_id: 42
+        }
+      ])
+
+      view = home(conn, user())
+      list = "#home-quick-start-target"
+
+      names =
+        view
+        |> render()
+        |> LazyHTML.from_document()
+        |> LazyHTML.query("#{list} .quick-repo-main strong")
+        |> Enum.map(&LazyHTML.text/1)
+
+      # GitHub's order, most recently pushed first, then scratch.
+      assert names == ["acme/recent", "acme/older", "No repository"]
+      assert has_element?(view, "#{list} .quick-repo", "Private")
+      assert has_element?(view, "#{list} .quick-repo", "The one pushed last")
+      assert has_element?(view, "#{list} .quick-repo-meta", "Elixir")
+      assert has_element?(view, "#{list} .quick-repo-meta", "Updated 2h ago")
+      assert has_element?(view, "#{list} .quick-repo", "Public")
+
+      # Nothing is chosen for somebody with a real choice to make.
+      refute has_element?(view, "#{list} input[checked]")
+
+      view
+      |> form("#home-quick-start-form", quick_start: [target: "repo:acme/older"])
+      |> render_change()
+
+      assert has_element?(view, "#{list} .quick-repo.on input[value='repo:acme/older'][checked]")
+
+      # The prompt asks nothing beside itself: its label is for a screen
+      # reader, and the placeholder says the track is named from it.
+      assert has_element?(
+               view,
+               ".quick-start-prompt #home-quick-start-prompt[placeholder*=named]"
+             )
+
+      view |> element("#home-quick-start-add-repository") |> render_click()
+      assert has_element?(view, "#new-project-dialog")
+    end
+
     test "is the first-prompt form, with suggestions and what the words mean", %{conn: conn} do
       repos([%{full_name: "acme/app", installation_id: 42}])
       view = home(conn, user())
 
       assert has_element?(view, "#home-title", "Start your first track")
-      refute has_element?(view, ".home-recent")
+      refute has_element?(view, "#home-projects")
+      # The same frame as Home with projects: sections at the side, nothing
+      # running and nothing needing you yet on the right.
+      assert has_element?(
+               view,
+               "#home.home-dashboard #home-side #home-section-all",
+               "All projects"
+             )
+
+      assert has_element?(view, "#home-side #manage-sections", "Manage sections")
+      assert has_element?(view, "#home-side #home-active-empty")
+      assert has_element?(view, "#home-activity #home-needs-empty")
       # The only repository GitHub shows is already chosen, and named.
       assert has_element?(
                view,
-               "#home-quick-start-target option[value='repo:acme/app'][selected]"
+               "#home-quick-start-target input[type=radio][value='repo:acme/app'][checked]"
              )
 
-      assert has_element?(view, "#home-quick-start-target option[value=scratch]")
+      assert has_element?(view, "#home-quick-start-target input[type=radio][value=scratch]")
 
       assert has_element?(
                view,
@@ -192,7 +268,9 @@ defmodule RavixWeb.FirstRunTest do
       assert Repo.all(PromptQueue.Item) == []
     end
 
-    test "somebody with a project gets their recent tracks instead", %{conn: conn} do
+    test "somebody with a project gets their projects and running tracks instead", %{
+      conn: conn
+    } do
       user = user()
       project = insert_project(user: user, name: "Busy")
       track = insert_track(project: project, created_by_login: user.login)
@@ -200,8 +278,15 @@ defmodule RavixWeb.FirstRunTest do
       view = home(conn, user)
 
       refute has_element?(view, "#home-start")
-      assert has_element?(view, "#home-title", "Home")
-      assert has_element?(view, ".home-recent a[href='/p/#{project.id}/t/#{track.id}']", "Busy")
+      refute has_element?(view, "#home-title")
+      assert has_element?(view, "#home.home-dashboard #home-projects-h", "All projects")
+      assert has_element?(view, "#project-link-#{project.id}[href='/p/#{project.id}']", "Busy")
+      # Its machine is still starting, so the track is Running now.
+      assert has_element?(
+               view,
+               "#home-active-#{track.id}[href='/p/#{project.id}/t/#{track.id}']",
+               "Busy"
+             )
     end
   end
 
@@ -216,7 +301,11 @@ defmodule RavixWeb.FirstRunTest do
 
       view = home(conn, user)
       assert has_element?(view, "#home-start")
-      assert has_element?(view, "#home-quick-start-target option[value=scratch][selected]")
+
+      assert has_element?(
+               view,
+               "#home-quick-start-target input[type=radio][value=scratch][checked]"
+             )
     end
 
     test "is never forced on somebody who already has a project", %{conn: conn} do
@@ -266,7 +355,7 @@ defmodule RavixWeb.FirstRunTest do
       assert track_id == track.id
     end
 
-    test "with tracks lists the recent ones instead", %{conn: conn} do
+    test "with tracks shows them instead", %{conn: conn} do
       user = user()
       project = insert_project(user: user)
       track = insert_track(project: project, title: "Search the projects page")
@@ -275,9 +364,11 @@ defmodule RavixWeb.FirstRunTest do
 
       refute has_element?(view, "#project-quick-start")
 
+      refute has_element?(view, "#project-start")
+
       assert has_element?(
                view,
-               "#project-start a[href='/p/#{project.id}/t/#{track.id}']",
+               "#project-tracks a[href='/p/#{project.id}/t/#{track.id}']",
                "Search the projects page"
              )
     end

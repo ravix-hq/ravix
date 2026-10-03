@@ -58,7 +58,7 @@ defmodule RavixWeb.WorkspaceRailTest do
     for {project, track, _} <- rows do
       render_patch(view, "/p/#{project.id}")
       render_async(view)
-      assert has_element?(view, ".track-tab", track.title)
+      assert has_element?(view, "#tracks-graph-row-#{track.id} .tracks-title", track.title)
     end
 
     assert length(FakeTransport.calls(client)) == 3
@@ -88,14 +88,33 @@ defmodule RavixWeb.WorkspaceRailTest do
     monitor = Process.monitor(provider)
     on_exit(fn -> send(provider, :release) end)
     render_async(view, 7_000)
-    assert has_element?(view, "a[href='/p/#{slow.id}']")
+    assert has_element?(view, "#project-link-#{slow.id}[href='/p/#{slow.id}']")
+    assert has_element?(view, "#home-project-#{slow.id} [role=status]", "Couldn't load tracks")
+
+    assert has_element?(
+             view,
+             "#home-project-#{slow.id} button[phx-click=retry-tracks][phx-value-id='#{slow.id}']",
+             "Retry"
+           )
+
+    refute has_element?(view, "#home-project-#{slow.id} .lane-strip")
+    refute has_element?(view, "#home-project-#{fast.id}", "Couldn't load tracks")
+    assert has_element?(view, "#home-project-#{fast.id} .lane-strip .lane-pill")
+    assert has_element?(view, "#home-project-#{fast.id}", "1 open track")
+    refute render(view) =~ slow_track.title
+
     render_patch(view, "/p/#{slow.id}")
     render_async(view)
-    refute has_element?(view, ".track-tab", slow_track.title)
-    assert has_element?(view, "#project-tracks-#{slow.id}", "Couldn't load tracks")
+    refute has_element?(view, "#tracks-graph-row-#{slow_track.id}")
+    refute render(view) =~ slow_track.title
     render_patch(view, "/p/#{fast.id}")
     render_async(view)
-    assert has_element?(view, ".track-tab", fast_track.title)
+
+    assert has_element?(
+             view,
+             "#tracks-graph-row-#{fast_track.id} .tracks-title",
+             fast_track.title
+           )
 
     # The memo owns its provider task and may have other waiters. Finish it
     # explicitly even though this rail's supervised waiter has timed out.
@@ -122,14 +141,18 @@ defmodule RavixWeb.WorkspaceRailTest do
     # loaded suite that settles past render_async's 100 ms default.
     render_async(view, 2_000)
 
-    for project <- projects do
-      assert has_element?(view, "a[href='/p/#{project.id}']")
-      render_patch(view, "/p/#{project.id}")
-      render_async(view)
-      assert has_element?(view, "#project-tracks-#{good.id} .track-tab", track.title)
-      refute has_element?(view, "#project-tracks-#{crashed.id} .track-tab")
-      assert has_element?(view, "#project-tracks-#{crashed.id}", "Couldn't load tracks")
-    end
+    for project <- projects,
+        do: assert(has_element?(view, "#project-link-#{project.id}[href='/p/#{project.id}']"))
+
+    assert has_element?(view, "#home-project-#{crashed.id}", "Couldn't load tracks")
+    refute has_element?(view, "#home-project-#{crashed.id} .lane-strip")
+    refute has_element?(view, "#home-project-#{good.id}", "Couldn't load tracks")
+    assert has_element?(view, "#home-project-#{good.id} .lane-strip .lane-pill")
+    assert has_element?(view, "#home-project-#{good.id}", "1 open track")
+
+    render_patch(view, "/p/#{good.id}")
+    render_async(view)
+    assert has_element?(view, "#tracks-graph-row-#{track.id} .tracks-title", track.title)
   end
 
   test "at most eight project reads run at once", %{conn: conn} do
@@ -170,7 +193,7 @@ defmodule RavixWeb.WorkspaceRailTest do
     render_async(view)
 
     for project <- projects,
-        do: assert(has_element?(view, "a[href='/p/#{project.id}']"))
+        do: assert(has_element?(view, "#project-link-#{project.id}[href='/p/#{project.id}']"))
 
     refute has_element?(view, "#rail-loading")
   end

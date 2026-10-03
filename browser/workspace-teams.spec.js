@@ -2,7 +2,7 @@ import { test, expect } from '@playwright/test';
 import { signIn } from './sign-in.js';
 import { createWorkspace, breadcrumb } from './settings.js';
 
-// ADR 0009 phase 4a: create a team workspace from the sidebar switcher,
+// ADR 0009 phase 4a: create a team workspace from the top bar's switcher,
 // invite somebody who has not signed in yet by GitHub login, switch between
 // workspaces, and the invitation accepted at the invitee's first sign-in.
 // Runs under `bun run test:browser:workspace-access`, which starts the

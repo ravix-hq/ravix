@@ -1,6 +1,7 @@
 import { test, expect } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
 import { signIn, connectClaude } from './sign-in.js';
+import { openAddRepository } from './new-track.js';
 
 // RAV-98: every icon-only control on a track's page is named and has the
 // app's one tooltip, which a pointer and the keyboard both show, with the
@@ -39,11 +40,10 @@ test('icon-only controls are named and tipped, and only the keyboard draws a rin
   await page.setViewportSize({ width: 1280, height: 800 });
   await signIn(page, 'tooltipfocus', '/home');
   await connectClaude(page);
-  await page.getByRole('button', { name: 'Add a repository', exact: true }).first().click();
+  await openAddRepository(page);
   await page.getByLabel('Project name', { exact: true }).fill(`Tooltips ${Date.now().toString(36)}`);
   await page.getByRole('button', { name: 'Create scratch project', exact: true }).click();
-  const projectRow = page.locator('#yard .workspace-project.current');
-  await projectRow.locator('.project-add').click();
+  await page.locator('#top-new-track').click();
   await page.getByRole('button', { name: 'Create track', exact: true }).click();
   await expect(page.locator('#track-machine-state')).toHaveText('Idle', { timeout: 30_000 });
 
@@ -63,19 +63,24 @@ test('icon-only controls are named and tipped, and only the keyboard draws a rin
   await page.screenshot({ path: test.info().outputPath('tooltip-hover.png') });
 
   // Moving to the next control shows its tip at once; leaving hides it.
-  await projectRow.hover();
-  await projectRow.locator('.project-add').hover();
-  await expect(tooltip).toHaveText('New track');
+  await page.locator('#top-new-track').hover();
+  await expect(tooltip).toContainText('New track');
+  await expect(tooltip.locator('kbd')).toHaveText(/^(⌘N|Ctrl\+N)$/);
   await page.mouse.move(640, 700);
   await expect(tooltip).toBeHidden();
 
-  // A click focuses without a ring and hides the tip.
-  const toggle = page.locator('#inspector-toggle');
-  await toggle.click();
-  await expect(toggle).toBeFocused();
-  expect((await ring(toggle)).style).toBe('none');
+  // A click focuses without a ring and hides the tip. (The inspector's
+  // show/hide toggle is gone: the track's tabs choose what the page shows.)
+  const files = page.locator('#track-tab-files');
+  await files.click();
+  await expect(files).toBeFocused();
+  expect((await ring(files)).style).toBe('none');
   await expect(tooltip).toBeHidden();
-  await toggle.click();
+  await page.locator('#track-tab-threads').click();
+  await expect(page.locator('#transcript-scroll')).toBeVisible();
+  // The pointer leaves for the empty transcript, so no hover tip is up.
+  await page.mouse.move(640, 700);
+  await expect(tooltip).toBeHidden();
 
   // The keyboard: a two-pixel ring, and the tip without waiting.
   await page.locator('#track-more-trigger').focus();
@@ -125,16 +130,23 @@ test('icon-only controls are named and tipped, and only the keyboard draws a rin
     expect(color).not.toMatch(/rgba\(0, 0, 0, 0\)|transparent/);
   }
 
-  // New track is the first tab stop, though the rail's top row is drawn above it.
+  // The top bar's tab stops run in the order it is drawn, left to right:
+  // search, then the places to go, New track and the account menu.
   await page.goto('/home');
   await expect(page.locator('[data-phx-main]')).toHaveClass(/phx-connected/);
-  await page.keyboard.press('Tab');
-  await expect(page.locator('#top-new-track')).toBeFocused();
-  const [first, top] = await Promise.all([
-    page.locator('#top-new-track').boundingBox(),
-    page.locator('#quick-jump-trigger').boundingBox(),
-  ]);
-  expect(top.y).toBeLessThan(first.y);
+  await page.locator('#quick-jump-trigger').focus();
+  const stops = [];
+  for (let i = 0; i < 8; i++) {
+    await page.keyboard.press('Tab');
+    const id = await page.evaluate(() => document.activeElement?.id || document.activeElement?.textContent.trim());
+    stops.push(id);
+    if (id === 'account-trigger') break;
+  }
+  expect(stops.slice(-5)).toEqual(['Projects', 'Inbox', 'Schedules', 'top-new-track', 'account-trigger']);
+  const xs = await Promise.all(['#quick-jump-trigger', '#topbar .topbar-nav .topbar-item >> nth=0', '#top-new-track', '#account-trigger']
+    .map(async id => (await page.locator(id).boundingBox()).x));
+  expect([...xs].sort((a, b) => a - b)).toEqual(xs);
+  await expect(page.locator('#top-new-track')).toHaveAttribute('aria-keyshortcuts', 'Control+N Meta+N');
 
   // The other pages' icon-only controls, and the open account menu's.
   for (const path of ['/home', '/inbox', '/schedules']) {

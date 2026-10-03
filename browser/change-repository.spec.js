@@ -2,6 +2,7 @@ import { test, expect } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
 import { signIn, connectClaude } from './sign-in.js';
 import { openProjectSettings } from './settings.js';
+import { openAddRepository } from './new-track.js';
 
 const mock = `http://localhost:${process.env.MOCK_PORT || 8893}`;
 
@@ -14,7 +15,7 @@ test('Danger zone changes the repository through a dialog with a typed confirmat
   test.setTimeout(120_000);
   await signIn(page, 'dana', '/home');
   await connectClaude(page);
-  await page.getByRole('button', { name: 'Add a repository', exact: true }).first().click();
+  await openAddRepository(page);
   const create = page.getByRole('dialog', { name: 'Add a repository' });
   await create.getByLabel('Project name', { exact: true }).fill('Repository move');
   await expect(page.locator('#project-repositories input[type=radio]')).not.toHaveCount(0);
@@ -23,11 +24,15 @@ test('Danger zone changes the repository through a dialog with a typed confirmat
   await expect(create).not.toBeVisible();
 
   // A track for the change to close.
-  await page.locator('#yard .workspace-project.current .project-add').click();
+  await page.locator('#top-new-track').click();
   await page.getByRole('dialog', { name: 'New track', exact: true })
     .getByRole('button', { name: 'Create track', exact: true }).click();
   await expect(page.getByRole('textbox', { name: 'Message', exact: true })).toBeEnabled({ timeout: 30_000 });
-  await expect(page.locator('#yard .workspace-project.current')).not.toContainText('No open tracks');
+  // The project's page counts it.
+  const projectPath = new URL(page.url()).pathname.split('/t/')[0];
+  await page.locator('#topbar .topbar-crumbs a[href^="/p/"]').click();
+  await expect(page).toHaveURL(url => url.pathname === projectPath);
+  await expect(page.locator('#crumb-tracks .count')).toHaveText('1');
 
   // A setting and a secret that must survive the change, on the mock's records.
   const before = (await (await request.get(`${mock}/api/environments`)).json()).data
@@ -82,10 +87,14 @@ test('Danger zone changes the repository through a dialog with a typed confirmat
   await expect(page.getByText('Repository move now uses mockuser/cabinet. Its tracks were closed and the machine is being rebuilt.', { exact: true })).toBeVisible({ timeout: 30_000 });
   await expect(dialog).toHaveCount(0);
   await expect(settings.locator('#change-repository-current')).toContainText('mockuser/cabinet');
-  await expect(page.locator('#yard .workspace-project.current')).toContainText('No open tracks');
 
   await settings.locator('#settings-nav-general').click();
   await expect(settings.locator('#general-repository')).toContainText('mockuser/cabinet');
+
+  // The project's page has no open track left.
+  await page.goto(projectPath);
+  await expect(page.locator('[data-phx-main]')).toHaveClass(/phx-connected/);
+  await expect(page.locator('#crumb-tracks .count')).toHaveText('0');
 
   // The machine clones the new repository and keeps its setup script and secret.
   const env = (await (await request.get(`${mock}/api/environments/${before.id}`)).json()).data;

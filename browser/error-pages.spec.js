@@ -24,7 +24,8 @@ test('signed in, an unknown page is a 404 inside the app shell with a way on', a
   expect(response.status()).toBe(404);
   await expect(page.locator('[data-phx-main]')).toHaveClass(/phx-connected/);
   await expect(page).toHaveTitle('Page not found · Ravix');
-  await expect(page.locator('#yard')).toBeVisible();
+  await expect(page.locator('#topbar')).toBeVisible();
+  await expect(page.locator('#topbar .topbar-nav')).toBeVisible();
   await expect(page.locator('#not-found').getByRole('heading', { level: 1 })).toHaveText('Page not found');
   const result = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa']).analyze();
   expect(result.violations).toEqual([]);

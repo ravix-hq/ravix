@@ -675,8 +675,12 @@ defmodule RavixWeb.OnboardingLiveTest do
       {:ok, view, _} = live(log_in_user(conn, user), "/welcome/project")
       render_async(view)
 
-      assert has_element?(view, "#first-prompt-target option[value='repo:acme/app'][selected]")
-      assert has_element?(view, "#first-prompt-target option[value=scratch]")
+      assert has_element?(
+               view,
+               "#first-prompt-target input[type=radio][value='repo:acme/app'][checked]"
+             )
+
+      assert has_element?(view, "#first-prompt-target input[type=radio][value=scratch]")
 
       assert has_element?(
                view,
@@ -723,7 +727,7 @@ defmodule RavixWeb.OnboardingLiveTest do
       reject(&Projects.create/2)
       {:ok, view, _} = live(log_in_user(conn, connected()), "/welcome/project")
       render_async(view)
-      refute has_element?(view, "#first-prompt-target option[selected]")
+      refute has_element?(view, "#first-prompt-target input[type=radio][checked]")
 
       view |> form("#first-prompt-form", quick_start: [prompt: "Tidy up"]) |> render_submit()
       assert render(view) =~ "Choose a repository, or No repository."
@@ -778,7 +782,7 @@ defmodule RavixWeb.OnboardingLiveTest do
 
       view |> element("#github-continue") |> render_click()
       assert_patch(view, "/welcome/project")
-      assert has_element?(view, "#first-prompt-target option[value=scratch][selected]")
+      assert has_element?(view, "#first-prompt-target input[type=radio][value=scratch][checked]")
 
       view |> element(".quick-start-suggestion", "Explain how this codebase") |> render_click()
 

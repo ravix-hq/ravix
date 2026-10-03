@@ -2,6 +2,7 @@ import { test, expect } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
 import { signIn, connectClaude } from './sign-in.js';
 import { connectApiKey } from './settings.js';
+import { openAddRepository } from './new-track.js';
 
 // RAV-52 on Fountain ADR 0062: the model menu offers what the runtime
 // advertised (`session_config_options`), every prompt carries the thread's
@@ -11,13 +12,13 @@ import { connectApiKey } from './settings.js';
 // menu says "Extra high" (RAV-95).
 
 async function newTrack(page, name, agent) {
-  await page.getByRole('button', { name: 'Add a repository', exact: true }).first().click();
+  await openAddRepository(page);
   const project = page.getByRole('dialog', { name: 'Add a repository', exact: true });
   await project.getByLabel('Project name', { exact: true }).fill(name);
   if (agent) await project.locator(`#project-agent-${agent}`).click();
   await project.getByRole('button', { name: 'Create scratch project', exact: true }).click();
   await expect(project).toHaveCount(0);
-  await page.locator('#yard .workspace-project.current .project-add').click();
+  await page.locator('#top-new-track').click();
   await page.getByRole('button', { name: 'Create track', exact: true }).click();
   await expect(page.getByRole('dialog', { name: 'New track', exact: true })).toHaveCount(0);
   await expect(page.locator('#track-setup-status')).toHaveCount(0, { timeout: 45_000 });

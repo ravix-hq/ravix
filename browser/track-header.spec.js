@@ -3,29 +3,26 @@ import { readFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { signIn, connectClaude } from './sign-in.js';
 import { expectHeaderUnobstructed } from './header-layout.js';
+import { openAddRepository } from './new-track.js';
 
 // RAV-63: at a laptop width the plan chip, which lands after the track does,
 // used to take all of its room from the project name ("r…") and clip the
-// badges, and opening a track made the rail's project row an icon wider.
+// badges. The project is the top bar's crumb now, the title the head's h1
+// and the chip on the status line under it: none may move when it lands.
 test('the track header keeps the project and title readable and still as late parts land', async ({ page }) => {
   await page.setViewportSize({ width: 1024, height: 800 });
   await signIn(page, 'eli', '/home');
   await connectClaude(page);
-  await page.getByRole('button', { name: 'Add a repository', exact: true }).first().click();
+  await openAddRepository(page);
   await page.getByLabel('Project name', { exact: true }).fill('ravix-hdr');
   await page.getByRole('button', { name: 'Create scratch project', exact: true }).click();
-  const projectRow = page.locator('#yard .workspace-project.current');
-  await expect(projectRow).toContainText('ravix-hdr');
-  const project = await projectRow.getAttribute('data-project-id');
-  const railName = page.locator(`#project-link-${project} .project-label`);
-  const railBefore = await railName.evaluate(el => el.getBoundingClientRect().width);
-  await projectRow.locator('.project-add').click();
+  // The project's own page names it in full, in the top bar's breadcrumb.
+  const projectName = page.locator('#topbar .topbar-crumbs .project-label');
+  await expect(projectName).toHaveText('ravix-hdr');
+  expect(await projectName.evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true);
+  await page.locator('#top-new-track').click();
   await page.getByRole('button', { name: 'Create track', exact: true }).click();
   await expect(page.getByRole('textbox', { name: 'Message', exact: true })).toBeEnabled();
-
-  // Selecting a track leaves the rail's project row as wide as it was.
-  expect(await railName.evaluate(el => el.getBoundingClientRect().width)).toBe(railBefore);
-  expect(await railName.evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true);
 
   const track = new URL(page.url()).pathname.split('/t/')[1];
   const { database } = JSON.parse(readFileSync(`tmp/browser-${process.env.BROWSER_PORT || 4103}.json`, 'utf8'));
@@ -36,7 +33,7 @@ test('the track header keeps the project and title readable and still as late pa
   sql(`UPDATE ravix.tracks SET title = '${title}', sandbox_layout = 'dedicated',
          branch = 'ravix/rav-63-track-header-reflow-with-a-very-long-branch-name' WHERE id = '${track}';`);
   await page.reload();
-  const header = page.locator('header.track-crumbs');
+  const header = page.locator('header#track-header');
   await expect(header).toContainText(title);
   await expect(page.locator('#track-machine-scope')).toHaveText('Own machine');
 
@@ -45,25 +42,19 @@ test('the track header keeps the project and title readable and still as late pa
       const r = document.querySelector(sel).getBoundingClientRect();
       return { x: Math.round(r.x), y: Math.round(r.y), width: Math.round(r.width), height: Math.round(r.height) };
     };
-    const header = document.querySelector('header.track-crumbs');
-    const title = document.querySelector('.track-title-crumb');
-    // What the first sixteen characters of the title take in its own font.
-    const probe = title.cloneNode(false);
-    probe.textContent = title.textContent.trim().slice(0, 16);
-    probe.style.cssText = 'position:absolute;visibility:hidden;min-width:0;width:auto;padding:0;border:0';
-    header.append(probe);
-    const sixteen = probe.getBoundingClientRect().width;
-    probe.remove();
-    const titleStyle = getComputedStyle(title);
-    const titleText = title.clientWidth - parseFloat(titleStyle.paddingLeft) - parseFloat(titleStyle.paddingRight);
-    const label = document.querySelector('.project-crumb .project-label');
+    const header = document.querySelector('header#track-header');
+    // The project is the top bar's crumb now; the title is the head's h1,
+    // which wraps rather than cutting its words.
+    const crumb = 'header#topbar .topbar-crumbs a[href^="/p/"]';
+    const label = document.querySelector(`${crumb} .project-label`);
+    const title = document.querySelector('#track-header .track-title-text');
     const close = document.querySelector('#track-more-trigger').getBoundingClientRect();
     return {
-      header: box('header.track-crumbs'),
-      project: box('.project-crumb'),
-      title: box('.track-title-crumb'),
+      header: box('header#track-header'),
+      project: box(crumb),
+      title: box('#track-header .track-title-text'),
       projectWhole: label.scrollWidth <= label.clientWidth,
-      titleShown: titleText + 1 >= sixteen,
+      titleShown: title.scrollWidth <= title.clientWidth + 1 && title.textContent.trim().length > 0,
       overflow: header.scrollWidth > header.clientWidth || close.right > header.getBoundingClientRect().right,
       page: document.documentElement.scrollWidth > innerWidth,
       // A status chip's words are drawn whole or not at all, never "Own m".
@@ -101,11 +92,10 @@ test('the track header keeps the project and title readable and still as late pa
   expect(after.page).toBe(false);
   expect(after.fragments).toEqual([]);
   await expectHeaderUnobstructed(page);
-  // At this width the chips are down to their icons, and the plan chip
-  // to its icon and count.
-  await expect(header).toHaveAttribute('data-compact', '');
+  // The chip is named in full, and its count is drawn (HeaderFit's compact
+  // state is gone: the status line has the room).
   await expect(header.getByRole('button', { name: 'Plan: Small fixes: task state, machine stats, 404 and navigation · 3 items', exact: true })).toBeVisible();
-  // The chip gave way down to its icon and count; the count is still drawn.
+  // The count is drawn whole.
   expect(await chip.locator('.track-plan-count').evaluate(el => el.getBoundingClientRect().width)).toBeGreaterThan(0);
   expect(await chip.locator('.track-plan-count').evaluate(el => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
 });

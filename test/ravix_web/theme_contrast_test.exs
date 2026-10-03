@@ -4,7 +4,7 @@ defmodule RavixWeb.ThemeContrastTest do
 
   The first is legibility: every palette must put its text tokens on its
   grounds at WCAG AA (4.5:1) for body copy. The browser suite runs Axe
-  against two themes; this covers the other twenty, and the pairs it checks
+  against two themes; this covers the rest, and the pairs it checks
   are the ones the shell actually draws as sentences — `--dimmer` is the
   colour of hints, placeholders and the yard's captions, not a decoration.
 
@@ -37,7 +37,10 @@ defmodule RavixWeb.ThemeContrastTest do
   describe "every palette" do
     test "puts its text tokens on its grounds at WCAG AA", %{css: css} do
       palettes = palettes(css)
-      assert length(palettes) == 22, "expected the twenty-two palettes"
+      # The default (one block with Light), Dark, System and its dark half
+      # under `prefers-color-scheme: dark`, Graphite, and the twenty-one
+      # others.
+      assert length(palettes) == 26, "expected the twenty-six palettes"
 
       failures =
         for {theme, tokens} <- palettes,

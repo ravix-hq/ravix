@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { signIn, connectClaude } from './sign-in.js';
+import { openAddRepository } from './new-track.js';
 
 // RAV-101: the inspector's Checks, Preview and toolbar, and the dock's
 // Machine stats and "+". `SCREENSHOT_DIR` saves the review shots.
@@ -13,17 +14,20 @@ test('inspector and dock polish', async ({ page }) => {
   test.setTimeout(150_000);
   await signIn(page, 'inspectorpolish', '/home');
   await connectClaude(page);
-  await page.getByRole('button', { name: 'Add a repository', exact: true }).first().click();
+  await openAddRepository(page);
   const dialog = page.getByRole('dialog', { name: 'Add a repository' });
   await dialog.getByLabel('Project name', { exact: true }).fill('Atlas API');
   await expect(dialog.locator('#project-repositories input[type=radio]')).not.toHaveCount(0);
   await dialog.getByRole('radio', { name: 'mockuser/atlas-api', exact: true }).check();
   await dialog.getByRole('button', { name: 'Add repository' }).click();
   await expect(dialog).not.toBeVisible();
-  await page.locator('#yard .workspace-project.current .project-add').click();
+  await page.locator('#top-new-track').click();
   await page.getByRole('button', { name: 'Create track', exact: true }).click();
   await expect(page).toHaveURL(url => url.pathname.includes('/t/') && !url.search);
   await expect(page.getByRole('textbox', { name: 'Message', exact: true })).toBeEnabled({ timeout: 45_000 });
+  // The inspector is the track tabs' page; its own strip keeps its tools.
+  const views = page.getByRole('navigation', { name: 'Track views' });
+  await views.getByRole('button', { name: 'Files', exact: true }).click();
   const tabs = page.getByRole('navigation', { name: 'Inspector panels' });
   const heights = locator => locator.evaluateAll(els => els.map(el => Math.round(el.getBoundingClientRect().height)));
   const top = async locator => Math.round((await locator.boundingBox()).y);
@@ -32,7 +36,7 @@ test('inspector and dock polish', async ({ page }) => {
   await expect(tabs.locator('.panel-refresh')).toHaveAttribute('data-tip', 'Refresh files');
 
   // Checks: no green 0, even rows, and "no checks" right under them.
-  await tabs.getByRole('button', { name: 'Checks', exact: true }).click();
+  await views.getByRole('button', { name: 'Checks', exact: true }).click();
   await expect(page.locator('#git-uncommitted')).toBeVisible({ timeout: 15_000 });
   await expect(page.locator('#checks-empty')).toBeVisible();
   expect(new Set(await heights(page.locator('#git-status .git-row'))).size).toBe(1);
@@ -43,7 +47,7 @@ test('inspector and dock polish', async ({ page }) => {
   await shoot(page.locator('#inspector'), 'checks');
 
   // Preview, idle: one empty state, one primary action, a small link.
-  await tabs.getByRole('button', { name: 'Preview', exact: true }).click();
+  await views.getByRole('button', { name: 'Preview', exact: true }).click();
   const empty = page.locator('#preview-empty');
   await expect(empty).toContainText('No preview running');
   await expect(page.locator('#inspector .workspace-panel button.primary:visible')).toHaveCount(1);
@@ -56,7 +60,9 @@ test('inspector and dock polish', async ({ page }) => {
   await expect(page.locator('#preview-config summary .disclosure-chevron')).toBeVisible();
   await shoot(page.locator('#inspector'), 'preview-run-script');
 
-  // Machine stats: 6px bars, even rows, when they were read.
+  // Machine stats, in the dock (the Terminal tab's page): 6px bars, even
+  // rows, when they were read.
+  await views.getByRole('button', { name: 'Terminal', exact: true }).click();
   await page.getByRole('button', { name: 'Machine stats', exact: true }).click();
   await expect(page.locator('.machine-stats')).toBeVisible({ timeout: 15_000 });
   expect(new Set(await heights(page.locator('.machine-stats > div'))).size).toBe(1);
@@ -68,7 +74,8 @@ test('inspector and dock polish', async ({ page }) => {
   // The dock does not reflow as its tabs change, a terminal opens or closes.
   const dock = page.locator('.machine-dock-host');
   const at = await top(dock);
-  const panelHeight = Math.round((await page.locator('#inspector > .workspace-panel, #inspector .workspace-panel').first().boundingBox()).height);
+  const dockHeight = async () => Math.round((await dock.boundingBox()).height);
+  const panelHeight = await dockHeight();
   await page.getByRole('button', { name: 'Commands', exact: true }).click();
   expect(await top(dock)).toBe(at);
 
@@ -84,9 +91,9 @@ test('inspector and dock polish', async ({ page }) => {
   const tab = page.locator('[data-shell-tab]');
   await expect(tab).toHaveCount(1);
   expect(await top(dock)).toBe(at);
-  expect(Math.round((await page.locator('#inspector > .workspace-panel, #inspector .workspace-panel').first().boundingBox()).height)).toBe(panelHeight);
+  expect(await dockHeight()).toBe(panelHeight);
   const close = tab.locator('.dock-shell-close');
-  await page.locator('#inspector > .workspace-panel, #inspector .workspace-panel').first().hover();
+  await page.locator('#track-header').hover();
   await expect(close).toHaveCSS('opacity', '0');
   await tab.hover();
   await expect(close).toHaveCSS('opacity', '1');

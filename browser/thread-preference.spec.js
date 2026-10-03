@@ -2,6 +2,7 @@ import { test, expect } from '@playwright/test';
 import { signIn, connectClaude } from './sign-in.js';
 import { openAgentSettings } from './settings.js';
 import { draftChoice, newThread } from './draft-runtime.js';
+import { openAddRepository } from './new-track.js';
 
 // The chip is "<agent> · <model>", then the runtime's effort and Fast once a
 // turn has reported them (RAV-52); this spec is about the model part. A turn
@@ -12,12 +13,12 @@ const chipModel = page => expect.poll(async () => modelOf(await page.locator('#m
 test('an account default selects the model for a new thread and leaves the existing thread unchanged', async ({ page }) => {
   await signIn(page, 'threadruntime', '/home');
   await connectClaude(page);
-  await page.getByRole('button', { name: 'Add a repository', exact: true }).first().click();
+  await openAddRepository(page);
   const project = page.getByRole('dialog', { name: 'Add a repository', exact: true });
   await project.getByLabel('Project name', { exact: true }).fill('Personal thread default');
   await project.getByRole('button', { name: 'Create scratch project', exact: true }).click();
   await expect(project).toHaveCount(0);
-  await page.locator('#yard .workspace-project.current .project-add').click();
+  await page.locator('#top-new-track').click();
   await page.getByRole('button', { name: 'Create track', exact: true }).click();
   await expect(page.getByRole('dialog', { name: 'New track', exact: true })).toHaveCount(0);
   await expect(page.locator('#track-setup-status')).toHaveCount(0, { timeout: 45_000 });

@@ -2,18 +2,19 @@ import { test, expect } from '@playwright/test';
 import { readFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { signIn, connectClaude } from './sign-in.js';
+import { openAddRepository } from './new-track.js';
 
 test('machine status follows the selected dedicated track, never its shared project', async ({ page, request }) => {
   test.setTimeout(120_000);
   await signIn(page, 'eli', '/home');
   await connectClaude(page);
-  await page.getByRole('button', { name: 'Add a repository', exact: true }).first().click();
+  await openAddRepository(page);
   await page.getByLabel('Project name', { exact: true }).fill('Track machine isolation');
   await page.getByRole('button', { name: 'Create scratch project', exact: true }).click();
   const paths = [];
   for (let i = 0; i < 2; i++) {
     const previousPath = new URL(page.url()).pathname;
-    await page.locator('#yard .workspace-project.current .project-add').click();
+    await page.locator('#top-new-track').click();
     await page.getByRole('button', { name: 'Create track', exact: true }).click();
     await expect.poll(() => new URL(page.url()).pathname).not.toBe(previousPath);
     await expect(page.getByRole('textbox', { name: 'Message', exact: true })).toBeEnabled();

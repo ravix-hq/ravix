@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { test, expect } from '@playwright/test';
 import { signIn, connectClaude } from './sign-in.js';
+import { openAddRepository } from './new-track.js';
 
 // RAV-86, with RAVIX_WORKSPACE_ACCESS on (`bun run
 // test:browser:workspace-access`): on a shared track the agent is delivered
@@ -36,7 +37,7 @@ test('a shared track shows who sent a prompt and what they typed, not the attrib
 
   await signIn(page, 'attributor', '/home');
   await connectClaude(page);
-  await page.getByRole('button', { name: 'Add a repository', exact: true }).first().click();
+  await openAddRepository(page);
   const project = page.getByRole('dialog', { name: 'Add a repository', exact: true });
   await project.getByLabel('Project name', { exact: true }).fill('Attributed prompts');
   await project.getByRole('button', { name: 'Create scratch project', exact: true }).click();
@@ -48,7 +49,7 @@ test('a shared track shows who sent a prompt and what they typed, not the attrib
          SELECT '${projectId}', id, 'write', 'attributor', NOW() FROM ravix.users
          WHERE login = 'attributecolleague'`);
 
-  await page.locator('#yard .workspace-project.current .project-add').click();
+  await page.locator('#top-new-track').click();
   const dialog = page.getByRole('dialog', { name: 'New track', exact: true });
   await dialog.getByLabel('What do you want to work on?', { exact: true })
     .fill('Add a **health check** endpoint');

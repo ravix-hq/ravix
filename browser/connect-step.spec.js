@@ -1,6 +1,7 @@
 import { test, expect } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
 import { signIn } from './sign-in.js';
+import { openAddRepository } from './new-track.js';
 
 // RAV-133/134/135: the agent-connection step inside Add a repository is a
 // card of its own, refuses an empty paste in words rather than with the
@@ -19,7 +20,7 @@ async function accessible(page) {
 
 test('the connect step is a card whose button holds still while the token is checked', async ({ page, request }) => {
   await signIn(page, 'connectstep', '/home');
-  await page.getByRole('button', { name: 'Add a repository', exact: true }).first().click();
+  await openAddRepository(page);
   const dialog = page.getByRole('dialog', { name: 'Add a repository', exact: true });
   await dialog.locator('#project-agent-claude').click();
   await expect(dialog.locator('#project-agent-claude')).toContainText('Not connected');

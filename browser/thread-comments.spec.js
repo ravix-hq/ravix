@@ -1,6 +1,7 @@
 import { test, expect } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
 import { signIn, connectClaude } from './sign-in.js';
+import { openAddRepository } from './new-track.js';
 
 // A comment is for people and never for the agent: the composer says which it
 // is sending, the comment lands inline after the turn it followed, and only
@@ -9,12 +10,12 @@ test('comments post inline, edit and delete at desktop and narrow widths', async
   test.setTimeout(120_000);
   await signIn(page, 'commenter', '/home');
   await connectClaude(page);
-  await page.getByRole('button', { name: 'Add a repository', exact: true }).first().click();
+  await openAddRepository(page);
   await page.getByLabel('Project name', { exact: true }).fill('Comments');
   await expect(page.locator('#project-repositories input[type=radio]')).not.toHaveCount(0);
   await page.getByRole('radio', { name: 'mockuser/atlas-api', exact: true }).check();
   await page.getByRole('dialog', { name: 'Add a repository' }).getByRole('button', { name: 'Add repository', exact: true }).click();
-  await page.locator('#yard .workspace-project.current .project-add').click();
+  await page.locator('#top-new-track').click();
   await page.getByRole('button', { name: 'Create track', exact: true }).click();
   await expect(page.getByRole('textbox', { name: 'Message', exact: true })).toBeEnabled();
   await expect(page.locator('#transcript-status')).toHaveText('Agent replied');

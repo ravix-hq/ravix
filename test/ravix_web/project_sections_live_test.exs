@@ -6,15 +6,18 @@ defmodule RavixWeb.ProjectSectionsLiveTest do
   alias Ravix.Repo
   alias RavixWeb.Live.Guard
 
-  test "create, move, search collapsed groups, reload, rename and remove sections", %{conn: conn} do
+  test "create, move, filter Home by section, search, reload, rename and remove sections", %{
+    conn: conn
+  } do
     user = insert_user()
     project = insert_project(user: user, name: "Section project")
+    other = insert_project(user: user, name: "Loose project")
     conn = log_in_user(conn, user)
-    {:ok, view, _} = live(conn, "/p/#{project.id}")
+    {:ok, view, _} = live(conn, "/home")
     render_async(view)
-    render_click(view, "dismiss-switcher")
-    assert has_element?(view, "#section-other a[href='/p/#{project.id}']")
-    refute has_element?(view, "#section-other .section-label")
+    assert has_element?(view, "#home-project-#{project.id} a[href='/p/#{project.id}']")
+    # With one group there is nothing to choose between.
+    refute has_element?(view, "#home-section-other")
     view |> element("#manage-sections") |> render_click()
     view |> form("#new-section-form", section: %{name: "Work"}) |> render_submit()
     {:ok, {[section], %{}}} = Sections.list(user, nil)
@@ -27,35 +30,42 @@ defmodule RavixWeb.ProjectSectionsLiveTest do
            )
 
     view |> form("#rename-section-#{section.id}", section: %{name: "Active"}) |> render_submit()
+    # An empty section offers nothing to pick on Home.
+    refute has_element?(view, "#home-section-#{section.id}")
+
+    # Manage sections is where a project moves, with no pointer needed.
+    view |> form("#move-project-#{project.id}", section: section.id) |> render_change()
+    assert {:ok, {[%{name: "Active"}], placements}} = Sections.list(user, nil)
+    assert placements == %{project.id => section.id}
     render_click(view, "dismiss-switcher")
-    assert has_element?(view, ".section-toggle", "Active")
-    [_, after_section] = String.split(render(view), ~s(id="section-#{section.id}"), parts: 2)
-    assert after_section =~ ~s(id="section-other")
-    refute has_element?(view, "#project-sections select")
+    assert has_element?(view, "#home-section-#{section.id}[aria-pressed=false]", "Active")
+    assert has_element?(view, "#home-section-other", "Other projects")
+    # Named sections come before Other projects.
+    [_, after_section] = String.split(render(view), ~s(id="home-section-#{section.id}"), parts: 2)
+    assert after_section =~ ~s(id="home-section-other")
 
-    view
-    |> element("#project-sections")
-    |> render_hook("move-project", %{project: project.id, section: section.id})
+    view |> element("#home-section-#{section.id}") |> render_click()
+    assert has_element?(view, "#home-section-#{section.id}[aria-pressed=true]")
+    assert has_element?(view, "#home-section-all[aria-pressed=false]")
+    assert has_element?(view, "#home-project-#{project.id}")
+    refute has_element?(view, "#home-project-#{other.id}")
+    view |> element("#home-section-other") |> render_click()
+    refute has_element?(view, "#home-project-#{project.id}")
+    assert has_element?(view, "#home-project-#{other.id}")
+    view |> element("#home-section-all") |> render_click()
+    assert has_element?(view, "#home-project-#{project.id}")
+    assert has_element?(view, "#home-project-#{other.id}")
 
-    assert has_element?(view, "#section-#{section.id} a[href='/p/#{project.id}']")
-
-    assert has_element?(
-             view,
-             "#section-#{section.id} [phx-click=toggle-section][aria-expanded=true]"
-           )
-
-    view |> element("#section-#{section.id} .section-toggle") |> render_click()
-    assert {:ok, {[%{collapsed: true}], _}} = Sections.list(user, nil)
-    refute has_element?(view, "#section-#{section.id} .section-toggle[data-collapse]")
     render_click(view, "dialog", %{name: "search"})
     view |> form("#search-form", q: "SECTION") |> render_change()
     assert has_element?(view, "#search-dialog a[href='/p/#{project.id}']")
     view |> form("#search-form", q: "missing") |> render_change()
     assert has_element?(view, "#search-dialog", "No tracks match")
-    {:ok, reloaded, _} = live(conn, "/p/#{project.id}")
+    {:ok, reloaded, _} = live(conn, "/home")
     render_async(reloaded)
-    assert has_element?(reloaded, "#section-projects-#{section.id}[hidden]")
-    assert has_element?(reloaded, "#section-#{section.id} a[href='/p/#{project.id}']")
+    # The placement outlives the page: the section still holds one project.
+    assert has_element?(reloaded, "#home-section-#{section.id} small", "1")
+    assert has_element?(reloaded, "#home-section-other small", "1")
     reloaded |> element("#manage-sections") |> render_click()
     reloaded |> form("#move-project-#{project.id}", section: "") |> render_change()
     assert {:ok, {[_], %{}}} = Sections.list(user, nil)
@@ -64,8 +74,9 @@ defmodule RavixWeb.ProjectSectionsLiveTest do
     assert placements == %{project.id => section.id}
     render_click(reloaded, "delete-section", %{id: section.id})
     render_click(reloaded, "dismiss-switcher")
-    assert has_element?(reloaded, "#section-other a[href='/p/#{project.id}']")
-    refute has_element?(reloaded, "#section-#{section.id}")
+    refute has_element?(reloaded, "#home-section-#{section.id}")
+    assert has_element?(reloaded, "#home-project-#{project.id} a[href='/p/#{project.id}']")
+    assert has_element?(reloaded, "#home-project-#{other.id}")
   end
 
   # RAV-130: creating a section used to leave its name in the field, so the
@@ -74,8 +85,8 @@ defmodule RavixWeb.ProjectSectionsLiveTest do
   test "creating a section empties its field and a taken name is refused under the field",
        %{conn: conn} do
     user = insert_user()
-    project = insert_project(user: user)
-    {:ok, view, _} = live(log_in_user(conn, user), "/p/#{project.id}")
+    _project = insert_project(user: user)
+    {:ok, view, _} = live(log_in_user(conn, user), "/home")
     render_async(view)
     view |> element("#manage-sections") |> render_click()
     # No browser history over either name field.
@@ -88,7 +99,7 @@ defmodule RavixWeb.ProjectSectionsLiveTest do
     {:ok, {[ravioli], %{}}} = Sections.list(user, nil)
     id = ravioli.id
     # The field is empty, the browser is told to empty and refocus it, and the
-    # new section is pointed out in the dialog's list and in the sidebar.
+    # new section is pointed out in the dialog's list.
     refute has_element?(view, "#section-name[value]")
     assert_push_event(view, "section-created", %{id: ^id})
 
@@ -96,8 +107,6 @@ defmodule RavixWeb.ProjectSectionsLiveTest do
              view,
              "#section-editor-#{id}.created #section-name-#{id}[autocomplete=off][value=Ravioli]"
            )
-
-    assert has_element?(view, "#section-#{id}.created .section-toggle", "Ravioli")
 
     # The same name again: a sentence under the field, the name kept there,
     # no toast, and nothing marked new.
@@ -157,74 +166,46 @@ defmodule RavixWeb.ProjectSectionsLiveTest do
     refute has_element?(view, "#section-name[value]")
   end
 
-  test "sections label their projects, say when empty, and every disclosure follows its state",
+  test "Home's section filters name each section with projects, and say which one is chosen",
        %{conn: conn} do
     user = insert_user()
     project = insert_project(user: user, name: "Filed project")
+    loose = insert_project(user: user, name: "Loose project")
     {:ok, work} = Sections.create(user, nil, %{name: "Work"})
     {:ok, empty} = Sections.create(user, nil, %{name: "Later"})
     {:ok, _} = Sections.move(user, nil, project.id, work.id)
-    {:ok, view, _} = live(log_in_user(conn, user), "/p/#{project.id}")
+    {:ok, view, _} = live(log_in_user(conn, user), "/home")
     render_async(view)
 
-    # Manage sections is an icon button whose name and tooltip say what it is for.
-    assert has_element?(
-             view,
-             "#manage-sections[aria-label='Manage sections'][data-tip='Organize projects into sections'] svg"
-           )
+    assert has_element?(view, "#manage-sections[phx-value-name=sections]", "Manage sections")
+    assert has_element?(view, "#home-section-all[aria-pressed=true]", "All projects")
+    assert has_element?(view, "#home-section-#{work.id}[aria-pressed=false]", "Work")
+    assert has_element?(view, "#home-section-#{work.id} small", "1")
+    # With named sections, the rest are labelled Other projects.
+    assert has_element?(view, "#home-section-other", "Other projects")
+    # An empty section is not offered as a filter; it still exists to manage.
+    refute has_element?(view, "#home-section-#{empty.id}")
 
-    refute has_element?(view, "#manage-sections", "Manage sections")
+    view |> element("#home-section-#{work.id}") |> render_click()
+    assert has_element?(view, "#home-section-#{work.id}[aria-pressed=true]")
+    assert has_element?(view, "#home-section-all[aria-pressed=false]")
+    assert has_element?(view, "#home-project-#{project.id}")
+    refute has_element?(view, "#home-project-#{loose.id}")
 
-    # Every labelled group indents its projects; each disclosure's chevron sits
-    # in the button whose aria-expanded turns it.
-    assert has_element?(view, "#section-#{work.id}.labelled")
-    toggle = "#section-#{work.id} > .section-toggle"
-    assert has_element?(view, "#{toggle}[aria-expanded=true] > svg.disclosure-chevron")
-    project_toggle = "#project-row-#{project.id} .project-collapse"
-
-    assert has_element?(
-             view,
-             "#{project_toggle}[data-collapse='#{project.id}'][aria-expanded=true][aria-controls='project-tracks-#{project.id}'] > svg.disclosure-chevron"
-           )
-
-    # The icon draws no direction of its own, so the attribute alone decides it.
-    refute render(element(view, "#{project_toggle} svg")) =~ "rotate"
-
-    view |> element(toggle) |> render_click()
-    assert has_element?(view, "#{toggle}[aria-expanded=false] > svg.disclosure-chevron")
-    assert has_element?(view, "#section-projects-#{work.id}[hidden]")
-    # Collapsing one section hides only its own contents.
-    refute has_element?(view, "#section-projects-#{empty.id}[hidden]")
-    refute has_element?(view, "#section-projects-other[hidden]")
-    view |> element(toggle) |> render_click()
-    assert has_element?(view, "#{toggle}[aria-expanded=true]")
-    refute has_element?(view, "#section-projects-#{work.id}[hidden]")
-
-    # An empty section says so, muted, rather than a chevron over nothing,
-    # and stays a place to drag a project to.
-    assert has_element?(
-             view,
-             "#section-#{empty.id}[data-section-drop='#{empty.id}'] #section-empty-#{empty.id}.dim",
-             "No projects"
-           )
-
-    refute has_element?(view, "#section-#{work.id} .section-empty")
+    view |> element("#manage-sections") |> render_click()
+    assert has_element?(view, "#rename-section-#{empty.id}")
+    assert has_element?(view, "#project-section-#{project.id} option[selected]", "Work")
   end
 
-  test "unsectioned projects alone have no label, no indent and no empty line", %{conn: conn} do
+  test "unsectioned projects alone have no section filters", %{conn: conn} do
     user = insert_user()
     project = insert_project(user: user)
-    {:ok, view, _} = live(log_in_user(conn, user), "/p/#{project.id}")
+    {:ok, view, _} = live(log_in_user(conn, user), "/home")
     render_async(view)
-    assert has_element?(view, "#section-other a[href='/p/#{project.id}']")
-    refute has_element?(view, "#section-other.labelled")
-    refute has_element?(view, "#section-other .section-toggle")
-    refute has_element?(view, ".section-empty")
-
-    assert has_element?(
-             view,
-             "#project-row-#{project.id} .project-collapse > .disclosure-chevron"
-           )
+    assert has_element?(view, "#home-project-#{project.id} a[href='/p/#{project.id}']")
+    assert has_element?(view, "#home-section-all[aria-pressed=true]")
+    refute has_element?(view, "#home-section-other")
+    refute has_element?(view, "#home-projects .hint", "No projects in this section.")
   end
 
   test "forged section and project ids cannot change another person's layout", %{conn: conn} do

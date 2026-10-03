@@ -62,7 +62,7 @@ defmodule RavixWeb.HelpComponents do
       <details>
         <summary>Plan work across tracks</summary>
         <p>
-          Open Plans from a project's row in the sidebar, or search for a plan by title
+          Open Plans from a project's Plans tab, or search for a plan by title
           with ⌘/Ctrl K, to create a plan with a Markdown rationale, ordered items, briefs,
           acceptance notes and dependencies. Select items and choose new or existing tracks,
           then press Assign selected items. Assignment spends the project owner's subscription or API key.

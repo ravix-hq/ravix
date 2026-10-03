@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { signIn, connectClaude } from './sign-in.js';
+import { openAddRepository } from './new-track.js';
 
 // RAV-130: creating a section used to leave its name in the New section
 // field, because the server rendered `value=""` before and after and so
@@ -10,10 +11,10 @@ import { signIn, connectClaude } from './sign-in.js';
 test('creating a section clears its field and a taken name is refused under the field', async ({ page }) => {
   test.setTimeout(120_000);
   await page.setViewportSize({ width: 1280, height: 800 });
-  // Its own person, so the sections made here reach no other spec's rail.
+  // Its own person, so the sections made here reach no other spec's Home.
   await signIn(page, 'sectionkeeper', '/home');
   await connectClaude(page);
-  await page.getByRole('button', { name: 'Add a repository', exact: true }).first().click();
+  await openAddRepository(page);
   const newProject = page.getByRole('dialog', { name: 'Add a repository' });
   await newProject.getByLabel('Project name', { exact: true }).fill('Kept project');
   await expect(newProject.locator('#project-repositories input[type=radio]')).not.toHaveCount(0);
@@ -21,6 +22,9 @@ test('creating a section clears its field and a taken name is refused under the 
   await newProject.getByRole('button', { name: 'Add repository', exact: true }).click();
   await expect(newProject).not.toBeVisible();
 
+  // Sections are managed from Home.
+  await page.locator('.topbar-home').click();
+  await expect(page).toHaveURL(/\/home$/);
   await page.getByRole('button', { name: 'Manage sections', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: 'Project sections', exact: true });
   const field = dialog.getByLabel('New section', { exact: true });
@@ -37,7 +41,6 @@ test('creating a section clears its field and a taken name is refused under the 
   await expect(field).toHaveValue('');
   await expect(field).toBeFocused();
   await expect(dialog.locator('.section-editor.created')).toHaveCount(1);
-  await expect(page.locator('#project-sections .project-section.created .section-toggle')).toHaveText(/Ravioli/);
 
   // Typing the next name straight away works, and marks that row instead.
   await page.keyboard.type('Pasta');
@@ -67,12 +70,11 @@ test('creating a section clears its field and a taken name is refused under the 
   await expect(pasta.getByLabel('Section name', { exact: true })).toHaveValue('Ravioli');
   await expect(dialog.locator('.error')).toHaveCount(2);
   await expect(page.locator('#flash-error')).toHaveCount(0);
-  await expect(page.locator('#project-sections .section-toggle', { hasText: 'Pasta' })).toHaveCount(1);
 
   // A name that goes through clears the refusal.
   await pasta.getByLabel('Section name', { exact: true }).fill('Lasagne');
   await pasta.getByRole('button', { name: 'Rename', exact: true }).click();
-  await expect(page.locator('#project-sections .section-toggle', { hasText: 'Lasagne' })).toHaveCount(1);
+  await expect(dialog.locator('.section-editor input[value="Lasagne"]')).toHaveCount(1);
   await expect(pasta.locator('.error')).toHaveCount(0);
   await expect(dialog.locator('.error')).toHaveCount(1);
 });

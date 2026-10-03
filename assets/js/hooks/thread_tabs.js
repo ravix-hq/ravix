@@ -47,8 +47,12 @@ export const ThreadTabs = {
         this.close(event.target)
         return
       }
-      const next = new Map([['ArrowRight', (index + 1) % tabs.length],
-        ['ArrowLeft', (index + tabs.length - 1) % tabs.length],
+      // The list stands on end beside the conversation, and lies across the
+      // top on a phone, so both pairs of arrows move through it.
+      const forward = (index + 1) % tabs.length
+      const back = (index + tabs.length - 1) % tabs.length
+      const next = new Map([['ArrowRight', forward], ['ArrowDown', forward],
+        ['ArrowLeft', back], ['ArrowUp', back],
         ['Home', 0], ['End', tabs.length - 1]]).get(event.key)
       if (next === undefined) return
       event.preventDefault()

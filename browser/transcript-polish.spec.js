@@ -1,6 +1,7 @@
 import { test, expect } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
 import { signIn, connectClaude } from './sign-in.js';
+import { openAddRepository } from './new-track.js';
 
 // RAV-93: the transcript's type scale, code chips, links, lists, bubble,
 // live turn, footer, focus, scroll edge and jump-to-latest. The numbers are
@@ -15,13 +16,13 @@ test('the transcript reads at the issue\'s scale and its live turn, footer and e
   await page.setViewportSize({ width: 1440, height: 900 });
   await signIn(page, 'dana');
   await connectClaude(page);
-  await page.getByRole('button', { name: 'Add a repository', exact: true }).first().click();
+  await openAddRepository(page);
   const project = page.getByRole('dialog', { name: 'Add a repository', exact: true });
   await project.getByLabel('Project name', { exact: true }).fill('Transcript polish');
   await project.getByRole('button', { name: 'Create scratch project', exact: true }).click();
   await expect(project).toHaveCount(0);
   const projectId = new URL(page.url()).pathname.split('/')[2];
-  await page.locator('#yard .workspace-project.current .project-add').click();
+  await page.locator('#top-new-track').click();
   await page.getByRole('dialog', { name: 'New track', exact: true })
     .getByRole('button', { name: 'Create track', exact: true }).click();
   await expect(page.getByRole('textbox', { name: 'Message', exact: true })).toBeEnabled({ timeout: 30_000 });
@@ -172,17 +173,24 @@ test('the transcript reads at the issue\'s scale and its live turn, footer and e
   expect(itemGap).toBeGreaterThanOrEqual(6);
   expect(itemGap).toBeLessThanOrEqual(8);
 
-  // 5. The bubble fits what it holds, up to 80%, pinned right, radius 8.
+  // 5. A message is a card, as a comment on a pull request: whatever it
+  // holds, it runs from the avatar's column (44px in) to the turn's right
+  // edge, under a header strip, its body's lower corners rounded 10px. The
+  // agent's reply is a card on the same left edge.
   const longBubble = formatted.locator('.workspace-prompt');
   const shortBubble = short.locator('.workspace-prompt');
-  const longWidth = (await longBubble.boundingBox()).width;
-  const shortWidth = (await shortBubble.boundingBox()).width;
-  expect(shortWidth).toBeLessThan(longWidth / 3);
   const column = await short.boundingBox();
   const shortBox = await shortBubble.boundingBox();
+  const longBox = await longBubble.boundingBox();
+  expect(Math.abs(shortBox.width - longBox.width)).toBeLessThan(1);
+  expect(Math.abs(shortBox.x - (column.x + 44))).toBeLessThan(1);
   expect(Math.abs(column.x + column.width - (shortBox.x + shortBox.width))).toBeLessThan(2);
-  expect(longWidth).toBeLessThanOrEqual(column.width * 0.8 + 1);
-  expect(await style(shortBubble, 'border-top-left-radius')).toBe('8px');
+  await expect(short.locator('.said-avatar')).toBeVisible();
+  await expect(short.locator('.said-avatar')).toHaveAttribute('aria-hidden', 'true');
+  const header = await short.locator('.speaker').boundingBox();
+  expect(Math.abs(header.y + header.height - shortBox.y)).toBeLessThan(1);
+  expect(await style(shortBubble, 'border-bottom-left-radius')).toBe('10px');
+  expect(Math.abs((await short.locator('.agent-terminal').boundingBox()).x - shortBox.x)).toBeLessThan(1);
 
   // 7. Footer: a ⋯ menu with exactly the two copy items, and the copy icon
   // where it was on the running line.

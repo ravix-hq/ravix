@@ -2,6 +2,7 @@ import { test, expect } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
 import { signIn, connectClaude } from './sign-in.js';
 import { saveMachine } from './settings.js';
+import { openAddRepository } from './new-track.js';
 
 const mock = `http://localhost:${process.env.MOCK_PORT || 8893}`;
 
@@ -14,24 +15,23 @@ test('Machine saves everything behind one Save & rebuild; old tabs land on their
   test.setTimeout(120_000);
   await signIn(page, 'dana', '/home');
   await connectClaude(page);
-  await page.getByRole('button', { name: 'Add a repository', exact: true }).first().click();
+  await openAddRepository(page);
   const create = page.getByRole('dialog', { name: 'Add a repository' });
   await create.getByLabel('Project name', { exact: true }).fill('Machine page browser');
   await create.getByRole('button', { name: 'Create scratch project', exact: true }).click();
   await expect(create).not.toBeVisible();
   const projectPath = new URL(page.url()).pathname;
 
-  // The entry points: the header's Settings, and the ⋯ menu without a hover.
-  await expect(page.locator('#crumb-settings')).toHaveAttribute('href', `${projectPath}/settings/general`);
-  const more = page.locator('#yard .workspace-project.current button[data-tip="More"]');
+  // The entry point: the project page's Settings tab, without a hover.
+  const settingsTab = page.locator('#crumb-settings');
+  await expect(settingsTab).toHaveAttribute('href', `${projectPath}/settings/general`);
   await page.mouse.move(900, 600);
-  await expect(more).toHaveCSS('opacity', '1');
-  await more.click();
-  await page.getByRole('menuitem', { name: /^Settings for / }).click();
+  await expect(settingsTab).toBeVisible();
+  await settingsTab.click();
   await expect(page).toHaveURL(new RegExp(`${projectPath}/settings/general$`));
 
   // A track to be closed by the rebuild.
-  await page.locator('#yard .workspace-project.current .project-add').click();
+  await page.locator('#top-new-track').click();
   await page.getByRole('dialog', { name: 'New track', exact: true })
     .getByRole('button', { name: 'Create track', exact: true }).click();
   await expect(page.getByRole('textbox', { name: 'Message', exact: true })).toBeEnabled({ timeout: 30_000 });
@@ -62,6 +62,12 @@ test('Machine saves everything behind one Save & rebuild; old tabs land on their
   await expect(review.getByRole('listitem')).toHaveText(['+jq in apt', 'setup script edited', '1 variable added', '1 secret added']);
   await expect(review).toContainText('Rebuild closes 1 open track');
   await expect(review.getByRole('button', { name: 'Save & rebuild', exact: true })).toBeFocused();
+  // Settle the dialog's fade first: axe measures composited colour, and a
+  // half-faded button is not a colour the page ever shows (see
+  // workspace.spec.js's `accessible`). Infinite animations never finish.
+  await page.evaluate(() => Promise.all(document.getAnimations()
+    .filter(a => a.effect?.getTiming?.().iterations !== Infinity)
+    .map(a => a.finished.catch(() => {}))));
   const axe = await new AxeBuilder({ page }).include('#settings-page')
     .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa']).analyze();
   expect(axe.violations).toEqual([]);

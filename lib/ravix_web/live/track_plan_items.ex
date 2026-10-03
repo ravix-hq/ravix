@@ -70,8 +70,7 @@ defmodule RavixWeb.Live.TrackPlanItems do
   defp chip_label(%{plan: nil}), do: "Plan items"
   defp chip_label(%{plan: plan}), do: "Plan: #{plan.title}"
 
-  # The header's compact state (HeaderFit) hides the words and the dot, so
-  # the button names itself rather than leaning on what is drawn.
+  # The button names itself rather than leaning on what is drawn.
   defp count([_]), do: "1 item"
   defp count(items), do: "#{length(items)} items"
 

@@ -1,6 +1,7 @@
 import { test, expect } from '@playwright/test';
 import { signIn, connectClaude } from './sign-in.js';
 import { openProjectSettings, connectApiKey } from './settings.js';
+import { openAddRepository } from './new-track.js';
 
 const mock = `http://localhost:${process.env.MOCK_PORT || 8893}`;
 
@@ -29,7 +30,7 @@ test('settings explicitly rebuilds when switching agents and the next track work
   await signIn(page, 'dana');
   // Connect through the real account form; mock values never leave this fixture.
   for (const agent of ['Claude Code', 'Codex']) await connectApiKey(page, agent, 'mock-settings-switch-key');
-  await page.getByRole('button', { name: 'Add a repository', exact: true }).first().click();
+  await openAddRepository(page);
   const create = page.getByRole('dialog', { name: 'Add a repository' });
   await create.getByLabel('Project name', { exact: true }).fill('Agent switch browser');
   await create.locator('#project-agent-claude').click();
@@ -41,7 +42,7 @@ test('settings explicitly rebuilds when switching agents and the next track work
   for (const target of ['codex', 'claude']) {
     await page.goto(projectUrl);
     await expect(page.locator('[data-phx-main]')).toHaveClass(/phx-connected/);
-    await page.locator('#yard .workspace-project.current .project-add').click();
+    await page.locator('#top-new-track').click();
     await page.getByRole('dialog', { name: 'New track', exact: true })
       .getByRole('button', { name: 'Create track', exact: true }).click();
     await expect(page.getByRole('textbox', { name: 'Message', exact: true })).toBeEnabled({ timeout: 30_000 });
@@ -79,7 +80,7 @@ test('settings explicitly rebuilds when switching agents and the next track work
   }
   await page.goto(projectUrl);
   await expect(page.locator('[data-phx-main]')).toHaveClass(/phx-connected/);
-  await page.locator('#yard .workspace-project.current .project-add').click();
+  await page.locator('#top-new-track').click();
   await page.getByRole('dialog', { name: 'New track', exact: true })
     .getByRole('button', { name: 'Create track', exact: true }).click();
   await expect(page.getByRole('textbox', { name: 'Message', exact: true })).toBeEnabled({ timeout: 30_000 });
@@ -89,7 +90,7 @@ test('settings explicitly rebuilds when switching agents and the next track work
 test('settings connects an unavailable agent inline, retains the draft, and can discard before leaving', async ({ page }) => {
   await signIn(page, 'eli', '/home');
   await connectClaude(page);
-  await page.getByRole('button', { name: 'Add a repository', exact: true }).first().click();
+  await openAddRepository(page);
   const create = page.getByRole('dialog', { name: 'Add a repository' });
   await create.getByLabel('Project name', { exact: true }).fill('Inline settings connection');
   await create.locator('#project-agent-claude').click();

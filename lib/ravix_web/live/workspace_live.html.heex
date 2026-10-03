@@ -41,100 +41,166 @@
     </div>
   </main>
   <div :if={@current_user} class="app" id="workspace-navigation" phx-hook="QuickJump">
-    <%!-- On a phone the yard is gone and "Menu" in the mobile nav brings it
-      back over the page (`forced`); the scrim behind it, a tap on the x,
-      Escape, and any navigation close it again. See `yard_open`. --%>
-    <div
-      :if={@yard_open}
-      class="yard-scrim"
-      phx-click="yard-close"
-      phx-window-keydown="yard-close"
-      phx-key="escape"
-      aria-hidden="true"
-    >
-    </div>
-    <aside id="yard" class={["yard", @yard_open && "forced"]} aria-label="Projects">
-      <%!-- New track is the first tab stop (RAV-98): the nav comes first in
-        the document, and `.yard-top` is drawn above it with `order`. --%>
-      <div class="workspace-actions yard-nav">
-        <button
-          id="top-new-track"
-          class="primary"
-          data-new-track-trigger
-          aria-keyshortcuts="Control+N Meta+N"
-          data-tip="New track"
-          data-tip-kbd="Mod+N"
-          phx-click={new_track_click(@rail_loaded, @projects)}
-        >
-          <.icon name="plus" />New track
-        </button>
-        <.link patch="/inbox" class={["yard-item", @live_action in [:home, :inbox] && "on"]}>
-          <.icon name="terminal" />Inbox<span class="spacer"></span>
-          <span :if={@attention > 0} class="badge">{@attention}</span>
+    <%!-- The frame is a code host's dashboard: a bar across the top (home,
+      the workspace switcher, search, Add a repository, New track, and you)
+      and a sidebar down the left (whose workspace this is, where to go, the
+      tracks that are open, Settings). Projects are Home's list; a project's
+      tracks are its own page. On a phone the sidebar goes and the bar keeps
+      the places to go. --%>
+    <header id="topbar" class="topbar">
+      <.link patch="/home" class="topbar-home" aria-label="Ravix home" data-tip="Home">
+        <.icon name="branch" size={26} class="topbar-logo" />
+        <span :if={is_nil(@project)}>Ravix</span>
+      </.link>
+      <%!-- Inside a project the bar is where you are: the workspace, the
+        project and, on a track, its tracks. Everywhere else it is the
+        workspace, search and the places to go. --%>
+      <nav :if={@project} class="topbar-crumbs" aria-label="Breadcrumb">
+        <%!-- Until the rail answers, which workspace the project is in is
+          not known: a placeholder, never a guess. --%>
+        <.link :if={@rail_loaded} patch="/home">
+          {workspace_name(@current_workspace, @current_user)}
         </.link>
-        <.link patch="/home" class={["yard-item", @live_action == :projects && "on"]}>
-          <.icon name="home" />Home
+        <span
+          :if={!@rail_loaded}
+          id="crumb-workspace-loading"
+          class="skeleton crumb-skeleton"
+          aria-hidden="true"
+        ></span>
+        <span class="crumb-sep" aria-hidden="true">/</span>
+        <.link
+          patch={"/p/#{@project.id}"}
+          aria-current={if is_nil(@track_id), do: "page"}
+          class={is_nil(@track_id) && "here"}
+        >
+          <.project_name project={@project} within={within(@current_workspace)} />
         </.link>
-        <button
-          class="yard-item"
-          phx-click={JS.push_focus() |> JS.push("dialog")}
-          phx-value-name="new-project"
+        <span :if={@track_id} class="crumb-sep" aria-hidden="true">/</span>
+        <span :if={@track_id} class="dim">Tracks</span>
+        <span :if={is_nil(@track_id)} class="chip">
+          {if @project.repo_private, do: "Private", else: "Public"}
+        </span>
+      </nav>
+      <span :if={@project} class="spacer"></span>
+      <%!-- Inside a project the bar has no places to go, but the Inbox count
+        still says when something needs you. --%>
+      <.link
+        :if={@project}
+        id="topbar-inbox"
+        patch="/inbox"
+        class="topbar-item"
+        aria-label={if @attention > 0, do: "Inbox, #{@attention} need you", else: "Inbox"}
+      >
+        <.icon name="terminal" size={15} />Inbox<span :if={@attention > 0} class="badge">{@attention}</span>
+      </.link>
+      <.icon_button
+        :if={@project}
+        id="quick-jump-trigger"
+        icon="search"
+        size={16}
+        label="Search"
+        tip="Search projects, tracks and plans"
+        shortcut="Mod+K"
+        class="ghost"
+        aria-keyshortcuts={if @mac, do: "Meta+K", else: "Control+K"}
+        data-quick-jump-trigger
+        phx-click={JS.push_focus() |> JS.push("dialog")}
+        phx-value-name="search"
+      />
+      <RavixWeb.Live.WorkspaceSwitcher.switcher
+        :if={is_nil(@project) && @workspaces != []}
+        workspaces={@workspaces}
+        current_id={@current_workspace && @current_workspace.workspace.id}
+      />
+      <span :if={is_nil(@project) && @workspaces == []} class="topbar-workspace">
+        <span class="workspace-mark" aria-hidden="true">
+          {workspace_name(@current_workspace, @current_user)
+          |> String.trim_leading("@")
+          |> String.first()
+          |> String.upcase()}
+        </span>
+        {workspace_name(@current_workspace, @current_user)}
+      </span>
+      <button
+        :if={is_nil(@project)}
+        id="quick-jump-trigger"
+        type="button"
+        class="topbar-search"
+        data-tip="Search projects, tracks and plans"
+        data-tip-kbd="Mod+K"
+        aria-keyshortcuts={if @mac, do: "Meta+K", else: "Control+K"}
+        data-quick-jump-trigger
+        phx-click={JS.push_focus() |> JS.push("dialog")}
+        phx-value-name="search"
+      >
+        <.icon name="search" size={16} /><span>Search projects, tracks, threads…</span>
+        <kbd aria-hidden="true">{if @mac, do: "⌘K", else: "Ctrl K"}</kbd>
+      </button>
+      <nav :if={is_nil(@project)} class="topbar-nav" aria-label="Workspace">
+        <.link
+          patch="/home"
+          class={["topbar-item", @live_action == :projects && "on"]}
+          aria-current={@live_action == :projects && "page"}
         >
-          <.icon name="folder" />Add a repository
-        </button>
-
-        <.link patch="/schedules" class={["yard-item", @live_action == :schedules && "on"]}>
-          <.icon name="clock" />Schedules
+          Projects
         </.link>
-      </div>
-      <%!-- Account preferences live in the sidebar footer; the native popover
-        retains light dismiss, Escape and focus return. --%>
-      <div class="yard-top">
-        <RavixWeb.Live.WorkspaceSwitcher.switcher
-          workspaces={@workspaces}
-          current_id={@current_workspace && @current_workspace.workspace.id}
-        />
-        <button
-          id="quick-jump-trigger"
-          type="button"
-          class="ghost"
-          data-tip="Search projects, tracks and plans"
-          data-tip-kbd="Mod+K"
-          aria-keyshortcuts={if @mac, do: "Meta+K", else: "Control+K"}
-          data-quick-jump-trigger
-          phx-click={JS.push_focus() |> JS.push("dialog")}
-          phx-value-name="search"
+        <.link
+          patch="/inbox"
+          class={["topbar-item", @live_action in [:home, :inbox] && "on"]}
+          aria-current={@live_action in [:home, :inbox] && "page"}
         >
-          <.icon name="search" /><span class="sr-only">Search</span>
-        </button>
-        <button
-          type="button"
-          id="yard-toggle"
-          phx-hook="PanelToggle"
-          class="ghost panel-toggle"
-          data-panel="yard"
-          data-key="ravix.panel.yard"
-          data-hide-label="Hide sidebar"
-          data-show-label="Show sidebar"
-          data-shortcut="b"
-          aria-controls="yard"
-          aria-expanded="true"
-          aria-keyshortcuts={if @mac, do: "Meta+B", else: "Control+B"}
-          data-tip="Hide sidebar"
-          data-tip-kbd="Mod+B"
+          Inbox<span :if={@attention > 0} class="badge">{@attention}</span>
+        </.link>
+        <.link
+          patch="/schedules"
+          class={["topbar-item", @live_action == :schedules && "on"]}
+          aria-current={@live_action == :schedules && "page"}
         >
-          <.icon name="panel-left" size={16} />
-          <span class="sr-only label-hide">Hide sidebar</span>
-          <span class="sr-only label-show">Show sidebar</span>
-        </button>
-        <.icon_button
-          icon="x"
-          size={16}
-          label="Close menu"
-          class="x yard-close"
-          phx-click="yard-close"
-        />
-      </div>
+          Schedules
+        </.link>
+      </nav>
+      <button
+        id="top-new-track"
+        class="primary"
+        data-new-track-trigger
+        aria-keyshortcuts="Control+N Meta+N"
+        data-tip="New track"
+        data-tip-kbd="Mod+N"
+        phx-click={new_track_click(@rail_loaded, @projects)}
+      >
+        <.icon name="plus" />New track
+      </button>
+      <button
+        type="button"
+        id="account-trigger"
+        class="topbar-account"
+        aria-label={"You" <> unseen_note(@changes_unseen, ", ")}
+        data-tip={"You" <> unseen_note(@changes_unseen, " · ")}
+        popovertarget="account-menu"
+      >
+        <%!-- The dot (RAV-96): What's new has entries this person has not
+          opened, and opening it clears the dot. The button's name and
+          tooltip both say so. --%>
+        <span class="account-icon">
+          <img
+            :if={@current_user.avatar_url}
+            src={@current_user.avatar_url}
+            alt=""
+            width="32"
+            height="32"
+          />
+          <span :if={!@current_user.avatar_url} aria-hidden="true">
+            {@current_user.login |> String.slice(0, 2) |> String.upcase()}
+          </span>
+          <span
+            :if={@changes_unseen > 0}
+            class="account-unseen"
+            id="account-unseen"
+            aria-hidden="true"
+          ></span>
+        </span>
+        <span class="sr-only">Account menu, @{@current_user.login}</span>
+      </button>
       <div id="account-menu" class="account-menu" popover aria-label="You">
         <%!-- Quick toggles, then Settings (RAV-77): Profile, Agents,
           Notifications, Appearance and Connected apps are its pages. The two
@@ -197,516 +263,80 @@
           <.icon name="sign-out" size={14} />Sign out
         </.link>
       </div>
-      <div class="yard-scroll">
-        <div class="section-label">
-          <strong>Projects</strong><span class="spacer"></span>
-          <button
-            type="button"
-            id="manage-sections"
-            class="section-action"
-            aria-label="Manage sections"
-            data-tip="Organize projects into sections"
-            phx-click={JS.push_focus() |> JS.push("dialog")}
-            phx-value-name="sections"
-          >
-            <.icon name="settings" size={13} />
-          </button>
-        </div>
-        <div id="rail-scope" class="rail-scope" role="group" aria-label="Show tracks from">
-          <button
-            :for={{scope, label} <- [everyone: "Everyone", mine: "Mine"]}
-            type="button"
-            id={"rail-scope-#{scope}"}
-            class={if @current_user.rail_scope == scope, do: "on", else: "ghost"}
-            aria-pressed={to_string(@current_user.rail_scope == scope)}
-            title={
-              if scope == :mine,
-                do: "Only tracks you created",
-                else: "Every track you can see"
-            }
-            phx-click="rail-scope"
-            phx-value-scope={scope}
-          >{label}</button>
-        </div>
-        <div
-          id="project-sections"
-          phx-hook="ProjectSections"
-          aria-busy={to_string(!@rail_loaded && !@rail_error)}
-        >
-          <div :if={!@rail_loaded && !@rail_error} id="rail-loading" role="status">
-            <span class="sr-only">Loading projects…</span>
-            <span :for={_ <- 1..4} class="skeleton rail-row-skeleton" aria-hidden="true"></span>
-          </div>
-          <div :if={@rail_error} id="rail-error" role="alert">
-            <p>Projects could not be loaded.</p><button type="button" phx-click="refresh">Retry</button>
-          </div>
-          <div
-            id="project-tree"
-            phx-hook="ProjectTree"
-            data-viewer={@current_user.id}
-            data-one-creator={one_creator?(@tracks, @current_user, @track_id)}
-          >
-            <section
-              :for={
-                {section, projects} <-
-                  section_groups(
-                    @projects,
-                    @sections,
-                    @section_placements,
-                    @scratch_group,
-                    @shared_ids
-                  )
-              }
-              id={"section-#{section_key(section)}"}
-              class={[
-                "project-section",
-                section_labelled?(section, @sections) && "labelled",
-                section.id && section.id == @created_section && "created"
-              ]}
-              data-section-drop={if !scratch_section?(section), do: section.id || ""}
-            >
-              <button
-                :if={section_labelled?(section, @sections)}
-                type="button"
-                class="ghost section-toggle"
-                data-collapse={if is_nil(section.id), do: "section-#{section_key(section)}"}
-                phx-click={if section.id, do: "toggle-section"}
-                phx-value-id={section.id}
-                phx-value-collapsed={to_string(!section.collapsed)}
-                aria-expanded={to_string(!section.collapsed)}
-                aria-controls={"section-projects-#{section_key(section)}"}
-              >
-                <.disclosure_chevron />
-                <span class="truncate">{section.name}</span>
-              </button>
-              <div id={"section-projects-#{section_key(section)}"} hidden={section.collapsed}>
-                <p
-                  :if={projects == [] and section_labelled?(section, @sections)}
-                  id={"section-empty-#{section_key(section)}"}
-                  class="section-empty dim"
-                >
-                  No projects
-                </p>
-                <section
-                  :for={project <- projects}
-                  id={"project-row-#{project.id}"}
-                  class={["workspace-project", @project && @project.id == project.id && "current"]}
-                  draggable={to_string(@sections != [] and !scratch_section?(section))}
-                  data-project-id={project.id}
-                >
-                  <div class="workspace-project-row">
-                    <button
-                      type="button"
-                      class="ghost project-collapse"
-                      data-collapse={project.id}
-                      aria-label={"Tracks in #{label(project, @current_workspace)}"}
-                      data-tip="Show or hide tracks"
-                      aria-expanded="true"
-                      aria-controls={"project-tracks-#{project.id}"}
-                    >
-                      <.disclosure_chevron />
-                    </button>
-                    <.link
-                      id={"project-link-#{project.id}"}
-                      patch={"/p/#{project.id}"}
-                      class={[
-                        "workspace-project-name",
-                        @project && @project.id == project.id && "selected"
-                      ]}
-                      aria-current={
-                        if @project && @project.id == project.id && is_nil(@track_id), do: "page"
-                      }
-                    >
-                      <span class="truncate"><.project_name
-                        project={project}
-                        within={within(@current_workspace)}
-                      /></span>
-                      <span
-                        :if={project_attention(@tracks, project.id) > 0}
-                        class="badge"
-                        aria-label={need_you(project_attention(@tracks, project.id))}
-                        title={need_you(project_attention(@tracks, project.id))}
-                      >{project_attention(@tracks, project.id)}</span>
-                    </.link>
-                    <.link
-                      :if={project.access != :tracks}
-                      id={"project-plans-#{project.id}"}
-                      patch={"/p/#{project.id}/plans"}
-                      class={[
-                        "project-action",
-                        @live_action == :plans && @project && @project.id == project.id && "on"
-                      ]}
-                      aria-label={"Plans in #{label(project, @current_workspace)}"}
-                      aria-current={
-                        if @live_action == :plans && @project && @project.id == project.id,
-                          do: "page"
-                      }
-                      data-tip="Plans"
-                    >
-                      <.icon name="document" size={13} />
-                    </.link>
-                    <button
-                      :if={project.access != :tracks && project.role == :owner}
-                      type="button"
-                      class="project-action"
-                      aria-label={"Project settings for #{label(project, @current_workspace)}"}
-                      data-tip="Project settings"
-                      phx-click={JS.push_focus() |> JS.push("project-settings")}
-                      phx-value-project={project.id}
-                    >
-                      <.icon name="settings" size={13} />
-                    </button>
-                    <button
-                      :if={project.access != :tracks}
-                      type="button"
-                      id={"project-menu-trigger-#{project.id}"}
-                      class="project-action"
-                      aria-label={"More for #{label(project, @current_workspace)}"}
-                      aria-haspopup="menu"
-                      aria-expanded="false"
-                      data-tip="More"
-                      popovertarget={"project-menu-#{project.id}"}
-                    >
-                      <.icon name="more" size={13} />
-                    </button>
-                    <div
-                      :if={project.access != :tracks}
-                      id={"project-menu-#{project.id}"}
-                      class="project-menu"
-                      popover
-                      role="menu"
-                      aria-label={"More for #{label(project, @current_workspace)}"}
-                    >
-                      <%!-- People lives in here rather than on the row: it
-                        only ever showed on the open project, so opening a
-                        track made that one row an icon wider and cut its
-                        name short (RAV-63). --%>
-                      <%!-- Buttons, not links, so the menu closes as they go;
-                        `data-leaves-page` has a page with unsaved changes ask. --%>
-                      <button
-                        :if={project.role == :owner}
-                        type="button"
-                        id={"project-menu-settings-#{project.id}"}
-                        class="account-item"
-                        role="menuitem"
-                        aria-label={"Settings for #{label(project, @current_workspace)}"}
-                        popovertarget={"project-menu-#{project.id}"}
-                        popovertargetaction="hide"
-                        data-leaves-page
-                        phx-click={JS.patch("/p/#{project.id}/settings/general")}
-                      >
-                        <span class="menu-check" aria-hidden="true">
-                          <.icon name="settings" size={14} />
-                        </span>Settings
-                      </button>
-                      <button
-                        :if={@project && @project.id == project.id && project.role == :owner}
-                        type="button"
-                        class="account-item"
-                        role="menuitem"
-                        aria-label={"People in #{label(project, @current_workspace)}"}
-                        popovertarget={"project-menu-#{project.id}"}
-                        popovertargetaction="hide"
-                        data-leaves-page
-                        phx-click={JS.patch("/p/#{project.id}/settings/access")}
-                      >
-                        <span class="menu-check" aria-hidden="true">
-                          <.icon name="add-person" size={14} />
-                        </span>People
-                      </button>
-                      <button
-                        :if={@project && @project.id == project.id && project.role != :owner}
-                        type="button"
-                        class="account-item"
-                        role="menuitem"
-                        aria-label={"People in #{label(project, @current_workspace)}"}
-                        popovertarget={"project-menu-#{project.id}"}
-                        popovertargetaction="hide"
-                        phx-click={
-                          JS.push_focus(to: "#project-menu-trigger-#{project.id}")
-                          |> JS.push("dialog")
-                        }
-                        phx-value-name="people"
-                      >
-                        <span class="menu-check" aria-hidden="true">
-                          <.icon name="add-person" size={14} />
-                        </span>People
-                      </button>
-                      <button
-                        type="button"
-                        id={"show-closed-#{project.id}"}
-                        class="account-item"
-                        role="menuitemcheckbox"
-                        aria-checked={to_string(MapSet.member?(@closed_projects, project.id))}
-                        popovertarget={"project-menu-#{project.id}"}
-                        popovertargetaction="hide"
-                        phx-click="show-closed"
-                        phx-value-project={project.id}
-                        phx-value-show={to_string(!MapSet.member?(@closed_projects, project.id))}
-                      >
-                        <span class="menu-check" aria-hidden="true">
-                          <.icon :if={MapSet.member?(@closed_projects, project.id)} name="check" size={14} />
-                        </span>Show closed tracks
-                      </button>
-                    </div>
-                    <.link
-                      :if={project.access != :tracks}
-                      patch={"/p/#{project.id}#{if @project && @project.id == project.id, do: track_suffix(@track_id), else: ""}?new=track"}
-                      id={"new-track-#{project.id}"}
-                      phx-click={JS.push_focus()}
-                      class="project-action project-add"
-                      aria-label={"New track in #{label(project, @current_workspace)}"}
-                      data-tip="New track"
-                    >
-                      <.icon name="plus" size={13} />
-                    </.link>
-                  </div>
-                  <nav
-                    id={"project-tracks-#{project.id}"}
-                    class="project-tree-tracks"
-                    aria-label={"Tracks in #{label(project, @current_workspace)}"}
-                  >
-                    <.link
-                      :for={
-                        track <- rail_rows(@tracks[project.id] || [], @current_user, @track_id)
-                      }
-                      id={"project-track-tab-#{track.id}"}
-                      patch={"/p/#{project.id}/t/#{track.id}"}
-                      class={["workspace-track track-tab", @track_id == track.id && "selected"]}
-                      aria-current={if @track_id == track.id, do: "page"}
-                      data-label={tab_name(track)}
-                      aria-label={row_label(track, tab_name(track))}
-                      title={Track.tooltip(track)}
-                    >
-                      <.status_slot track={track} />
-                      <.creator track={track} />
-                      <span class="track-title">{Track.label(track)}</span>
-                      <.private_mark :if={track.visibility == :private} />
-                      <.meta_slot track={track} />
-                    </.link>
-                    <div :if={MapSet.member?(@track_errors, project.id)} role="status">
-                      <p class="hint">Couldn't load tracks</p>
-                      <button
-                        type="button"
-                        class="ghost"
-                        phx-click="retry-tracks"
-                        phx-value-id={project.id}
-                        disabled={MapSet.member?(@track_loading, project.id)}
-                      >{if MapSet.member?(@track_loading, project.id),
-                        do: "Retrying…",
-                        else: "Retry"}</button>
-                    </div>
-                    <p
-                      :if={
-                        @rail_loaded && !MapSet.member?(@track_errors, project.id) &&
-                          rail_rows(@tracks[project.id] || [], @current_user, @track_id) == []
-                      }
-                      class="hint"
-                    >
-                      {if (@tracks[project.id] || []) == [],
-                        do: "No open tracks",
-                        else: "No open tracks of yours"}
-                    </p>
-                    <div
-                      :if={MapSet.member?(@closed_projects, project.id)}
-                      id={"closed-tracks-#{project.id}"}
-                      class="closed-tracks"
-                    >
-                      <p class="section-label"><small>Closed</small></p>
-                      <ul aria-label={"Closed tracks in #{label(project, @current_workspace)}"}>
-                        <li
-                          :for={
-                            track <-
-                              @closed_tracks[project.id]
-                              |> Kernel.||([])
-                              |> Enum.take(closed_shown_count(@closed_pages, project.id))
-                              |> rail_rows(@current_user, nil)
-                          }
-                          id={"closed-track-#{track.id}"}
-                          class="workspace-track closed-track"
-                        >
-                          <span class="track-status" aria-hidden="true"></span>
-                          <.creator track={track} />
-                          <span class="track-title truncate" title={Track.tooltip(track)}>
-                            {Track.label(track)}<span class="sr-only">, closed</span>
-                          </span>
-                          <.private_mark :if={track.visibility == :private} />
-                          <span class="track-meta">
-                            <.age id={"closed-track-age-#{track.id}"} at={track.activity_at} />
-                          </span>
-                          <button
-                            :if={reopenable?(project)}
-                            type="button"
-                            id={"reopen-track-#{track.id}"}
-                            class="ghost"
-                            aria-label={"Reopen #{Track.label(track)}"}
-                            phx-click={JS.push_focus() |> JS.push("reopen-track")}
-                            phx-value-track={track.id}
-                          >Reopen</button>
-                        </li>
-                      </ul>
-                      <p
-                        :if={
-                          rail_rows(@closed_tracks[project.id] || [], @current_user, nil) == []
-                        }
-                        class="hint"
-                      >
-                        No closed tracks
-                      </p>
-                      <button
-                        :if={
-                          length(@closed_tracks[project.id] || []) >
-                            closed_shown_count(@closed_pages, project.id)
-                        }
-                        type="button"
-                        id={"closed-older-#{project.id}"}
-                        class="ghost"
-                        phx-click="closed-older"
-                        phx-value-project={project.id}
-                      >
-                        Show older
-                      </button>
-                    </div>
-                  </nav>
-                </section>
-              </div>
-            </section>
-          </div>
-        </div>
-      </div>
-      <div class="yard-footer">
-        <button
-          type="button"
-          id="account-trigger"
-          class="yard-account"
-          aria-label={"You" <> unseen_note(@changes_unseen, ", ")}
-          data-tip={"You" <> unseen_note(@changes_unseen, " · ")}
-          popovertarget="account-menu"
-        >
-          <%!-- The gear's dot (RAV-96): What's new has entries this person
-            has not opened, and opening it clears the dot. The button's name
-            and tooltip both say so. --%>
-          <span class="account-icon">
-            <.icon name="settings" size={18} />
-            <span
-              :if={@changes_unseen > 0}
-              class="account-unseen"
-              id="account-unseen"
-              aria-hidden="true"
-            ></span>
-          </span>
-          <span class="yard-who">
-            <strong class="truncate">You</strong><small class="truncate">@{@current_user.login}</small>
-          </span>
-          <span class="sr-only">Account menu</span>
-          <.icon name="chevron" size={12} class="account-chevron" />
-        </button>
-      </div>
-    </aside>
+    </header>
     <main class="stage" id="workspace-stage">
-      <nav class="workspace-mobile-nav" aria-label="Workspace navigation">
-        <button
-          type="button"
-          class="ghost yard-menu"
-          phx-click="yard"
-          aria-expanded={to_string(@yard_open)}
-          aria-controls="yard"
-        >
-          <.icon name="chevron" size={13} open={@yard_open} class="ico" />Menu
-        </button>
-        <.link patch="/home" aria-current={@live_action == :projects && "page"}>Home</.link>
-        <.link patch="/schedules">Schedules</.link>
-        <.link patch="/inbox" aria-current={@live_action in [:home, :inbox] && "page"}>Inbox</.link>
-        <button
-          id="mobile-quick-jump-trigger"
-          class="ghost"
-          data-quick-jump-trigger
-          phx-click={JS.push_focus() |> JS.push("dialog")}
-          phx-value-name="search"
-        >Search</button>
-        <%!-- RAV-37: the phone's create action is New track too, the same
-          button, label and shortcut as the sidebar's and Home's. --%>
-        <button
-          id="mobile-new-track"
-          class="primary"
-          data-new-track-trigger
-          aria-keyshortcuts="Control+N Meta+N"
-          data-tip="New track"
-          data-tip-kbd="Mod+N"
-          phx-click={new_track_click(@rail_loaded, @projects)}
-        ><.icon name="plus" />New track</button>
-      </nav>
-      <div
-        id="yard-resize"
-        phx-hook="PanelResize"
-        class="panel-resize-handle left"
-        role="separator"
-        tabindex="0"
-        aria-label="Sidebar width"
-        aria-orientation="vertical"
-        data-var="--yard-width"
-        data-min="220"
-        data-max="480"
-        data-key="ravix.panel-width.left"
-        data-side="left"
-      >
-      </div>
       <div
         class="workspace-tabpanel"
         id="project-tabpanel"
         role={@project && "region"}
-        aria-labelledby={
-          @project &&
-            if(@track_id,
-              do: "project-track-tab-#{@track_id}",
-              else: "project-link-#{@project.id}"
-            )
-        }
+        aria-label={@project && @project.display_name}
         tabindex={@project && "0"}
       >
-        <div :if={@project && is_nil(@track_id) && is_nil(@settings)} class="crumbs">
-          <span class="project-mark" aria-hidden="true">
-            {String.first(@project.name) |> String.upcase()}
-          </span>
-          <strong><.project_name project={@project} within={within(@current_workspace)} /></strong><span
-            :if={@project.repo}
-            class="chip mono"
-          >{@project.repo}</span><span class="spacer"></span>
-          <.link
-            :if={@project.access != :tracks && @live_action != :plans}
-            id="crumb-plans"
-            class="ghost"
-            patch={"/p/#{@project.id}/plans"}
-          >
-            Plans
-          </.link>
-          <%!-- The owner's People is the Access settings page (RAV-74);
-            everyone else's is still the dialog. --%>
-          <.link
-            :if={@project.access != :tracks && @project.role == :owner}
-            id="crumb-people"
-            class="ghost"
-            patch={"/p/#{@project.id}/settings/access"}
-          >
-            People
-          </.link>
-          <button
-            :if={@project.access != :tracks && @project.role != :owner}
-            class="ghost"
-            phx-click={JS.push_focus() |> JS.push("dialog")}
-            phx-value-name="people"
-          >
-            People
-          </button>
-          <.link
-            :if={@project.access != :tracks && @project.role == :owner}
-            id="crumb-settings"
-            class="ghost"
-            patch={"/p/#{@project.id}/settings/general"}
-          >
-            Settings
-          </.link>
-        </div>
+        <%!-- The project's own page reads like a repository's: its name, the
+          repository it is, and tabs for what is in it. Tracks is the page
+          itself; People and Settings open the settings frame (RAV-74). --%>
+        <header
+          :if={@project && is_nil(@track_id) && is_nil(@settings)}
+          class="crumbs repo-head"
+        >
+          <%!-- The project's name and repository are the top bar's breadcrumb;
+            this is the tab bar under it. --%>
+          <h1 class="sr-only">
+            <.project_name project={@project} within={within(@current_workspace)} />
+          </h1>
+          <nav class="repo-tabs" aria-label="Project">
+            <.link
+              id="crumb-tracks"
+              patch={"/p/#{@project.id}"}
+              aria-current={if @live_action != :plans, do: "page"}
+            >
+              <.icon name="branch" size={14} />Tracks
+              <span class="count">{length(@tracks[@project.id] || [])}</span>
+            </.link>
+            <.link
+              :if={@project.access != :tracks && @live_action != :plans}
+              id="crumb-plans"
+              patch={"/p/#{@project.id}/plans"}
+            >
+              <.icon name="document" size={14} />Plans
+            </.link>
+            <span :if={@live_action == :plans} aria-current="page" class="current">
+              <.icon name="document" size={14} />Plans
+            </span>
+            <%!-- The owner's People is the Access settings page (RAV-74);
+              everyone else's is still the dialog. --%>
+            <.link
+              :if={@project.access != :tracks && @project.role == :owner}
+              id="crumb-people"
+              patch={"/p/#{@project.id}/settings/access"}
+            >
+              <.icon name="person" size={14} />People
+            </.link>
+            <button
+              :if={@project.access != :tracks && @project.role != :owner}
+              type="button"
+              class="ghost"
+              phx-click={JS.push_focus() |> JS.push("dialog")}
+              phx-value-name="people"
+            >
+              <.icon name="person" size={14} />People
+            </button>
+            <.link
+              :if={@project.access != :tracks && @project.role == :owner}
+              id="crumb-agent"
+              patch={"/p/#{@project.id}/settings/agent"}
+            >
+              <.icon name="sparkle" size={14} />Agent
+            </.link>
+            <.link
+              :if={@project.access != :tracks && @project.role == :owner}
+              id="crumb-settings"
+              patch={"/p/#{@project.id}/settings/general"}
+            >
+              <.icon name="settings" size={14} />Settings
+            </.link>
+          </nav>
+        </header>
         <p
           :if={@project && @project.role != :owner && is_nil(@track_id)}
           id="project-agent-owner"
@@ -758,7 +388,10 @@
           tracks={@tracks[@project.id] || []}
         />
         <div
-          :if={@project && is_nil(@track_id) && @project.access == :tracks}
+          :if={
+            @project && is_nil(@track_id) && @project.access == :tracks &&
+              (@tracks[@project.id] || []) == []
+          }
           class="workspace-project-empty"
         >
           <span class="empty-icon"><.icon name="machine" size={20} /></span>
@@ -778,143 +411,170 @@
             Choose a track shared with you in the tabs above.
           </p>
         </div>
+        <%!-- A project with no tracks yet starts one here; one with tracks
+          shows them, as a branch graph or a list. --%>
         <section
           :if={
             @project && is_nil(@track_id) && @project.access != :tracks &&
               @live_action != :plans && is_nil(@selected_plan_id) && !@new_plan &&
-              is_nil(@settings)
+              is_nil(@settings) && (@tracks[@project.id] || []) == [] &&
+              !MapSet.member?(@closed_projects, @project.id) &&
+              !MapSet.member?(@track_errors, @project.id)
           }
           id="project-start"
           class="first-prompt"
           aria-label="Start work in this project"
         >
-          <%= if (@tracks[@project.id] || []) == [] do %>
-            <QuickStart.composer
-              id="project-quick-start"
-              form={@quick_form}
-              project={@project}
-              busy={@quick_busy}
-            />
-            <QuickStart.explainer id="project-explainer" />
-          <% else %>
-            <h2>Recent tracks</h2>
-            <ul class="first-prompt-recent">
-              <li :for={track <- Enum.take(@tracks[@project.id], 5)}>
-                <.link patch={"/p/#{@project.id}/t/#{track.id}"}>
-                  <strong title={Track.tooltip(track)}>{Track.label(track)}</strong>
-                </.link>
-              </li>
-            </ul>
-          <% end %>
+          <QuickStart.composer
+            id="project-quick-start"
+            form={@quick_form}
+            project={@project}
+            busy={@quick_busy}
+          />
+          <QuickStart.explainer id="project-explainer" />
+          <%!-- No open tracks is not no tracks: the closed ones are still
+            here to find and reopen. --%>
+          <button
+            type="button"
+            id="project-tracks-closed"
+            class="ghost first-prompt-alt"
+            aria-pressed="false"
+            phx-click="show-closed"
+            phx-value-project={@project.id}
+            phx-value-show="true"
+          >
+            Show closed tracks
+          </button>
         </section>
-        <%!-- Home (RAV-100): the recent tracks across the rail, in the same
-          page container as the Inbox and Schedules. Its one action is New
-          track, as in the sidebar and on the phone (RAV-37); adding a
-          repository is the sidebar's "Add a repository". --%>
-        <.stage_page
+        <div
+          :if={
+            @project && is_nil(@track_id) && @live_action != :plans && is_nil(@settings) &&
+              MapSet.member?(@track_errors, @project.id)
+          }
+          id="project-tracks-error"
+          class="first-prompt"
+          role="status"
+        >
+          <p>This project's tracks couldn't be loaded.</p>
+          <button
+            type="button"
+            phx-click="retry-tracks"
+            phx-value-id={@project.id}
+            disabled={MapSet.member?(@track_loading, @project.id)}
+          >{if MapSet.member?(@track_loading, @project.id), do: "Retrying…", else: "Retry"}</button>
+        </div>
+        <RavixWeb.Live.ProjectTracks.panel
+          :if={
+            @project && is_nil(@track_id) && @live_action != :plans &&
+              is_nil(@selected_plan_id) && !@new_plan && is_nil(@settings) &&
+              ((@tracks[@project.id] || []) != [] ||
+                 MapSet.member?(@closed_projects, @project.id))
+          }
+          project={@project}
+          tracks={@tracks[@project.id] || []}
+          closed={
+            if MapSet.member?(@closed_projects, @project.id),
+              do:
+                @closed_tracks[@project.id]
+                |> Kernel.||([])
+                |> Enum.take(closed_shown_count(@closed_pages, @project.id))
+          }
+          viewer={@current_user}
+          more_closed={
+            length(@closed_tracks[@project.id] || []) >
+              closed_shown_count(@closed_pages, @project.id)
+          }
+          reopenable={reopenable?(@project)}
+          view={@tracks_view}
+          filter={@tracks_filter}
+          people={@project_people}
+          previews={Map.get(@previews, @project.id, [])}
+          timezone={@timezone}
+        />
+        <%!-- Home (RAV-100), in the same page container as the Inbox and
+          Schedules: sections and whose tracks to show at the side, the
+          projects, and the recent tracks across them. Its action is New
+          track, as in the top bar (RAV-37). --%>
+        <%!-- Home (RAV-100), as a code host's dashboard: whose workspace and
+          its sections at the side, the projects in the middle, and what is
+          running and what needs you on the right. A first visit, with no
+          projects yet, has the same frame: the form that starts one is the
+          middle, its repositories listed as a code host lists them. --%>
+        <div
           :if={is_nil(@project) && @live_action == :projects}
           id="home"
-          class="workspace-home"
-          title_id="home-title"
+          class="home-dashboard"
         >
-          <:title>
-            {if @rail_loaded && fresh_start?(@projects),
-              do: "Start your first track",
-              else: "Home"}
-          </:title>
-          <:subtitle :if={@rail_loaded && fresh_start?(@projects)}>
-            Pick a repository and describe the change. Ravix opens a track, and your agent starts there.
-          </:subtitle>
-          <:subtitle :if={!@rail_loaded || !fresh_start?(@projects)}>
-            Pick up where you left off.
-          </:subtitle>
-          <:actions>
-            <button
-              id="home-new-track"
-              class="primary"
-              data-new-track-trigger
-              aria-keyshortcuts="Control+N Meta+N"
-              data-tip="New track"
-              data-tip-kbd="Mod+N"
-              phx-click={new_track_click(@rail_loaded, @projects)}
+          <RavixWeb.Live.HomeProjects.side
+            within={within(@current_workspace)}
+            workspace={workspace_name(@current_workspace, @current_user)}
+            kind={
+              if @current_workspace && @current_workspace.workspace.kind == :team,
+                do: "Team",
+                else: "Personal"
+            }
+            count={length(@projects)}
+            groups={home_groups(assigns)}
+            selected={home_selected(assigns)}
+            viewer={@current_user}
+            active={home_active(assigns)}
+            loaded={@rail_loaded}
+          />
+          <div class="home-main">
+            <div
+              :if={!@rail_loaded && !@rail_error}
+              id="rail-loading"
+              class="home-projects"
+              role="status"
             >
-              <.icon name="plus" />New track
-            </button>
-          </:actions>
-          <section
-            :if={@rail_loaded && fresh_start?(@projects)}
-            id="home-start"
-            class="first-prompt"
-            aria-labelledby="home-title"
-          >
-            <QuickStart.composer
-              id="home-quick-start"
-              form={@quick_form}
-              groups={QuickStart.targets(@repos)}
-              loading={@repos_loading}
-              busy={@quick_busy}
-            />
-            <QuickStart.explainer id="home-explainer" />
-            <p class="hint first-prompt-alt">
-              To add a repository without starting a track yet, use Add a repository in the sidebar.
-            </p>
-          </section>
-          <section
-            :if={!@rail_loaded || !fresh_start?(@projects)}
-            id="home-recent"
-            class="home-recent"
-            aria-labelledby="home-recent-h"
-          >
-            <h2 id="home-recent-h">Recent tracks</h2>
-            <div :if={!@rail_loaded} id="home-loading" class="recent-list" role="status">
-              <span class="sr-only">Loading your tracks…</span>
-              <div :for={_ <- 1..2} class="recent-row recent-row-skeleton" aria-hidden="true">
-                <span class="skeleton skeleton-avatar"></span>
-                <span class="skeleton skeleton-line"></span>
-              </div>
+              <span class="sr-only">Loading projects…</span>
+              <span :for={_ <- 1..4} class="skeleton rail-row-skeleton" aria-hidden="true"></span>
             </div>
-            <ul
-              :if={@rail_loaded && recent_tracks(@projects, @tracks, @current_user) != []}
-              class="recent-list"
+            <div :if={@rail_error} id="rail-error" class="home-projects" role="alert">
+              <p>Projects could not be loaded.</p>
+              <button type="button" phx-click="refresh">Retry</button>
+            </div>
+            <section
+              :if={@rail_loaded && fresh_start?(@projects)}
+              id="home-start"
+              class="home-start"
+              aria-labelledby="home-title"
             >
-              <li :for={{project, track} <- recent_tracks(@projects, @tracks, @current_user)}>
-                <.link
-                  id={"home-track-#{track.id}"}
-                  patch={"/p/#{project.id}/t/#{track.id}"}
-                  class="recent-row"
-                  aria-label={
-                    row_label(
-                      track,
-                      "#{Track.label(track)} in #{label(project, @current_workspace)}, by @#{track.created_by_login}"
-                    )
-                  }
-                >
-                  <.creator track={track} />
-                  <span class="recent-main">
-                    <strong class="truncate" title={Track.tooltip(track)}>{Track.label(track)}</strong>
-                    <span class="recent-meta truncate">
-                      <.project_name project={project} within={within(@current_workspace)} /><span
-                        :if={project.repo}
-                        class="mono"
-                      >
-                        · {project.repo}
-                      </span>
-                    </span>
-                  </span>
-                  <span class="recent-owner truncate">@{track.created_by_login}</span>
-                  <.age id={"home-track-age-#{track.id}"} at={track.activity_at} />
-                </.link>
-              </li>
-            </ul>
-            <p
-              :if={@rail_loaded && recent_tracks(@projects, @tracks, @current_user) == []}
-              id="home-no-tracks"
-              class="hint"
-            >
-              No open tracks yet. New track starts one in any of your projects.
-            </p>
-          </section>
-        </.stage_page>
+              <h1 id="home-title">Start your first track</h1>
+              <p class="home-start-lede">
+                Pick a repository and describe the change. Ravix opens a track, and your agent starts there.
+              </p>
+              <QuickStart.composer
+                id="home-quick-start"
+                form={@quick_form}
+                groups={QuickStart.targets(@repos)}
+                repos={@repos}
+                add_repository
+                loading={@repos_loading}
+                busy={@quick_busy}
+              />
+              <QuickStart.explainer id="home-explainer" />
+            </section>
+            <RavixWeb.Live.HomeProjects.list
+              :if={@rail_loaded && !fresh_start?(@projects)}
+              within={within(@current_workspace)}
+              heading={home_heading(assigns)}
+              groups={home_groups(assigns)}
+              tracks={@tracks}
+              selected={home_selected(assigns)}
+              sort={@home_sort}
+              attention={Map.new(@projects, &{&1.id, project_attention(@tracks, &1.id)})}
+              previews={@previews}
+              errors={@track_errors}
+              loading={@track_loading}
+            />
+          </div>
+          <RavixWeb.Live.HomeProjects.activity
+            :if={@rail_loaded}
+            within={within(@current_workspace)}
+            needs={home_needs(assigns)}
+          />
+        </div>
         <.live_component
           :if={@live_action == :schedules}
           module={RavixWeb.Live.SchedulesPanel}
@@ -934,7 +594,7 @@
           session_hash={@session_hash}
         />
         <%!-- An address nothing answers, for somebody signed in: the page is
-          still the app, with the sidebar and a way on (RAV-100). The plug in
+          still the app, with the top bar and a way on (RAV-100). The plug in
           front of the route has already set the 404. --%>
         <.stage_page :if={@live_action == :not_found} id="not-found" title_id="not-found-title">
           <:title>Page not found</:title>
@@ -1107,11 +767,7 @@
       title="Project sections"
       on_close={dismiss(@project, @track_id, @settings)}
     >
-      <p class="hint">
-        {if @current_workspace,
-          do: "Organize this workspace's sidebar.",
-          else: "Organize your sidebar."} Sections are visible only to you.
-      </p>
+      <p class="hint">Group your projects on Home. Sections are visible only to you.</p>
       <%!-- A created section empties the field and keeps the focus there,
         ready for the next name (RAV-130, `SectionForm`); a refused one
         keeps the name beside what was wrong with it. Browsers offer their
@@ -1149,11 +805,9 @@
       <p :if={@sections != []} class="hint">
         Removing a section keeps its projects in Other projects.
       </p>
-      <%!-- Dragging in the sidebar is the quick way; this is the way that
-      needs no pointer. --%>
+      <%!-- Where a project is filed. --%>
       <div :if={@sections != [] && @projects != []} class="section-editor">
         <h3>Move projects</h3>
-        <p class="hint">Or drag a project onto a section in the sidebar.</p>
         <form
           :for={project <- @projects}
           id={"move-project-#{project.id}"}

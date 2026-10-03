@@ -90,6 +90,23 @@ defmodule Ravix.Previews.Store do
     end
   end
 
+  @doc """
+  The previews of these tracks that are up or coming up, as their track,
+  hostname and state. Rows only; who may see them is the context's question.
+  """
+  @spec live_for(list(String.t())) :: [
+          %{track_id: String.t(), hostname: String.t() | nil, state: atom()}
+        ]
+  def live_for([]), do: []
+
+  def live_for(track_ids) do
+    from(p in Preview,
+      where: p.track_id in ^track_ids and p.state in [:starting, :ready],
+      select: %{track_id: p.track_id, hostname: p.hostname, state: p.state}
+    )
+    |> Repo.all()
+  end
+
   @doc "Every preview row; what the reconciler walks."
   @spec all() :: [Row.t()]
   def all do

@@ -1,5 +1,6 @@
 import {test, expect} from '@playwright/test';
 import {signIn, connectClaude} from './sign-in.js';
+import {openAddRepository} from './new-track.js';
 
 // RAV-138: a tab open across a deploy keeps the old release's CSS and JS while
 // its socket reconnects to the new one. The browser suite is the one that runs
@@ -13,10 +14,10 @@ const stylesheet = page => page.locator('link[phx-track-static][rel="stylesheet"
 async function openTrack(page) {
   await signIn(page, 'eli', '/home');
   await connectClaude(page);
-  await page.getByRole('button', {name: 'Add a repository', exact: true}).first().click();
+  await openAddRepository(page);
   await page.getByLabel('Project name', {exact: true}).fill('ravix-stale');
   await page.getByRole('button', {name: 'Create scratch project', exact: true}).click();
-  await page.locator('#yard .workspace-project.current .project-add').click();
+  await page.locator('#top-new-track').click();
   await page.getByRole('button', {name: 'Create track', exact: true}).click();
   await expect(page.getByRole('textbox', {name: 'Message', exact: true})).toBeEnabled();
   return new URL(page.url()).pathname;

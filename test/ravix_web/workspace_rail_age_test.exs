@@ -17,7 +17,7 @@ defmodule RavixWeb.WorkspaceRailAgeTest do
     view
   end
 
-  test "each row shows its owner's avatar or initial and a live-updatable age", ctx do
+  test "each row shows who opened it, whether it is private and how long since it moved", ctx do
     fresh =
       insert_track(
         project: ctx.project,
@@ -51,56 +51,27 @@ defmodule RavixWeb.WorkspaceRailAgeTest do
         created_by_login: ctx.viewer.login
       )
 
+    # The project's own list: private is a lock with a tooltip, and a word
+    # only a reader hears; ages in words, from the last activity; and who
+    # opened each track. (Home no longer lists tracks with their owners.)
     view = open(ctx.conn, ctx.viewer, "/p/#{ctx.project.id}")
-    tab = &"#project-track-tab-#{&1.id}"
+    view |> element("#project-tracks-list") |> render_click()
+    list_row = &"#tracks-row-#{&1.id}"
 
-    # The avatar has an accessible name; without one, the initials stand in.
-    assert has_element?(
-             view,
-             "#{tab.(fresh)} .track-creator[role=img][aria-label='Created by @ada-lovelace'] img[src='https://avatars.example/ada.png'][alt='']"
-           )
+    assert has_element?(view, "#{list_row.(quiet)} .track-private[data-tip^='Private'] svg")
 
     assert has_element?(
              view,
-             "#{tab.(prompted)} .track-creator[role=img][aria-label='Created by @grace'] span[aria-hidden=true]",
-             "GR"
+             "#{list_row.(quiet)} .track-private[role=img][aria-label^='Private']"
            )
 
-    refute has_element?(view, "#{tab.(prompted)} .track-creator img")
-
-    # The age is a hooked <time>: machine-readable, absolute in the tooltip.
-    assert has_element?(view, "#{tab.(fresh)} time#track-age-#{fresh.id}.track-age", "now")
-
-    iso = DateTime.to_iso8601(last)
-
-    assert has_element?(
-             view,
-             "#{tab.(prompted)} time#track-age-#{prompted.id}[phx-hook=RelativeTime][datetime='#{iso}']",
-             "22h"
-           )
-
-    assert has_element?(
-             view,
-             "#track-age-#{prompted.id}[title='Last active #{RavixWeb.LocalTime.full(last, nil)}']"
-           )
-
-    # Private is a lock with a tooltip, and a word only a reader hears; the
-    # row's name says it too (RAV-96).
-    assert has_element?(view, "#{tab.(quiet)} .track-private[data-tip^='Private'] svg")
-    assert has_element?(view, "#{tab.(quiet)} .track-private .sr-only", "Private")
-    assert has_element?(view, "#{tab.(quiet)}[data-label*=', private']")
-    refute has_element?(view, "#{tab.(prompted)}[data-label*=', private']")
-    assert has_element?(view, "#{tab.(quiet)} #track-age-#{quiet.id}", "2d")
-
-    # The link's name carries the age in words; the hook keeps it current
-    # from the stable part in data-label.
-    assert has_element?(
-             view,
-             "#{tab.(prompted)}[data-label^='Prompted, created by @grace'][aria-label$=', active 22 hours ago']"
-           )
-
-    assert has_element?(view, "#{tab.(fresh)}[aria-label$=', active just now']")
-    assert has_element?(view, "#{tab.(quiet)}[aria-label$=', active 2 days ago']")
+    refute has_element?(view, "#{list_row.(prompted)} .track-private")
+    assert has_element?(view, "#{list_row.(prompted)} .tracks-row-age", "22h ago")
+    assert has_element?(view, "#{list_row.(quiet)} .tracks-row-age", "2d ago")
+    assert has_element?(view, "#{list_row.(fresh)} .tracks-row-age", "just now")
+    assert has_element?(view, "#{list_row.(prompted)} .tracks-row-meta", "by @grace")
+    assert has_element?(view, "#{list_row.(fresh)} .tracks-row-meta", "by @ada-lovelace")
+    assert has_element?(view, "#{list_row.(quiet)} .tracks-row-meta", "opened 2d ago")
   end
 
   test "closed rows show how long since they last did anything", ctx do
@@ -115,53 +86,12 @@ defmodule RavixWeb.WorkspaceRailAgeTest do
       )
 
     view = open(ctx.conn, ctx.viewer, "/p/#{ctx.project.id}")
-    view |> element("#show-closed-#{ctx.project.id}") |> render_click()
+    view |> element("#project-tracks-closed") |> render_click()
     render_async(view, 5_000)
+    view |> element("#project-tracks-list") |> render_click()
 
-    assert has_element?(view, "#closed-track-#{closed.id} .track-creator", "GR")
-
-    assert has_element?(
-             view,
-             "#closed-track-#{closed.id} time#closed-track-age-#{closed.id}[phx-hook=RelativeTime]",
-             "3h"
-           )
-  end
-
-  # RAV-96: an avatar on every row says nothing when one person made every
-  # track the rail shows, so the rail leaves them out; a second creator, or
-  # Mine narrowing the rail back to one, decides it again.
-  test "the rail drops its avatars while every track shown has one creator", %{conn: conn} do
-    viewer = insert_user(login: "solo")
-    other = insert_user(login: "second")
-    project = insert_project(user: viewer, name: "Owners")
-
-    mine =
-      insert_track(
-        project: project,
-        title: "Mine",
-        created_by: viewer.id,
-        created_by_login: "solo"
-      )
-
-    {:ok, view, _} = live(log_in_user(conn, viewer), "/p/#{project.id}")
-    render_async(view, 5_000)
-
-    assert has_element?(view, "#project-tree[data-one-creator]")
-    # Still drawn, and still named, for the row's own accessible name.
-    assert has_element?(view, "#project-track-tab-#{mine.id}[data-label*='created by @solo']")
-
-    insert_track(
-      project: project,
-      title: "Theirs",
-      created_by: other.id,
-      created_by_login: "second"
-    )
-
-    {:ok, view, _} = live(log_in_user(conn, viewer), "/p/#{project.id}")
-    render_async(view, 5_000)
-    refute has_element?(view, "#project-tree[data-one-creator]")
-
-    view |> element("#rail-scope-mine") |> render_click()
-    assert has_element?(view, "#project-tree[data-one-creator]")
+    assert has_element?(view, "#tracks-row-#{closed.id}.closed .tracks-row-meta", "by @grace")
+    # Closing is its last activity, not its opening 40 days ago.
+    assert has_element?(view, "#tracks-row-#{closed.id} .tracks-row-age", "3h ago")
   end
 end

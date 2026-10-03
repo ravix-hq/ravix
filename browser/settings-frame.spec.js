@@ -17,7 +17,8 @@ test('workspace General: the unsaved-changes bar, the leave confirmation, Discar
   await expect(page).toHaveTitle('Members · Frame Team · Ravix');
   await expect(breadcrumb(page)).toHaveText(/Frame Team\s*›?\s*Settings\s*›?\s*Members/);
   await expect(page.locator('#settings-nav-members .settings-count')).toHaveText('1');
-  await expect(page.locator('#yard')).toBeVisible();
+  await expect(page.locator('#topbar')).toBeVisible();
+  await expect(page.locator('#topbar .topbar-nav')).toBeVisible();
 
   await page.locator('#settings-nav-general').click();
   await expect(page).toHaveURL(new RegExp(`${general}$`));

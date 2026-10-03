@@ -1,6 +1,6 @@
 defmodule RavixWeb.WorkspaceSectionsLiveTest do
   @moduledoc """
-  Sidebar sections belong to the current workspace (RAV-127): the page
+  Sections belong to the current workspace (RAV-127): the page
   lists and creates them for the workspace that is current, switching
   swaps them, a section of another workspace takes no project, a revoked
   session or membership changes nothing, and with the switch off the
@@ -58,33 +58,54 @@ defmodule RavixWeb.WorkspaceSectionsLiveTest do
     Repo.get_by!(Section, name: name)
   end
 
+  # Whether Manage sections lists the section: Home offers a section as a
+  # filter only once it holds a project, so the dialog is where an empty one
+  # shows.
+  defp managed?(view, section) do
+    view |> element("#manage-sections") |> render_click()
+    managed? = has_element?(view, "#rename-section-#{section.id}")
+    render_click(view, "dismiss-switcher")
+    managed?
+  end
+
+  # Whether Manage sections files the project under the section. Home's
+  # section filters show only beside a second group, so the picker is the
+  # one place that always says.
+  defp filed?(view, section, project) do
+    view |> element("#manage-sections") |> render_click()
+
+    filed? =
+      has_element?(view, "#project-section-#{project.id} option[selected][value='#{section.id}']")
+
+    render_click(view, "dismiss-switcher")
+    filed?
+  end
+
   test "each workspace has its own sections, created there and swapped on switching", ctx do
     view = open(ctx.conn, "/home")
     assert has_element?(view, "#workspace-switcher-trigger", "me")
 
     home = create_section(view, "Home")
     assert home.workspace_id == ctx.personal.id
-    assert has_element?(view, "#section-#{home.id} .section-toggle", "Home")
-    assert has_element?(view, "#section-empty-#{home.id}", "No projects")
+    assert managed?(view, home)
+    # Empty, so not yet a filter on Home.
+    refute has_element?(view, "#home-section-#{home.id}")
 
-    view
-    |> element("#project-sections")
-    |> render_hook("move-project", %{project: ctx.mine.id, section: home.id})
-
-    assert has_element?(view, "#section-#{home.id} a[href='/p/#{ctx.mine.id}']")
+    render_click(view, "move-project", %{project: ctx.mine.id, section: home.id})
+    assert filed?(view, home, ctx.mine)
 
     # The team: Home is not there, filled or not; a section made here is,
-    # even while empty, so there is somewhere to drag a project to.
+    # even while empty, in Manage sections.
     view |> element("#workspace-select-#{ctx.team.id}") |> render_click()
     render_async(view)
     assert has_element?(view, "#workspace-switcher-trigger", "Team")
-    refute has_element?(view, "#section-#{home.id}")
-    assert has_element?(view, "#section-other a[href='/p/#{ctx.team_project.id}']")
+    refute has_element?(view, "#home-section-#{home.id}")
+    assert has_element?(view, "#home-project-#{ctx.team_project.id}")
 
     work = create_section(view, "Work")
     assert work.workspace_id == ctx.team.id
-    assert has_element?(view, "#section-empty-#{work.id}", "No projects")
-    refute has_element?(view, "#section-#{home.id}")
+    assert managed?(view, work)
+    refute managed?(view, home)
 
     # Manage sections offers only this workspace's sections and projects.
     view |> element("#manage-sections") |> render_click()
@@ -95,7 +116,7 @@ defmodule RavixWeb.WorkspaceSectionsLiveTest do
     refute has_element?(view, "#move-project-#{ctx.mine.id}")
     view |> form("#move-project-#{ctx.team_project.id}", section: work.id) |> render_change()
     render_click(view, "dismiss-switcher")
-    assert has_element?(view, "#section-#{work.id} a[href='/p/#{ctx.team_project.id}']")
+    assert filed?(view, work, ctx.team_project)
 
     # A section of the other workspace, named by id, takes nothing.
     assert render_click(view, "move-project", %{project: ctx.team_project.id, section: home.id}) =~
@@ -110,13 +131,13 @@ defmodule RavixWeb.WorkspaceSectionsLiveTest do
     # Back home: Home and its project, no Work.
     view |> element("#workspace-select-#{ctx.personal.id}") |> render_click()
     render_async(view)
-    assert has_element?(view, "#section-#{home.id} a[href='/p/#{ctx.mine.id}']")
-    refute has_element?(view, "#section-#{work.id}")
+    assert filed?(view, home, ctx.mine)
+    refute has_element?(view, "#home-section-#{work.id}")
 
     # And the next page opens where the switcher left it, sections included.
     view = open(ctx.conn, "/home")
-    assert has_element?(view, "#section-#{home.id} a[href='/p/#{ctx.mine.id}']")
-    refute has_element?(view, "#section-#{work.id}")
+    assert filed?(view, home, ctx.mine)
+    refute has_element?(view, "#home-section-#{work.id}")
   end
 
   test "a removed member's sections in that workspace go with it, on the open page", ctx do
@@ -129,15 +150,15 @@ defmodule RavixWeb.WorkspaceSectionsLiveTest do
 
     view = open(ctx.conn, "/home")
     assert has_element?(view, "#workspace-switcher-trigger", "Boss Team")
-    assert has_element?(view, "#section-#{visiting.id}")
-    refute has_element?(view, "#section-#{home.id}")
+    assert managed?(view, visiting)
+    refute managed?(view, home)
 
     :ok = Workspaces.remove_member(boss, boss_team.id, ctx.me.id)
     render_async(view)
 
     assert has_element?(view, "#workspace-switcher-trigger", "me")
-    refute has_element?(view, "#section-#{visiting.id}")
-    assert has_element?(view, "#section-#{home.id}")
+    refute managed?(view, visiting)
+    assert managed?(view, home)
 
     # Creating now lands in the personal workspace, not the one left.
     later = create_section(view, "Later")
@@ -153,7 +174,7 @@ defmodule RavixWeb.WorkspaceSectionsLiveTest do
     conn = Plug.Test.init_test_session(build_conn(), session_token: token)
     {:ok, view, _} = live(conn, "/home")
     render_async(view, 5_000)
-    assert has_element?(view, "#section-#{home.id}")
+    assert managed?(view, home)
     Repo.delete!(session)
 
     :sys.replace_state(view.pid, fn state ->
@@ -181,20 +202,17 @@ defmodule RavixWeb.WorkspaceSectionsLiveTest do
       view = open(ctx.conn, "/home")
 
       refute has_element?(view, "#workspace-switcher")
-      assert has_element?(view, "#section-#{home.id}")
-      assert has_element?(view, "#section-#{work.id}")
-      assert has_element?(view, "#section-other a[href='/p/#{ctx.mine.id}']")
-      assert has_element?(view, "#section-other a[href='/p/#{ctx.team_project.id}']")
+      assert managed?(view, home)
+      assert managed?(view, work)
+      assert has_element?(view, "#home-project-#{ctx.mine.id}")
+      assert has_element?(view, "#home-project-#{ctx.team_project.id}")
 
-      view
-      |> element("#project-sections")
-      |> render_hook("move-project", %{project: ctx.team_project.id, section: home.id})
-
-      assert has_element?(view, "#section-#{home.id} a[href='/p/#{ctx.team_project.id}']")
+      render_click(view, "move-project", %{project: ctx.team_project.id, section: home.id})
+      assert filed?(view, home, ctx.team_project)
 
       later = create_section(view, "Later")
       assert later.workspace_id == ctx.personal.id
-      assert has_element?(view, "#section-#{later.id}")
+      assert managed?(view, later)
       assert {:ok, {sections, _}} = Sections.list(ctx.me, nil)
       assert Enum.map(sections, & &1.name) == ["Home", "Later", "Work"]
     end

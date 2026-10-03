@@ -8,7 +8,7 @@
   and then reflowed it back, which read as the whole screen reloading even
   once the wait behind it got short. --%>
   <div :if={@loading && is_nil(@track)} class="track-workspace-body" aria-busy="true">
-    <header class="crumbs track-crumbs"></header>
+    <header class="track-head"></header>
     <div class="split">
       <section class="track-conversation" aria-label="Conversation">
         <div class="transcript-scroll">
@@ -23,61 +23,155 @@
     <button class="primary" phx-click="retry-load">Try again</button>
   </div>
   <div :if={@track} class="track-workspace-body" data-narrow-view={@narrow_view}>
-    <%!-- The track's title and Share, and little else (RAV-82). The plan
-      chip shows only when the track carries plan items. The machine's state
-      is a labelled chip only while it is not the normal Idle or Working;
-      then it is visually hidden but kept, because it is the page's one live
-      region for the machine (RAV-79). Share shows who is here as stacked
-      avatars. Everything else is in the ⋯ popover after Share: whose
-      machine it is, who pays, Rebuild and Close. A private track has a lock
-      after its title, as its row in the rail does. The plan chip arrives
-      late, so it grows into the spacer and never moves the title; when the
-      strip is short it gives way to its count, and the title last. See "the
-      track's own header" in app.css, and HeaderFit for why a chip's words
-      show whole or not at all. The track is named by `Track.label/1` alone:
-      its branch is in the ribbon below (RAV-83). --%>
-    <header id="track-header" class="crumbs track-crumbs" phx-hook="HeaderFit">
-      <div class="track-header-path">
-        <.link
-          navigate={"/p/#{@project.id}"}
-          class={["project-crumb", !fits?(project_label(@project), 12) && "long"]}
-        >
-          <span class="project-mark" aria-hidden="true">
-            {String.first(@project.name) |> String.upcase()}
+    <%!-- The track's page reads like a pull request's: its title and where
+      it came from, the actions, a line on its state and branch, and tabs for
+      what is in it. The machine's state is a pill with the page's one live
+      region for it (RAV-79). The track is named by `Track.label/1`; its
+      branch is on the status line (RAV-83). --%>
+    <header id="track-header" class="track-head">
+      <div class="track-head-title">
+        <h1 class="track-title">
+          <span class="track-title-text" title={Track.tooltip(@track)}>{Track.label(@track)}</span>
+          <span :if={origin_note(@track)} class="track-title-origin">· {origin_note(@track)}</span>
+          <span
+            :if={@track.visibility == :private}
+            id="track-private"
+            class="track-private"
+            role="img"
+            tabindex="0"
+            aria-label="Private"
+            data-tip="Private: only its creator and the people they invite"
+          >
+            <.icon name="lock" size={14} /><span class="sr-only">Private</span>
           </span>
-          <strong><.project_name project={@project} within={@project.workspace_id} /></strong>
-        </.link>
-        <span class="dimmer" aria-hidden="true">›</span>
-        <button
-          :if={owner_or_creator?(@current_user, @track)}
-          class={["ghost track-title-crumb", !fits?(Track.label(@track), 16) && "long"]}
-          phx-click={JS.push_focus() |> JS.push("dialog")}
-          phx-value-name="rename"
-          data-tip="Rename track"
-          aria-label={"Rename track: #{Track.label(@track)}"}
-        >
-          {Track.label(@track)}
-        </button>
-        <strong
-          :if={!owner_or_creator?(@current_user, @track)}
-          class={["track-title-crumb", !fits?(Track.label(@track), 16) && "long"]}
-          title={Track.tooltip(@track)}
-        >{Track.label(@track)}</strong>
-        <%!-- As on the track's row in the rail: a lock, not a chip. --%>
-        <span
-          :if={@track.visibility == :private}
-          id="track-private"
-          class="track-private"
-          role="img"
-          tabindex="0"
-          aria-label="Private"
-          data-tip="Private: only its creator and the people they invite"
-        >
-          <.icon name="lock" size={12} /><span class="sr-only">Private</span>
-        </span>
+        </h1>
+        <div class="track-head-actions">
+          <button
+            :if={owner_or_creator?(@current_user, @track)}
+            type="button"
+            class="secondary track-title-crumb"
+            phx-click={JS.push_focus() |> JS.push("dialog")}
+            phx-value-name="rename"
+            data-tip="Rename track"
+            aria-label={"Rename track: #{Track.label(@track)}"}
+          >
+            Rename
+          </button>
+          <button
+            :if={
+              Ravix.People.workspace_sharing?(@project) &&
+                owner_or_creator?(@current_user, @track)
+            }
+            id="track-share-button"
+            class="ghost track-share"
+            phx-click={JS.push_focus() |> JS.push("dialog")}
+            phx-value-name="people"
+            aria-haspopup="dialog"
+            aria-expanded={to_string(@dialog == :people)}
+            data-tip={"Share track (#{length(@present)} viewing now)"}
+          ><.icon name="add-person" size={15} /><span>Share</span><.viewers present={@present} /></button><button
+            :if={!Ravix.People.workspace_sharing?(@project)}
+            class="ghost track-share"
+            phx-click={JS.push_focus() |> JS.push("dialog")}
+            phx-value-name="people"
+            aria-label={"Track sharing (#{length(@present)} viewing now)"}
+            data-tip={"Track sharing (#{length(@present)} viewing now)"}
+          ><.icon name="add-person" size={15} /><.viewers present={@present} /></button>
+          <div id="track-more" class="chip-menu" phx-hook="ChipMenu">
+            <button
+              type="button"
+              id="track-more-trigger"
+              class="ghost icon-button"
+              popovertarget="track-more-panel"
+              aria-haspopup="dialog"
+              aria-expanded="false"
+              aria-controls="track-more-panel"
+              aria-label="More for this track"
+              data-tip="More for this track"
+              phx-mounted={JS.ignore_attributes(["aria-expanded"])}
+              style="anchor-name: --track-more"
+            >
+              <.icon name="more" size={15} />
+            </button>
+            <div
+              id="track-more-panel"
+              class="chip-popover chip-popover-below chip-popover-end track-more"
+              popover
+              role="dialog"
+              aria-label="More for this track"
+              style="position-anchor: --track-more"
+            >
+              <dl class="track-facts">
+                <div>
+                  <dt><.icon name="machine" size={14} /><span class="sr-only">Machine</span></dt>
+                  <dd>
+                    <span id="track-machine-scope" title={machine_scope_title(@track)}>{machine_scope(
+                      @track
+                    )}</span><span class="dim"> · {machine_scope_title(@track)}</span>
+                  </dd>
+                </div>
+                <div :if={payer_shown?(@track, @project)} id="track-payer">
+                  <dt><.icon name="person" size={14} /><span class="sr-only">Who pays</span></dt>
+                  <dd>{payer_label(@track)}</dd>
+                </div>
+              </dl>
+              <hr :if={
+                rebuildable?(@current_user, @track) || owner_or_creator?(@current_user, @track)
+              } />
+              <button
+                :if={rebuildable?(@current_user, @track)}
+                type="button"
+                class="account-item"
+                data-chip-close
+                phx-click={JS.push_focus(to: "#track-more-trigger") |> JS.push("dialog")}
+                phx-value-name="rebuild"
+              >
+                <span class="menu-check" aria-hidden="true"><.icon name="refresh" size={14} /></span>Rebuild machine
+              </button>
+              <button
+                :if={owner_or_creator?(@current_user, @track)}
+                type="button"
+                class="account-item"
+                data-chip-close
+                phx-click={JS.push_focus(to: "#track-more-trigger") |> JS.push("dialog")}
+                phx-value-name="close"
+              >
+                <span class="menu-check" aria-hidden="true"><.icon name="x" size={14} /></span>Close track
+              </button>
+            </div>
+          </div>
+          <a
+            :if={known_pull(@pull, @panel)}
+            id="track-view-pull"
+            href={known_pull(@pull, @panel).url}
+            class="button secondary"
+            target="_blank"
+            rel="noreferrer"
+          >View pull request ↗</a>
+          <button
+            :if={!known_pull(@pull, @panel) && @project.repo && @track.level != :read}
+            id="track-open-pull"
+            type="button"
+            class="primary"
+            phx-click={JS.push_focus() |> JS.push("dialog")}
+            phx-value-name="pull"
+          >
+            Open pull request
+          </button>
+        </div>
       </div>
-      <span class="spacer"></span>
-      <div class="track-header-status">
+      <div class="track-head-status">
+        <.machine_chip machine={@turn.machine} />
+        <span class="chip mono track-branch" title={@track.branch}>{@track.branch}</span>
+        <span :if={base_branch(@track, @project)}>from</span>
+        <span :if={base_branch(@track, @project)} class="chip mono">
+          {base_branch(@track, @project)}
+        </span>
+        <span class="track-head-meta">
+          · opened {RavixWeb.LocalTime.ago_words(@track.created_at)} by {@track.created_by_login} · {threads_note(
+            @threads
+          )}
+        </span>
         <.live_component
           module={RavixWeb.Live.TrackPlanItems}
           id={"track-plan-items-#{@track.id}"}
@@ -86,111 +180,53 @@
           track_id={@track.id}
           summary={@assigned_plan}
         />
-        <.machine_chip machine={@turn.machine} />
+        <.preview_chip
+          :if={@previews? && @preview}
+          preview={@preview}
+          can_start={@track.level != :read}
+        />
       </div>
-      <.preview_chip
-        :if={@previews? && @preview}
-        preview={@preview}
-        can_start={@track.level != :read}
-      />
-      <button
-        :if={
-          Ravix.People.workspace_sharing?(@project) && owner_or_creator?(@current_user, @track)
-        }
-        id="track-share-button"
-        class="ghost track-share"
-        phx-click={JS.push_focus() |> JS.push("dialog")}
-        phx-value-name="people"
-        aria-haspopup="dialog"
-        aria-expanded={to_string(@dialog == :people)}
-        data-tip={"Share track (#{length(@present)} viewing now)"}
-      ><.icon name="add-person" size={15} /><span>Share</span><.viewers present={@present} /></button><button
-        :if={!Ravix.People.workspace_sharing?(@project)}
-        class="ghost track-share"
-        phx-click={JS.push_focus() |> JS.push("dialog")}
-        phx-value-name="people"
-        aria-label={"Track sharing (#{length(@present)} viewing now)"}
-        data-tip={"Track sharing (#{length(@present)} viewing now)"}
-      ><.icon name="add-person" size={15} /><.viewers present={@present} /></button>
-      <div id="track-more" class="chip-menu" phx-hook="ChipMenu">
+      <nav class="track-tabs" aria-label="Track views">
         <button
           type="button"
-          id="track-more-trigger"
-          class="ghost icon-button"
-          popovertarget="track-more-panel"
-          aria-haspopup="dialog"
-          aria-expanded="false"
-          aria-controls="track-more-panel"
-          aria-label="More for this track"
-          data-tip="More for this track"
-          phx-mounted={JS.ignore_attributes(["aria-expanded"])}
-          style="anchor-name: --track-more"
+          id="track-tab-threads"
+          class={@narrow_view == "conversation" && "on"}
+          aria-pressed={to_string(@narrow_view == "conversation")}
+          phx-click="narrow-view"
+          phx-value-name="conversation"
         >
-          <.icon name="more" size={15} />
+          <.icon name="document" size={15} />Threads<span class="count">{length(@threads)}</span>
         </button>
-        <div
-          id="track-more-panel"
-          class="chip-popover chip-popover-below chip-popover-end track-more"
-          popover
-          role="dialog"
-          aria-label="More for this track"
-          style="position-anchor: --track-more"
+        <button
+          :for={
+            {tab, label} <- [
+              {:files, "Files"},
+              {:changes, "Changes"},
+              {:checks, "Checks"},
+              {:preview, "Preview"}
+            ]
+          }
+          type="button"
+          id={"track-tab-#{tab}"}
+          class={@narrow_view == "files" && @panel.tab == tab && "on"}
+          aria-pressed={to_string(@narrow_view == "files" && @panel.tab == tab)}
+          phx-click="panel"
+          phx-value-name={tab}
         >
-          <dl class="track-facts">
-            <div>
-              <dt><.icon name="machine" size={14} /><span class="sr-only">Machine</span></dt>
-              <dd>
-                <span id="track-machine-scope" title={machine_scope_title(@track)}>{machine_scope(
-                  @track
-                )}</span><span class="dim"> · {machine_scope_title(@track)}</span>
-              </dd>
-            </div>
-            <div :if={payer_shown?(@track, @project)} id="track-payer">
-              <dt><.icon name="person" size={14} /><span class="sr-only">Who pays</span></dt>
-              <dd>{payer_label(@track)}</dd>
-            </div>
-          </dl>
-          <hr :if={
-            rebuildable?(@current_user, @track) || owner_or_creator?(@current_user, @track)
-          } />
-          <button
-            :if={rebuildable?(@current_user, @track)}
-            type="button"
-            class="account-item"
-            data-chip-close
-            phx-click={JS.push_focus(to: "#track-more-trigger") |> JS.push("dialog")}
-            phx-value-name="rebuild"
-          >
-            <span class="menu-check" aria-hidden="true"><.icon name="refresh" size={14} /></span>Rebuild machine
-          </button>
-          <button
-            :if={owner_or_creator?(@current_user, @track)}
-            type="button"
-            class="account-item"
-            data-chip-close
-            phx-click={JS.push_focus(to: "#track-more-trigger") |> JS.push("dialog")}
-            phx-value-name="close"
-          >
-            <span class="menu-check" aria-hidden="true"><.icon name="x" size={14} /></span>Close track
-          </button>
-        </div>
-      </div>
+          {label}<.change_badge :if={tab == :changes} count={@panel.change_count} />
+        </button>
+        <button
+          type="button"
+          id="track-tab-terminal"
+          class={@narrow_view == "terminal" && "on"}
+          aria-pressed={to_string(@narrow_view == "terminal")}
+          phx-click="narrow-view"
+          phx-value-name="terminal"
+        >
+          Terminal
+        </button>
+      </nav>
     </header>
-    <nav class="track-view-switch workspace-tabs" aria-label="Track views">
-      <button
-        :for={
-          {name, label} <- [
-            {"conversation", "Conversation"},
-            {"files", "Files"},
-            {"terminal", "Commands"}
-          ]
-        }
-        class={if @narrow_view == name, do: "selected", else: "ghost"}
-        aria-pressed={to_string(@narrow_view == name)}
-        phx-click="narrow-view"
-        phx-value-name={name}
-      >{label}</button>
-    </nav>
     <div class="split">
       <section class="track-conversation" aria-label="Conversation">
         <%!-- `data-track` is how the scroll hook learns it is somewhere new.
@@ -209,390 +245,398 @@
           can_write={@track.level != :read}
           renaming={@thread_renaming}
         />
-        <div
-          id="transcript-scroll"
-          role={if length(@threads) > 1 or Ravix.Config.threads_enabled?(), do: "tabpanel"}
-          aria-labelledby={
-            if length(@threads) > 1 or Ravix.Config.threads_enabled?(),
-              do:
-                if(@thread_draft[:selected?],
-                  do: "thread-tab-draft",
-                  else: "thread-tab-#{@thread_id}"
-                )
-          }
-          tabindex="0"
-          phx-hook="TranscriptTail"
-          class="transcript-scroll"
-          data-track={
-            if @thread_draft[:selected?], do: "draft-#{@thread_draft.id}", else: @thread_id
-          }
-        >
-          <div class="track-ribbon">
-            <p :if={@header && @header.copy_of} class="track-copy">
-              You are in a copy of {@header.copy_of} called
-              <code>{Path.basename(@track.workdir)}</code>
-            </p>
-            <div class="ribbon-line">
-              <.icon name="folder" size={13} /><span>Branch <code>{@track.branch}</code></span>
+        <%!-- Every thread is listed beside its conversation, the way a pull
+          request lists its conversations: they share this track's branch and
+          checkout, so they are one piece of work, not several. --%>
+        <div class="track-thread-body">
+          <div
+            id="transcript-scroll"
+            role="tabpanel"
+            aria-labelledby={
+              if(@thread_draft[:selected?],
+                do: "thread-tab-draft",
+                else: "thread-tab-#{@thread_id}"
+              )
+            }
+            tabindex="0"
+            phx-hook="TranscriptTail"
+            class="transcript-scroll"
+            data-track={
+              if @thread_draft[:selected?], do: "draft-#{@thread_draft.id}", else: @thread_id
+            }
+          >
+            <div class="track-ribbon">
+              <p :if={@header && @header.copy_of} class="track-copy">
+                You are in a copy of {@header.copy_of} called
+                <code>{Path.basename(@track.workdir)}</code>
+              </p>
+              <div class="ribbon-line">
+                <.icon name="folder" size={13} /><span>Branch <code>{@track.branch}</code></span>
+              </div>
+              <span
+                :if={@track.stale}
+                class="chip"
+              >
+                Settings changed — open a new track to use them
+              </span>
             </div>
-            <span
-              :if={@track.stale}
-              class="chip"
-            >
-              Settings changed — open a new track to use them
-            </span>
-          </div>
-          <%!-- A draft has no transcript: the thread it will be does not exist
+            <%!-- A draft has no transcript: the thread it will be does not exist
             until its first message, which is what this says. --%>
-          <div
-            :if={@thread_draft[:selected?]}
-            id="draft-thread-empty"
-            class="workspace-welcome conversation-start"
-          >
-            <span class="empty-icon"><.icon name="sparkle" size={22} /></span>
-            <h2>New thread</h2>
-            <p class="dim">
-              Your first message starts this thread. It shares this checkout with the others.
-            </p>
-          </div>
-          <button
-            :if={!@thread_draft[:selected?] && Transcript.History.more?(@page.history)}
-            id="load-earlier"
-            type="button"
-            phx-click="load-earlier"
-            disabled={@earlier_loading}
-          >
-            {if @earlier_loading, do: "Loading earlier…", else: "Load earlier"}
-          </button>
-          <div
-            :if={!@thread_draft[:selected?] && leading_comments(assigns) != []}
-            id="transcript-leading-comments"
-          >
-            <.thread_comment
-              :for={comment <- leading_comments(assigns)}
-              comment={comment}
-              current_user={@current_user}
-              editing={@comment_editing}
-              zone={@timezone}
-            />
-          </div>
-          <div :if={!@thread_draft[:selected?]} id="transcript-turns" phx-update="stream">
-            <article
-              :for={{dom_id, turn} <- @streams.turns}
-              id={dom_id}
-              class={["workspace-turn", !turn.settled? && "running"]}
+            <div
+              :if={@thread_draft[:selected?]}
+              id="draft-thread-empty"
+              class="workspace-welcome conversation-start"
             >
-              <.prompt_message
-                :if={turn.prompt || turn.image_count > 0}
-                prompt={turn.prompt || ""}
-                image_count={turn.image_count}
-                track_id={@track.id}
-                thread_id={@thread_id}
-                turn_id={turn.id}
-              />
-              <section :if={turn.blocks != []} class="agent-terminal" aria-label="Agent output">
-                <div class="agent-terminal-output">
-                  <%= for segment <- segments(turn.blocks) do %>
-                    <.work
-                      :if={match?({:work, _}, segment)}
-                      blocks={elem(segment, 1)}
-                      turn={turn}
-                      rendered={@rendered}
-                      workdir={@track.workdir}
-                    />
-                    <div :if={match?({:block, _}, segment)}>
-                      <.block
-                        block={elem(segment, 1)}
-                        html={rendered(@rendered, elem(segment, 1))}
-                      />
-                    </div>
-                  <% end %>
-                </div>
-                <button
-                  :if={
-                    turn.prompt && !String.starts_with?(turn.prompt, "[ravix]") &&
-                      Enum.any?(turn.blocks, &match?(%TranscriptBlock.Failure{}, &1))
-                  }
-                  type="button"
-                  class="ghost"
-                  phx-click="retry-turn"
-                  phx-value-turn={turn.id}
-                >Retry message</button>
-                <.turn_footer
-                  :if={turn.settled?}
-                  id={dom_id}
-                  turn={turn}
-                  link={turn_link(@track, @thread_id, dom_id)}
-                  workdir={@track.workdir}
-                  options={@track.session_options}
-                  zone={@timezone}
-                />
-                <.turn_timer :if={!turn.settled?} turn={turn} zone={@timezone} />
-              </section>
+              <span class="empty-icon"><.icon name="sparkle" size={22} /></span>
+              <h2>New thread</h2>
+              <p class="dim">
+                Your first message starts this thread. It shares this checkout with the others.
+              </p>
+            </div>
+            <button
+              :if={!@thread_draft[:selected?] && Transcript.History.more?(@page.history)}
+              id="load-earlier"
+              type="button"
+              phx-click="load-earlier"
+              disabled={@earlier_loading}
+            >
+              {if @earlier_loading, do: "Loading earlier…", else: "Load earlier"}
+            </button>
+            <div
+              :if={!@thread_draft[:selected?] && leading_comments(assigns) != []}
+              id="transcript-leading-comments"
+            >
               <.thread_comment
-                :for={comment <- comments_after(@comments, turn.id)}
+                :for={comment <- leading_comments(assigns)}
                 comment={comment}
                 current_user={@current_user}
                 editing={@comment_editing}
                 zone={@timezone}
               />
-            </article>
-          </div>
-          <%!-- Shown by `assets/js/hooks/transcript_tail.js` once the reader
+            </div>
+            <div :if={!@thread_draft[:selected?]} id="transcript-turns" phx-update="stream">
+              <article
+                :for={{dom_id, turn} <- @streams.turns}
+                id={dom_id}
+                class={["workspace-turn", !turn.settled? && "running"]}
+              >
+                <.prompt_message
+                  :if={turn.prompt || turn.image_count > 0}
+                  prompt={turn.prompt || ""}
+                  image_count={turn.image_count}
+                  track_id={@track.id}
+                  thread_id={@thread_id}
+                  turn_id={turn.id}
+                />
+                <section :if={turn.blocks != []} class="agent-terminal" aria-label="Agent output">
+                  <div class="agent-terminal-output">
+                    <%= for segment <- segments(turn.blocks) do %>
+                      <.work
+                        :if={match?({:work, _}, segment)}
+                        blocks={elem(segment, 1)}
+                        turn={turn}
+                        rendered={@rendered}
+                        workdir={@track.workdir}
+                      />
+                      <div :if={match?({:block, _}, segment)}>
+                        <.block
+                          block={elem(segment, 1)}
+                          html={rendered(@rendered, elem(segment, 1))}
+                        />
+                      </div>
+                    <% end %>
+                  </div>
+                  <button
+                    :if={
+                      turn.prompt && !String.starts_with?(turn.prompt, "[ravix]") &&
+                        Enum.any?(turn.blocks, &match?(%TranscriptBlock.Failure{}, &1))
+                    }
+                    type="button"
+                    class="ghost"
+                    phx-click="retry-turn"
+                    phx-value-turn={turn.id}
+                  >Retry message</button>
+                  <.turn_footer
+                    :if={turn.settled?}
+                    id={dom_id}
+                    turn={turn}
+                    link={turn_link(@track, @thread_id, dom_id)}
+                    workdir={@track.workdir}
+                    options={@track.session_options}
+                    zone={@timezone}
+                  />
+                  <.turn_timer :if={!turn.settled?} turn={turn} zone={@timezone} />
+                </section>
+                <.thread_comment
+                  :for={comment <- comments_after(@comments, turn.id)}
+                  comment={comment}
+                  current_user={@current_user}
+                  editing={@comment_editing}
+                  zone={@timezone}
+                />
+              </article>
+            </div>
+            <%!-- Shown by `assets/js/hooks/transcript_tail.js` once the reader
             has scrolled up: it toggles `unpinned` on the scroller, and the
             stylesheet shows this only under that class. A click re-pins. --%>
-          <button type="button" class="jump-latest" data-jump-latest>
-            <.icon name="arrow-down" size={12} class="ico" />Jump to latest
-          </button>
-          <p
-            :if={!@thread_draft[:selected?] && @transcript_loading}
-            class="workspace-welcome"
-            role="status"
-          >
-            Loading conversation…
-          </p>
-          <%!-- Only once the transcript has actually been read. An empty
+            <button type="button" class="jump-latest" data-jump-latest>
+              <.icon name="arrow-down" size={12} class="ico" />Jump to latest
+            </button>
+            <p
+              :if={!@thread_draft[:selected?] && @transcript_loading}
+              class="workspace-welcome"
+              role="status"
+            >
+              Loading conversation…
+            </p>
+            <%!-- Only once the transcript has actually been read. An empty
             `@page` is also what a track that is still loading one has, and
             offering the starters for a conversation with a year of history
             in it --- for the moment before the read answers --- is a worse
             answer than saying nothing yet. --%>
-          <div
-            :if={
-              !@thread_draft[:selected?] && !@transcript_loading &&
-                Transcript.visible_turns(@page) == []
-            }
-            class="workspace-welcome conversation-start"
-          >
-            <span class="empty-icon"><.icon name="sparkle" size={22} /></span>
-            <h2>What are we working on?</h2>
-            <div class="conversation-starters">
-              <button
-                :for={starter <- @starters}
-                class="ghost"
-                phx-click="starter"
-                phx-value-prompt={starter.prompt}
-              >
-                {starter.label}
-              </button>
+            <div
+              :if={
+                !@thread_draft[:selected?] && !@transcript_loading &&
+                  Transcript.visible_turns(@page) == []
+              }
+              class="workspace-welcome conversation-start"
+            >
+              <span class="empty-icon"><.icon name="sparkle" size={22} /></span>
+              <h2>What are we working on?</h2>
+              <div class="conversation-starters">
+                <button
+                  :for={starter <- @starters}
+                  class="ghost"
+                  phx-click="starter"
+                  phx-value-prompt={starter.prompt}
+                >
+                  {starter.label}
+                </button>
+              </div>
             </div>
           </div>
-        </div>
-        <%!-- RAV-94: a waiting prompt is drawn as its bubble will be, muted,
+          <%!-- RAV-94: a waiting prompt is drawn as its bubble will be, muted,
           with what it is waiting for above it and Edit / Cancel below. Edit
           takes it off the queue through the same `queue` event and access
           check as Cancel, and puts its words back in the box. --%>
-        <ol
-          :if={!@thread_draft[:selected?] && @queue != []}
-          class="workspace-queue"
-          aria-label="Queued prompts"
-        >
-          <li :for={item <- @queue} class="queue-item said">
-            <%!-- RAV-131: alive while it waits or goes. The dot is the
-              Starting chip's, and keeps still under prefers-reduced-motion. --%>
-            <p class="speaker queue-label">
-              <span
-                :if={item.status in [:queued, :sending]}
-                class={"dot " <> queue_dot(item.status)}
-                aria-hidden="true"
-              ></span><span class="queue-state">{queue_label(item.status)}</span><span :if={
-                item.status == :queued and @track.setup_state == "ready" and
-                  is_nil(queue_feedback(item, @track.runtime || @project.runtime))
-              }> · sends when the agent is free</span><span
-                :if={
-                  item.status == :queued and @track.setup_state != "ready" and
+          <ol
+            :if={!@thread_draft[:selected?] && @queue != []}
+            class="workspace-queue"
+            aria-label="Queued prompts"
+          >
+            <li :for={item <- @queue} class="queue-item said">
+              <%!-- RAV-131: alive while it waits or goes. The dot is the
+                Starting chip's, and keeps still under prefers-reduced-motion. --%>
+              <p class="speaker queue-label">
+                <span
+                  :if={item.status in [:queued, :sending]}
+                  class={"dot " <> queue_dot(item.status)}
+                  aria-hidden="true"
+                ></span><span class="queue-state">{queue_label(item.status)}</span><span :if={
+                  item.status == :queued and @track.setup_state == "ready" and
                     is_nil(queue_feedback(item, @track.runtime || @project.runtime))
+                }> · sends when the agent is free</span><span
+                  :if={
+                    item.status == :queued and @track.setup_state != "ready" and
+                      is_nil(queue_feedback(item, @track.runtime || @project.runtime))
+                  }
+                  class="queue-starts"
+                > · starts when setup is ready</span>
+              </p>
+              <div :if={item.prompt} class="workspace-prompt queue-prompt md">
+                {queue_prompt_html(item.prompt)}
+              </div>
+              <p
+                :if={queue_feedback(item, @track.runtime || @project.runtime)}
+                class="queue-feedback"
+              >
+                {queue_feedback(item, @track.runtime || @project.runtime)}
+              </p>
+              <%!-- RAV-131: waited long on nothing but the queue; say so. --%>
+              <p
+                :if={
+                  queue_stale_feedback(
+                    item,
+                    @track.runtime || @project.runtime,
+                    @queue_wait,
+                    @queue_stale?
+                  )
                 }
-                class="queue-starts"
-              > · starts when setup is ready</span>
-            </p>
-            <div :if={item.prompt} class="workspace-prompt queue-prompt md">
-              {queue_prompt_html(item.prompt)}
-            </div>
-            <p
-              :if={queue_feedback(item, @track.runtime || @project.runtime)}
-              class="queue-feedback"
-            >
-              {queue_feedback(item, @track.runtime || @project.runtime)}
-            </p>
-            <%!-- RAV-131: waited long on nothing but the queue; say so. --%>
-            <p
-              :if={
-                queue_stale_feedback(
+                class="queue-feedback queue-stale"
+                role="status"
+              >
+                {queue_stale_feedback(
                   item,
                   @track.runtime || @project.runtime,
                   @queue_wait,
                   @queue_stale?
-                )
-              }
-              class="queue-feedback queue-stale"
-              role="status"
-            >
-              {queue_stale_feedback(
-                item,
-                @track.runtime || @project.runtime,
-                @queue_wait,
-                @queue_stale?
-              )}
-            </p>
-            <p :if={item.error && item.status != :queued} class="queue-error">{item.error}</p>
-            <div :if={item.can_cancel} class="queue-actions">
-              <button
-                :if={item.status == :queued && item.image_count == 0 && item.prompt}
-                class="ghost"
-                phx-click="queue"
-                phx-value-action="edit"
-                phx-value-id={item.id}
-              >
-                Edit
-              </button>
-              <button
-                :if={
-                  item.status in [:failed, :unconfirmed] or
-                    (item.status == :queued and @queue_stale? and
-                       match?(%{id: id} when id == item.id, @queue_wait))
-                }
-                class="ghost"
-                phx-click="queue"
-                phx-value-action="retry"
-                phx-value-id={item.id}
-              >
-                Retry
-              </button>
-              <button
-                class="ghost"
-                phx-click="queue"
-                phx-value-action="cancel"
-                phx-value-id={item.id}
-              >
-                Cancel
-              </button>
-            </div>
-          </li>
-        </ol>
-        <%!-- The one thing a reader who is not looking should hear: a turn
-          ended. Polite, so it waits for whatever is being read; visually
-          hidden, because the transcript already shows it. --%>
-        <div id="transcript-status" class="sr-only" role="status" aria-live="polite">
-          {@announcement}
-        </div>
-        <.loading_status :if={:interrupt in @pending}>Stopping agent…</.loading_status>
-        <%!-- RAV-132: the card stays past setup's own ready until its last
-          step, the first prompt reaching the agent, is done; then it folds
-          to one line, and a moment later goes. See `assign_setup_card/1`. --%>
-        <div
-          :if={@setup_card not in [nil, :gone]}
-          id="track-setup-status"
-          class={[@setup_card == :collapsed && "setup-finished"]}
-          data-state={@setup_card}
-          role={if @track.status == :setup_failed, do: "alert", else: "status"}
-        >
-          <strong>{setup_heading(@setup_card, @track, @setup_now, @queue)}</strong>
-          <span :if={@setup_card == :collapsed and setup_duration(@track)} class="setup-duration">
-            · {setup_duration(@track)}
-          </span>
-          <span :if={
-            @setup_card != :collapsed and
-              (@track.sandbox_layout == :dedicated ||
-                 Ravix.Config.dedicated_opens_enabled?(@current_user))
-          }>{if @track.sandbox_layout == :dedicated,
-            do: "Own machine",
-            else: "Shared project machine"}</span>
-          <span :if={@setup_card == :setup and @track.setup_error}>{@track.setup_error}</span>
-          <ol
-            :if={
-              (@setup_card == :setup and
-                 @track.setup_state in ["pending", "running", "retry", "failed"] and
-                 not parked?(@track)) or @setup_card in [:handoff, :finished]
-            }
-            id="track-setup-steps"
-            class="setup-steps"
-            aria-label="Setup steps"
-          >
-            <li
-              :for={step <- setup_steps(@track, @project, @setup_handoff)}
-              class={"setup-step " <> Atom.to_string(step.state)}
-              aria-current={step.state == :now && "step"}
-            >
-              <span class="setup-step-mark" aria-hidden="true">
-                <.icon :if={step.state == :done} name="check" size={12} />
-              </span>
-              <span>{step.label}<span :if={step.state == :skipped} class="setup-step-note"> · not needed</span></span>
-              <span :if={step.state == :failed} class="sr-only">(failed)</span>
+                )}
+              </p>
+              <p :if={item.error && item.status != :queued} class="queue-error">{item.error}</p>
+              <div :if={item.can_cancel} class="queue-actions">
+                <button
+                  :if={item.status == :queued && item.image_count == 0 && item.prompt}
+                  class="ghost"
+                  phx-click="queue"
+                  phx-value-action="edit"
+                  phx-value-id={item.id}
+                >
+                  Edit
+                </button>
+                <button
+                  :if={
+                    item.status in [:failed, :unconfirmed] or
+                      (item.status == :queued and @queue_stale? and
+                         match?(%{id: id} when id == item.id, @queue_wait))
+                  }
+                  class="ghost"
+                  phx-click="queue"
+                  phx-value-action="retry"
+                  phx-value-id={item.id}
+                >
+                  Retry
+                </button>
+                <button
+                  class="ghost"
+                  phx-click="queue"
+                  phx-value-action="cancel"
+                  phx-value-id={item.id}
+                >
+                  Cancel
+                </button>
+              </div>
             </li>
           </ol>
-          <p :if={
-            @setup_card == :setup and @track.setup_state in ["pending", "running", "retry"] and
-              not parked?(@track)
-          }>
-            Prompts will wait until setup is ready.
-          </p>
-
-          <p :if={
-            (@setup_card == :setup and @track.status == :setup_failed) &&
-              @track.setup_error_code != "secrets_changed"
-          }>
-            Retry setup, then retry your saved prompts.
-          </p>
-          <button
-            :if={
-              (@setup_card == :setup and @track.setup_error_code == "secrets_changed") &&
-                rebuildable?(@current_user, @track)
-            }
-            id="secrets-changed-rebuild"
-            phx-click={JS.push_focus() |> JS.push("dialog")}
-            phx-value-name="rebuild"
+          <%!-- The one thing a reader who is not looking should hear: a turn
+            ended. Polite, so it waits for whatever is being read; visually
+            hidden, because the transcript already shows it. --%>
+          <div id="transcript-status" class="sr-only" role="status" aria-live="polite">
+            {@announcement}
+          </div>
+          <.loading_status :if={:interrupt in @pending}>Stopping agent…</.loading_status>
+          <%!-- RAV-132: the card stays past setup's own ready until its last
+            step, the first prompt reaching the agent, is done; then it folds
+            to one line, and a moment later goes. See `assign_setup_card/1`. --%>
+          <div
+            :if={@setup_card not in [nil, :gone]}
+            id="track-setup-status"
+            class={[@setup_card == :collapsed && "setup-finished"]}
+            data-state={@setup_card}
+            role={if @track.status == :setup_failed, do: "alert", else: "status"}
           >
-            Rebuild machine…
-          </button>
-        </div>
-        <div :if={@billing_notice} id="billing-notice" class="welcome-warning" role="status">
-          <p>{@billing_notice}</p>
-          <button type="button" class="ghost" phx-click="dismiss-billing-notice">Got it</button>
-        </div>
-        <.loading_status :if={:retry in @pending}>Retrying track…</.loading_status>
-        <RavixWeb.Live.ThreadConnect.panel
-          :if={@thread_draft[:selected?]}
-          options={@thread_draft.options}
-          connection={@thread_connect}
-          current_user={@current_user}
-          session_hash={@session_hash}
-          buttons={false}
-        />
-        <p :if={@thread_error} id="thread-error" role="alert">{@thread_error}</p>
-        <.loading_status :if={:start_thread in @pending}>Starting thread…</.loading_status>
-        <div class="workspace-composer">
-          <.live_component
-            :if={!@thread_draft[:selected?]}
-            module={RavixWeb.Live.AgentHealth}
-            id="track-agent-health"
-            track_id={@track.id}
-            thread_id={@thread_id}
+            <strong>{setup_heading(@setup_card, @track, @setup_now, @queue)}</strong>
+            <span
+              :if={@setup_card == :collapsed and setup_duration(@track)}
+              class="setup-duration"
+            >
+              · {setup_duration(@track)}
+            </span>
+            <span :if={
+              @setup_card != :collapsed and
+                (@track.sandbox_layout == :dedicated ||
+                   Ravix.Config.dedicated_opens_enabled?(@current_user))
+            }>{if @track.sandbox_layout == :dedicated,
+              do: "Own machine",
+              else: "Shared project machine"}</span>
+            <span :if={@setup_card == :setup and @track.setup_error}>{@track.setup_error}</span>
+            <ol
+              :if={
+                (@setup_card == :setup and
+                   @track.setup_state in ["pending", "running", "retry", "failed"] and
+                   not parked?(@track)) or @setup_card in [:handoff, :finished]
+              }
+              id="track-setup-steps"
+              class="setup-steps"
+              aria-label="Setup steps"
+            >
+              <li
+                :for={step <- setup_steps(@track, @project, @setup_handoff)}
+                class={"setup-step " <> Atom.to_string(step.state)}
+                aria-current={step.state == :now && "step"}
+              >
+                <span class="setup-step-mark" aria-hidden="true">
+                  <.icon :if={step.state == :done} name="check" size={12} />
+                </span>
+                <span>{step.label}<span :if={step.state == :skipped} class="setup-step-note"> · not needed</span></span>
+                <span :if={step.state == :failed} class="sr-only">(failed)</span>
+              </li>
+            </ol>
+            <p :if={
+              @setup_card == :setup and @track.setup_state in ["pending", "running", "retry"] and
+                not parked?(@track)
+            }>
+              Prompts will wait until setup is ready.
+            </p>
+
+            <p :if={
+              (@setup_card == :setup and @track.status == :setup_failed) &&
+                @track.setup_error_code != "secrets_changed"
+            }>
+              Retry setup, then retry your saved prompts.
+            </p>
+            <button
+              :if={
+                (@setup_card == :setup and @track.setup_error_code == "secrets_changed") &&
+                  rebuildable?(@current_user, @track)
+              }
+              id="secrets-changed-rebuild"
+              phx-click={JS.push_focus() |> JS.push("dialog")}
+              phx-value-name="rebuild"
+            >
+              Rebuild machine…
+            </button>
+          </div>
+          <div :if={@billing_notice} id="billing-notice" class="welcome-warning" role="status">
+            <p>{@billing_notice}</p>
+            <button type="button" class="ghost" phx-click="dismiss-billing-notice">Got it</button>
+          </div>
+          <.loading_status :if={:retry in @pending}>Retrying track…</.loading_status>
+          <RavixWeb.Live.ThreadConnect.panel
+            :if={@thread_draft[:selected?]}
+            options={@thread_draft.options}
+            connection={@thread_connect}
             current_user={@current_user}
             session_hash={@session_hash}
-            project_id={@project.id}
-            refused={
-              @agent_refused ||
-                @track.setup_error_code in [
-                  "inference_credential_unusable",
-                  "chatgpt_grant_unusable"
-                ] ||
-                Enum.any?(
-                  @queue,
-                  &(&1.status == :failed &&
-                      &1.error_code in ["inference_credential_unusable", "chatgpt_grant_unusable"])
-                )
-            }
-            refresh={@health_refresh}
+            buttons={false}
           />
-          <%!-- Other people only: presence counts you too, and "@you is
+          <p :if={@thread_error} id="thread-error" role="alert">{@thread_error}</p>
+          <.loading_status :if={:start_thread in @pending}>Starting thread…</.loading_status>
+          <div class="workspace-composer">
+            <.live_component
+              :if={!@thread_draft[:selected?]}
+              module={RavixWeb.Live.AgentHealth}
+              id="track-agent-health"
+              track_id={@track.id}
+              thread_id={@thread_id}
+              current_user={@current_user}
+              session_hash={@session_hash}
+              project_id={@project.id}
+              refused={
+                @agent_refused ||
+                  @track.setup_error_code in [
+                    "inference_credential_unusable",
+                    "chatgpt_grant_unusable"
+                  ] ||
+                  Enum.any?(
+                    @queue,
+                    &(&1.status == :failed &&
+                        &1.error_code in [
+                          "inference_credential_unusable",
+                          "chatgpt_grant_unusable"
+                        ])
+                  )
+              }
+              refresh={@health_refresh}
+            />
+            <%!-- Other people only: presence counts you too, and "@you is
             typing…" was an `@` beside the composer's popovers (RAV-95). One
             line, always drawn and a fixed height, laid over the transcript's
             bottom padding (RAV-91), so somebody starting or stopping typing
             never moves the composer. --%>
-          <p id="typing-notice" class="hint typing-notice" aria-live="polite">
-            {typing_notice(@present, @current_user)}
-          </p>
-          <%!-- `phx-change` is what `allow_upload/3` needs to see an image
+            <p id="typing-notice" class="hint typing-notice" aria-live="polite">
+              {typing_notice(@present, @current_user)}
+            </p>
+            <%!-- `phx-change` is what `allow_upload/3` needs to see an image
             being chosen, and the textarea's own share of it is a round trip
             per keystroke carrying the whole prompt --- which `handle_event`
             for "validate" looks at and does nothing with. A long instruction
@@ -600,122 +644,122 @@
             debounce that says what is true: the server has no use for this
             box until it is submitted, and the draft is kept in the browser
             by `assets/js/hooks/composer.js` meanwhile. --%>
-          <%!-- Ask agent / Comment. A comment goes to people and never to
+            <%!-- Ask agent / Comment. A comment goes to people and never to
             the agent, so the whole box says which one it is: its colour, its
             placeholder, its accessible name and the send button's. Images
             are for prompts; any already attached wait for Ask agent. --%>
-          <%!-- RAV-94: Ask agent / Comment switches in the browser the moment
+            <%!-- RAV-94: Ask agent / Comment switches in the browser the moment
             it is pressed (the `Composer` hook), and the server's render
             catches up; the textarea's `data-mode` is what the server said. --%>
-          <form id="composer-form" phx-submit="send" phx-change="validate">
-            <div
-              class={["composer-box", @composer_mode == :comment && "commenting"]}
-              data-composer-box
-            >
-              <div class="composer-note" role="status" data-composer-note hidden></div>
-              <p
-                :if={@track.level == :read && @composer_mode == :ask}
-                id="composer-read-only"
-                class="composer-mode-hint composer-read-only"
+            <form id="composer-form" phx-submit="send" phx-change="validate">
+              <div
+                class={["composer-box", @composer_mode == :comment && "commenting"]}
+                data-composer-box
               >
-                <.icon name="person" size={12} />You have Read access. Ask an admin for Write to send prompts; you can still comment.
-              </p>
-              <textarea
-                :if={@thread_draft[:selected?]}
-                id={"composer-draft-#{@thread_draft.id}"}
-                phx-hook="Composer"
-                name="text"
-                rows="2"
-                phx-debounce="blur"
-                placeholder="Start a new thread, @mention files"
-                aria-label="Message"
-                aria-autocomplete="list"
-                aria-controls="composer-suggestions"
-                aria-keyshortcuts="Control+L Meta+L"
-                data-draft-key={"track:#{@track.id}:thread:draft:#{@thread_draft.id}"}
-                data-typing-event="typing"
-                data-empty-event="composer-draft"
-                data-files-event="mention-files"
-                disabled={is_nil(@track.conversation_id) or @track.level == :read}
-              ></textarea>
-              <textarea
-                :if={!@thread_draft[:selected?]}
-                id={"composer-#{@thread_id}"}
-                phx-hook="Composer"
-                name="text"
-                rows="2"
-                phx-debounce="blur"
-                placeholder={
-                  composer_placeholder(
-                    @composer_mode,
-                    @page,
-                    @turn.running?
-                  )
-                }
-                data-placeholder-ask={
-                  composer_placeholder(
-                    :ask,
-                    @page,
-                    @turn.running?
-                  )
-                }
-                data-placeholder-comment={composer_placeholder(:comment, @page, false)}
-                data-ask-disabled={
-                  to_string(is_nil(@track.conversation_id) or @track.level == :read)
-                }
-                aria-label={if @composer_mode == :comment, do: "Comment", else: "Message"}
-                aria-describedby={
-                  (@composer_mode == :comment && "composer-mode-hint") ||
-                    (@track.level == :read && "composer-read-only")
-                }
-                aria-autocomplete="list"
-                aria-controls={
-                  if @composer_mode == :comment,
-                    do: "mention-options",
-                    else: "composer-suggestions"
-                }
-                aria-keyshortcuts="Control+L Meta+L"
-                data-mode={@composer_mode}
-                data-draft-key={"track:#{@track.id}:thread:#{@thread_id}"}
-                data-typing-event="typing"
-                data-empty-event="composer-draft"
-                data-files-event={@composer_mode == :ask && "mention-files"}
-                data-commands={
-                  @composer_mode == :ask &&
-                    Jason.encode!(
-                      composer_commands(
-                        @agent_commands,
-                        @turn.running?,
-                        @pending
-                      )
-                    )
-                }
-                disabled={
-                  @composer_mode == :ask &&
-                    (is_nil(@track.conversation_id) or @track.level == :read)
-                }
-              ></textarea>
-              <ul
-                :if={@composer_mode == :comment}
-                id="mention-options"
-                class="mention-options"
-                role="listbox"
-                aria-label="People to mention"
-                phx-update="ignore"
-                data-mention-options
-              >
-                <li
-                  :for={person <- @mentionable}
-                  id={"mention-option-#{person.login}"}
-                  role="option"
-                  aria-selected="false"
-                  data-login={person.login}
+                <div class="composer-note" role="status" data-composer-note hidden></div>
+                <p
+                  :if={@track.level == :read && @composer_mode == :ask}
+                  id="composer-read-only"
+                  class="composer-mode-hint composer-read-only"
                 >
-                  <strong>@{person.login}</strong>
-                  <span :if={person.name} class="dim">{person.name}</span>
-                </li>
-              </ul>
-              <%!-- Ask mode's `@` files and `/` commands. The hook fills the
+                  <.icon name="person" size={12} />You have Read access. Ask an admin for Write to send prompts; you can still comment.
+                </p>
+                <textarea
+                  :if={@thread_draft[:selected?]}
+                  id={"composer-draft-#{@thread_draft.id}"}
+                  phx-hook="Composer"
+                  name="text"
+                  rows="2"
+                  phx-debounce="blur"
+                  placeholder="Start a new thread, @mention files"
+                  aria-label="Message"
+                  aria-autocomplete="list"
+                  aria-controls="composer-suggestions"
+                  aria-keyshortcuts="Control+L Meta+L"
+                  data-draft-key={"track:#{@track.id}:thread:draft:#{@thread_draft.id}"}
+                  data-typing-event="typing"
+                  data-empty-event="composer-draft"
+                  data-files-event="mention-files"
+                  disabled={is_nil(@track.conversation_id) or @track.level == :read}
+                ></textarea>
+                <textarea
+                  :if={!@thread_draft[:selected?]}
+                  id={"composer-#{@thread_id}"}
+                  phx-hook="Composer"
+                  name="text"
+                  rows="2"
+                  phx-debounce="blur"
+                  placeholder={
+                    composer_placeholder(
+                      @composer_mode,
+                      @page,
+                      @turn.running?
+                    )
+                  }
+                  data-placeholder-ask={
+                    composer_placeholder(
+                      :ask,
+                      @page,
+                      @turn.running?
+                    )
+                  }
+                  data-placeholder-comment={composer_placeholder(:comment, @page, false)}
+                  data-ask-disabled={
+                    to_string(is_nil(@track.conversation_id) or @track.level == :read)
+                  }
+                  aria-label={if @composer_mode == :comment, do: "Comment", else: "Message"}
+                  aria-describedby={
+                    (@composer_mode == :comment && "composer-mode-hint") ||
+                      (@track.level == :read && "composer-read-only")
+                  }
+                  aria-autocomplete="list"
+                  aria-controls={
+                    if @composer_mode == :comment,
+                      do: "mention-options",
+                      else: "composer-suggestions"
+                  }
+                  aria-keyshortcuts="Control+L Meta+L"
+                  data-mode={@composer_mode}
+                  data-draft-key={"track:#{@track.id}:thread:#{@thread_id}"}
+                  data-typing-event="typing"
+                  data-empty-event="composer-draft"
+                  data-files-event={@composer_mode == :ask && "mention-files"}
+                  data-commands={
+                    @composer_mode == :ask &&
+                      Jason.encode!(
+                        composer_commands(
+                          @agent_commands,
+                          @turn.running?,
+                          @pending
+                        )
+                      )
+                  }
+                  disabled={
+                    @composer_mode == :ask &&
+                      (is_nil(@track.conversation_id) or @track.level == :read)
+                  }
+                ></textarea>
+                <ul
+                  :if={@composer_mode == :comment}
+                  id="mention-options"
+                  class="mention-options"
+                  role="listbox"
+                  aria-label="People to mention"
+                  phx-update="ignore"
+                  data-mention-options
+                >
+                  <li
+                    :for={person <- @mentionable}
+                    id={"mention-option-#{person.login}"}
+                    role="option"
+                    aria-selected="false"
+                    data-login={person.login}
+                  >
+                    <strong>@{person.login}</strong>
+                    <span :if={person.name} class="dim">{person.name}</span>
+                  </li>
+                </ul>
+                <%!-- Ask mode's `@` files and `/` commands. The hook fills the
                 list, names it and opens it, so the server leaves it alone.
                 It scrolls past eight rows, so it is focusable, as a scroller
                 must be; while it is open the box keeps focus (Tab there
@@ -723,244 +767,288 @@
                 Open is `hidden` rather than a `data-` flag: a patch strips
                 any `data-` attribute from an ignored element that the
                 template does not have, and keeps the rest. --%>
-              <ul
-                :if={@composer_mode == :ask}
-                id="composer-suggestions"
-                class="mention-options composer-suggestions"
-                role="listbox"
-                aria-label="Suggestions"
-                tabindex="0"
-                phx-update="ignore"
-                hidden
-                data-composer-suggestions
-              >
-              </ul>
-              <p
-                :if={@composer_mode == :ask}
-                id="composer-suggestions-status"
-                class="sr-only"
-                role="status"
-                phx-update="ignore"
-                data-composer-announce
-              >
-              </p>
-              <.live_file_input upload={@uploads.images} aria-label="Attach images" />
-              <div
-                :for={entry <- @uploads.images.entries}
-                :if={@composer_mode == :ask}
-                class="workspace-upload"
-              >
-                <span>{entry.client_name} ({entry.progress}%)</span><button
-                  type="button"
-                  class="ghost"
-                  phx-click="cancel-upload"
-                  phx-value-ref={entry.ref}
-                >Remove</button>
-                <p :for={err <- upload_errors(@uploads.images, entry)} role="alert">
+                <ul
+                  :if={@composer_mode == :ask}
+                  id="composer-suggestions"
+                  class="mention-options composer-suggestions"
+                  role="listbox"
+                  aria-label="Suggestions"
+                  tabindex="0"
+                  phx-update="ignore"
+                  hidden
+                  data-composer-suggestions
+                >
+                </ul>
+                <p
+                  :if={@composer_mode == :ask}
+                  id="composer-suggestions-status"
+                  class="sr-only"
+                  role="status"
+                  phx-update="ignore"
+                  data-composer-announce
+                >
+                </p>
+                <.live_file_input upload={@uploads.images} aria-label="Attach images" />
+                <div
+                  :for={entry <- @uploads.images.entries}
+                  :if={@composer_mode == :ask}
+                  class="workspace-upload"
+                >
+                  <span>{entry.client_name} ({entry.progress}%)</span><button
+                    type="button"
+                    class="ghost"
+                    phx-click="cancel-upload"
+                    phx-value-ref={entry.ref}
+                  >Remove</button>
+                  <p :for={err <- upload_errors(@uploads.images, entry)} role="alert">
+                    {upload_error(err)}
+                  </p>
+                </div>
+                <p
+                  :for={err <- upload_errors(@uploads.images)}
+                  :if={@composer_mode == :ask}
+                  role="alert"
+                >
                   {upload_error(err)}
                 </p>
-              </div>
-              <p
-                :for={err <- upload_errors(@uploads.images)}
-                :if={@composer_mode == :ask}
-                role="alert"
-              >
-                {upload_error(err)}
-              </p>
-              <p :if={@attached_images != [] && @composer_mode == :ask}>
-                {length(@attached_images)} attached image(s) retained for retry.
-                <button type="button" class="ghost" phx-click="clear-attachments">
-                  Remove retained images
-                </button>
-              </p>
-              <div class="workspace-actions">
-                <div
-                  :if={!@thread_draft[:selected?]}
-                  class="composer-mode"
-                  role="group"
-                  aria-label="Send to"
-                >
-                  <button
-                    type="button"
-                    id="composer-mode-ask"
-                    aria-pressed={to_string(@composer_mode == :ask)}
-                    phx-click="composer-mode"
-                    phx-value-mode="ask"
-                    data-composer-mode="ask"
-                  >
-                    Ask agent
+                <p :if={@attached_images != [] && @composer_mode == :ask}>
+                  {length(@attached_images)} attached image(s) retained for retry.
+                  <button type="button" class="ghost" phx-click="clear-attachments">
+                    Remove retained images
                   </button>
-                  <button
-                    type="button"
-                    id="composer-mode-comment"
-                    aria-pressed={to_string(@composer_mode == :comment)}
-                    phx-click="composer-mode"
-                    phx-value-mode="comment"
-                    data-composer-mode="comment"
+                </p>
+                <div class="workspace-actions">
+                  <div
+                    :if={!@thread_draft[:selected?]}
+                    class="composer-mode"
+                    role="group"
+                    aria-label="Send to"
                   >
-                    Comment
-                  </button>
-                </div>
-                <%!-- In the row, where the model is in Ask mode, so switching
+                    <button
+                      type="button"
+                      id="composer-mode-ask"
+                      aria-pressed={to_string(@composer_mode == :ask)}
+                      phx-click="composer-mode"
+                      phx-value-mode="ask"
+                      data-composer-mode="ask"
+                    >
+                      Ask agent
+                    </button>
+                    <button
+                      type="button"
+                      id="composer-mode-comment"
+                      aria-pressed={to_string(@composer_mode == :comment)}
+                      phx-click="composer-mode"
+                      phx-value-mode="comment"
+                      data-composer-mode="comment"
+                    >
+                      Comment
+                    </button>
+                  </div>
+                  <%!-- In the row, where the model is in Ask mode, so switching
                   never grows the box. Drawn in both modes and shown by the
                   box's `commenting` class, which the browser sets at once. --%>
-                <p
-                  :if={!@thread_draft[:selected?]}
-                  id="composer-mode-hint"
-                  class="composer-mode-hint"
-                >
-                  <.icon name="person" size={12} /><span>Comment — not sent to the agent</span>
-                </p>
-                <button
-                  :if={@composer_mode == :ask}
-                  type="button"
-                  class="ghost composer-ask-only composer-attach"
-                  aria-label="Choose images"
-                  data-tip="Choose images"
-                  phx-click={JS.dispatch("click", to: "##{@uploads.images.ref}")}
-                >
-                  <.icon name="picture" size={17} />
-                </button>
-                <%!-- A draft's agent is still open, so its pill offers both
+                  <p
+                    :if={!@thread_draft[:selected?]}
+                    id="composer-mode-hint"
+                    class="composer-mode-hint"
+                  >
+                    <.icon name="person" size={12} /><span>Comment — not sent to the agent</span>
+                  </p>
+                  <button
+                    :if={@composer_mode == :ask}
+                    type="button"
+                    class="ghost composer-ask-only composer-attach"
+                    aria-label="Choose images"
+                    data-tip="Choose images"
+                    phx-click={JS.dispatch("click", to: "##{@uploads.images.ref}")}
+                  >
+                    <.icon name="picture" size={17} />
+                  </button>
+                  <%!-- A draft's agent is still open, so its pill offers both
                   (RAV-80); once the thread exists only the model changes. It
                   sits where the model pill does, and is the composer's pill:
                   the picks are radios of this form, and each change arrives
                   as `validate`. --%>
-                <RavixWeb.Live.RuntimePicker.menu
-                  :if={@thread_draft[:selected?] && @thread_draft.options}
-                  id="draft-runtime"
-                  options={@thread_draft.options}
-                  params={
-                    %{
-                      "runtime" => @thread_draft.runtime,
-                      "model" => @thread_draft.model,
-                      "preference_explicit" => to_string(@thread_draft.explicit?)
+                  <RavixWeb.Live.RuntimePicker.menu
+                    :if={@thread_draft[:selected?] && @thread_draft.options}
+                    id="draft-runtime"
+                    options={@thread_draft.options}
+                    params={
+                      %{
+                        "runtime" => @thread_draft.runtime,
+                        "model" => @thread_draft.model,
+                        "preference_explicit" => to_string(@thread_draft.explicit?)
+                      }
                     }
-                  }
-                  name="thread_draft"
-                  form="composer-form"
-                  class="composer-model model-trigger"
-                  hint="Also your default for new threads"
-                  connect
-                  disabled={:start_thread in @pending}
-                />
-                <span
-                  :if={@thread_draft[:selected?] && :thread_options in @pending}
-                  id="draft-runtime-loading"
-                  class="composer-model dim"
-                  role="status"
-                >
-                  Loading agents…
-                </span>
-                <.model_menu
-                  :if={!@thread_draft[:selected?] && @composer_mode == :ask}
-                  runtime={@track.runtime || @project.runtime}
-                  model={@track.model || @track.default_model || @project.model}
-                  session_options={@track.session_options}
-                  session_config={@track.session_config}
-                  project_model={
-                    if is_nil(@track.runtime) or @track.runtime == @project.runtime,
-                      do: @project.model
-                  }
-                  models={@models}
-                  disabled={
-                    is_nil(@track.conversation_id) or @track.status in [:running, :opening] or
-                      :model in @pending or @track.level == :read
-                  }
-                  busy={
-                    @turn.running? and
-                      @track.level != :read
-                  }
-                /><span class="spacer"></span>
-                <span
-                  id="composer-shortcut"
-                  class="composer-shortcut"
-                  aria-hidden="true"
-                  phx-update="ignore"
-                  data-composer-shortcut
-                >
-                  <kbd>Ctrl+L</kbd> to focus
-                </span>
-                <%!-- RAV-87: the send slot has three states. Idle, send is
+                    name="thread_draft"
+                    form="composer-form"
+                    class="composer-model model-trigger"
+                    hint="Also your default for new threads"
+                    connect
+                    disabled={:start_thread in @pending}
+                  />
+                  <span
+                    :if={@thread_draft[:selected?] && :thread_options in @pending}
+                    id="draft-runtime-loading"
+                    class="composer-model dim"
+                    role="status"
+                  >
+                    Loading agents…
+                  </span>
+                  <.model_menu
+                    :if={!@thread_draft[:selected?] && @composer_mode == :ask}
+                    runtime={@track.runtime || @project.runtime}
+                    model={@track.model || @track.default_model || @project.model}
+                    session_options={@track.session_options}
+                    session_config={@track.session_config}
+                    project_model={
+                      if is_nil(@track.runtime) or @track.runtime == @project.runtime,
+                        do: @project.model
+                    }
+                    models={@models}
+                    disabled={
+                      is_nil(@track.conversation_id) or @track.status in [:running, :opening] or
+                        :model in @pending or @track.level == :read
+                    }
+                    busy={
+                      @turn.running? and
+                        @track.level != :read
+                    }
+                  /><span class="spacer"></span>
+                  <span
+                    id="composer-shortcut"
+                    class="composer-shortcut"
+                    aria-hidden="true"
+                    phx-update="ignore"
+                    data-composer-shortcut
+                  >
+                    <kbd>Ctrl+L</kbd> to focus
+                  </span>
+                  <%!-- RAV-87: the send slot has three states. Idle, send is
                   disabled until there is something to send. While the shown
                   thread's turn runs --- read from what its tab reads, so the
                   two change in the same render --- Stop stands in the slot,
                   and send comes back beside it to queue anything typed. The
                   server still checks `interrupt` against the viewer's
                   access, and a Read member is never shown the button. --%>
-                <button
-                  :if={
-                    !@thread_draft[:selected?] &&
-                      @turn.running? &&
-                      @track.level != :read
-                  }
-                  id="composer-stop"
-                  type="button"
-                  class="composer-stop"
-                  aria-label="Stop agent"
-                  data-tip="Stop agent"
-                  phx-click="interrupt"
-                  disabled={:interrupt in @pending}
-                >
-                  <.icon name="stop" size={18} />
-                </button>
-                <button
-                  :if={
-                    @thread_draft[:selected?] || @track.level == :read ||
-                      !@turn.running? ||
-                      composer_filled?(
+                  <button
+                    :if={
+                      !@thread_draft[:selected?] &&
+                        @turn.running? &&
+                        @track.level != :read
+                    }
+                    id="composer-stop"
+                    type="button"
+                    class="composer-stop"
+                    aria-label="Stop agent"
+                    data-tip="Stop agent"
+                    phx-click="interrupt"
+                    disabled={:interrupt in @pending}
+                  >
+                    <.icon name="stop" size={18} />
+                  </button>
+                  <button
+                    :if={
+                      @thread_draft[:selected?] || @track.level == :read ||
+                        !@turn.running? ||
+                        composer_filled?(
+                          @composer_empty?,
+                          @composer_mode,
+                          @uploads.images.entries,
+                          @attached_images
+                        )
+                    }
+                    id="composer-send"
+                    type="submit"
+                    class="primary composer-send"
+                    aria-label={if @composer_mode == :comment, do: "Post comment", else: "Send"}
+                    data-tip={if @composer_mode == :comment, do: "Post comment", else: "Send"}
+                    data-tip-kbd="↵"
+                    disabled={
+                      !composer_filled?(
                         @composer_empty?,
                         @composer_mode,
                         @uploads.images.entries,
                         @attached_images
-                      )
-                  }
-                  id="composer-send"
-                  type="submit"
-                  class="primary composer-send"
-                  aria-label={if @composer_mode == :comment, do: "Post comment", else: "Send"}
-                  data-tip={if @composer_mode == :comment, do: "Post comment", else: "Send"}
-                  data-tip-kbd="↵"
-                  disabled={
-                    !composer_filled?(
-                      @composer_empty?,
-                      @composer_mode,
-                      @uploads.images.entries,
-                      @attached_images
-                    ) ||
-                      (@composer_mode == :comment && @transcript_loading) ||
-                      (@composer_mode == :ask &&
-                         (is_nil(@track.conversation_id) or @track.level == :read or
-                            (@thread_draft[:selected?] &&
-                               (is_nil(@thread_draft.options) or :start_thread in @pending))))
-                  }
-                >
-                  <.icon name="arrow-up" size={16} />
-                </button>
-                <button
-                  :if={
-                    parked?(@track) ||
-                      (!@thread_draft[:selected?] &&
-                         ((@track.setup_state == "failed" &&
-                             @track.setup_error_code != "secrets_changed") ||
-                            (@track.setup_state == "ready" && @track.status in [:failed, :opening])))
-                  }
-                  type="button"
-                  class="ghost"
-                  phx-click="retry-track"
-                  disabled={:retry in @pending}
-                >
-                  {cond do
-                    @track.status == :setup_failed -> "Retry setup"
-                    parked?(@track) -> "Wake machine"
-                    true -> "Wake / retry"
-                  end}
-                </button>
+                      ) ||
+                        (@composer_mode == :comment && @transcript_loading) ||
+                        (@composer_mode == :ask &&
+                           (is_nil(@track.conversation_id) or @track.level == :read or
+                              (@thread_draft[:selected?] &&
+                                 (is_nil(@thread_draft.options) or :start_thread in @pending))))
+                    }
+                  >
+                    <.icon name="arrow-up" size={16} />
+                  </button>
+                  <button
+                    :if={
+                      parked?(@track) ||
+                        (!@thread_draft[:selected?] &&
+                           ((@track.setup_state == "failed" &&
+                               @track.setup_error_code != "secrets_changed") ||
+                              (@track.setup_state == "ready" &&
+                                 @track.status in [:failed, :opening])))
+                    }
+                    type="button"
+                    class="ghost"
+                    phx-click="retry-track"
+                    disabled={:retry in @pending}
+                  >
+                    {cond do
+                      @track.status == :setup_failed -> "Retry setup"
+                      parked?(@track) -> "Wake machine"
+                      true -> "Wake / retry"
+                    end}
+                  </button>
+                </div>
               </div>
-            </div>
-          </form>
+            </form>
+          </div>
         </div>
       </section>
+      <%!-- Beside the conversation, what a reader asks first about a track:
+        its machine, its preview, where it came from and who is on it. --%>
+      <aside id="track-facts" class="track-facts-aside" aria-label="About this track">
+        <section>
+          <h2>Machine</h2>
+          <span class="track-fact">
+            <.status_dot status={to_string(@turn.machine.state)} />{MachineState.label(
+              @turn.machine.state
+            )} · {machine_scope(@track)}
+          </span>
+          <small :if={@turn.machine.detail}>{@turn.machine.detail}</small>
+        </section>
+        <section :if={@previews?}>
+          <h2>Preview</h2>
+          <span :if={is_nil(@preview)} class="track-fact dim">Not set up</span>
+          <button
+            :if={@preview}
+            type="button"
+            class="ghost track-fact-link"
+            phx-click="panel"
+            phx-value-name="preview"
+          >
+            {preview_fact(@preview)}
+          </button>
+        </section>
+        <section :if={origin_note(@track)}>
+          <h2>Origin</h2>
+          <a :if={@track.origin.url} href={@track.origin.url} target="_blank" rel="noreferrer">
+            {origin_note(@track)}<span :if={@track.origin.title}> · {@track.origin.title}</span>
+          </a>
+          <span :if={!@track.origin.url}>{origin_note(@track)}</span>
+        </section>
+        <section>
+          <h2>People on this track</h2>
+          <.viewers present={@present} />
+          <small>
+            {if @track.visibility == :private,
+              do: "Private: its creator and the people they invite",
+              else: "Visible to everyone in the project"}
+          </small>
+        </section>
+      </aside>
       <aside
         id="inspector"
         class={["inspector", diff_open?(@panel, @diff_path) && "diff-open"]}

@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { signIn, connectClaude } from './sign-in.js';
 import AxeBuilder from '@axe-core/playwright';
+import { openAddRepository } from './new-track.js';
 
 // Exercise the production gateway template and its poll script without a
 // production preview grant. Gateway tests cover rendering and access checks.
@@ -46,10 +47,10 @@ test('track logs stay open through status patches and failure still opens diagno
   // Its own agent: Add repository needs one, and relying on an earlier spec to
   // have connected it for this person breaks whenever sharding reorders them.
   await connectClaude(page);
-  await page.getByRole('button', { name: 'Add a repository', exact: true }).first().click();
+  await openAddRepository(page);
   await page.getByLabel('Project name', { exact: true }).fill('Preview disclosure');
   await page.getByRole('button', { name: 'Create scratch project', exact: true }).click();
-  await page.locator('#yard .workspace-project.current .project-add').click();
+  await page.locator('#top-new-track').click();
   await page.getByRole('button', { name: 'Create track', exact: true }).click();
   await expect(page.getByRole('textbox', { name: 'Message', exact: true })).toBeEnabled();
 
@@ -67,7 +68,7 @@ test('track logs stay open through status patches and failure still opens diagno
     ], { encoding: 'utf8' }).trim();
     expect(changed).toBe(track);
   };
-  await page.locator('button[phx-click="panel"][phx-value-name="preview"]').click();
+  await page.locator('#track-tab-preview').click();
   const disclosure = page.locator('#preview-logs');
   const summary = disclosure.locator('summary');
   const logs = disclosure.locator('pre');

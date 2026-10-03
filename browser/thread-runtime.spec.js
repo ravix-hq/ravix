@@ -3,6 +3,7 @@ import AxeBuilder from '@axe-core/playwright';
 import { signIn } from './sign-in.js';
 import { connectApiKey } from './settings.js';
 import { chooseDraft, draftChoice, draftModels, draftPill, newThread } from './draft-runtime.js';
+import { openAddRepository } from './new-track.js';
 
 const mock = `http://localhost:${process.env.MOCK_PORT || 8893}`;
 
@@ -16,14 +17,14 @@ test('cohort threads attach the other runtime to the home disk and reuse its pro
     return (await response.json()).data;
   };
   for (const [home, guest] of [['claude', 'codex'], ['codex', 'claude']]) {
-    await page.getByRole('button', { name: 'Add a repository', exact: true }).first().click();
+    await openAddRepository(page);
     const project = page.getByRole('dialog', { name: 'Add a repository', exact: true });
     await project.getByLabel('Project name', { exact: true }).fill(`${home} home with ${guest} threads`);
     await project.locator(`#project-agent-${home}`).click();
     await project.getByRole('button', { name: 'Create scratch project', exact: true }).click();
     await expect(project).toHaveCount(0);
     const projectId = new URL(page.url()).pathname.split('/')[2];
-    await page.locator('#yard .workspace-project.current .project-add').click();
+    await page.locator('#top-new-track').click();
     const track = page.getByRole('dialog', { name: 'New track', exact: true });
     await expect(track.locator('#new-track-model-menu input[name="new_track[runtime]"]:checked')).toHaveValue(home);
     await expect(track.locator('#new-track-model-trigger')).toContainText(home === 'codex' ? 'Codex · ' : 'Claude Code · ');
