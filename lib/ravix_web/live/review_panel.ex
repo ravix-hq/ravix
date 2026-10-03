@@ -44,10 +44,12 @@ defmodule RavixWeb.Live.ReviewPanel do
     end
   end
 
-  defp dispatch("review-draft", %{"body" => body}, socket), do: update(socket, body: body)
+  defp dispatch("review-draft", %{"body" => body}, socket) when is_binary(body),
+    do: update(socket, body: body)
+
   defp dispatch("review-cancel", _, socket), do: update(socket, anchor: nil, body: "", error: nil)
 
-  defp dispatch("review-post", %{"body" => body}, socket) do
+  defp dispatch("review-post", %{"body" => body}, socket) when is_binary(body) do
     state = socket.assigns.review
 
     if state.anchor && !state.busy? do
@@ -238,7 +240,10 @@ defmodule RavixWeb.Live.ReviewPanel do
       aria-label={if @line, do: "Discuss #{@side} line #{@line}", else: "Discuss file"}
       data-tip={if @line, do: "Discuss #{@side} line #{@line}", else: "Discuss file"}
     >
-      {if @line, do: @line, else: "Discuss file"}
+      <span :if={@line} class="diff-number" aria-hidden="true">{@line}</span>
+      <%= if !@line do %>
+        Discuss file
+      <% end %>
     </button>
     """
   end

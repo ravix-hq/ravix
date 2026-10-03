@@ -267,6 +267,15 @@ defmodule RavixWeb.ReviewLiveTest do
     assert length(messages) == 1
   end
 
+  test "malformed draft payloads cannot replace entered text or write a review", c do
+    render_click(c.view, "review-anchor", anchor(c))
+    render_hook(c.view, "review-draft", %{body: "Typed draft"})
+    render_hook(c.view, "review-draft", %{body: %{bad: "payload"}})
+    render_hook(c.view, "review-post", %{body: ["bad payload"]})
+    assert has_element?(c.view, "#review-post-form textarea", "Typed draft")
+    assert {:ok, []} = Reviews.list(c.user, c.track.id)
+  end
+
   defp anchor(c),
     do: %{
       "revision" => Anchor.revision(c.diff),
