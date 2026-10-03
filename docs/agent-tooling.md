@@ -109,7 +109,7 @@ project/track sharing changes and project deletion/rebuild are not exposed.
 Setup scripts and agent instructions can execute code, which the consent page
 explicitly explains.
 
-Creation, settings updates and prompt submission require a request ID, at most 100 bytes. Retry with the same
+Creation, settings updates and prompt submission require a request ID, at most 100 characters. Retry with the same
 ID and identical arguments to retrieve its receipt. Reusing an ID with different
 arguments is rejected. Project/track creation and settings updates claim a
 receipt before calling providers. If a process dies during that call, the receipt

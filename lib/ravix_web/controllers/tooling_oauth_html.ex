@@ -113,13 +113,15 @@ defmodule RavixWeb.ToolingOAuthHTML do
 
   defp description("projects:write"),
     do:
-      "Create projects and change owned project settings, including executable setup scripts and agent instructions."
+      "Create projects and read or change owned project settings and run defaults, including executable setup scripts, run commands and agent instructions."
 
   defp description("tracks:read"),
-    do: "Read accessible tracks, transcripts and this client's task results."
+    do:
+      "Read accessible tracks, transcripts, preview and run configuration, status and logs, and this client's task results."
 
   defp description("tracks:write"),
-    do: "Create tracks and send prompts that run code using the project's agent subscription."
+    do:
+      "Create tracks and send prompts that run code using the project's agent subscription. Configure, start, restart and stop track previews and run scripts on their machines."
 
   defp description("plans:read"), do: "Read plans in projects you belong to."
 

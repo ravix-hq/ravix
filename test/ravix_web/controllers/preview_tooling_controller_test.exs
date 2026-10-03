@@ -5,6 +5,7 @@ defmodule RavixWeb.PreviewToolingControllerTest do
   import Ravix.PreviewsFixture
   import Ravix.ToolingFixture, only: [principal: 1, principal: 3]
 
+  alias Ravix.Sprites.Error, as: SpritesError
   alias Ravix.Tooling.{Catalog, OAuth, PreviewCatalog}
 
   setup do
@@ -129,7 +130,7 @@ defmodule RavixWeb.PreviewToolingControllerTest do
     await_background()
 
     stub(Ravix.Sprites, :service_logs, fn _, _, _ ->
-      {:error, Ravix.Sprites.Error.new(502, "offline")}
+      {:error, SpritesError.new(502, "offline")}
     end)
 
     result =
