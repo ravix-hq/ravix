@@ -86,6 +86,8 @@ installed on repositories outside the org.
 
 - `/` and `/inbox`: projects and tracks needing attention.
 - `/home`: project selection; `/p/:project`: one project's tracks.
+- `/search`: scoped full-text search across projects, tracks, pending prompts, and
+  indexed human/assistant conversation text; see [search coverage](docs/workspace-search.md).
 - `/schedules`: personal hourly, daily, or weekly project prompts (UTC), with
   editing, pause/resume, and links to the latest dispatched track.
 - `/p/:project/t/:track`: conversation, image attachments, queued prompts,

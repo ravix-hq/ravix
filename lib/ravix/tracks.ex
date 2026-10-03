@@ -2326,6 +2326,7 @@ defmodule Ravix.Tracks do
       "ravix.event_count" => length(log)
     })
 
+    Ravix.Search.Index.note(page)
     if enqueue?, do: Settlement.enqueue(page, classifications.classified, binding)
     {:ok, %{page | conversation_id: conversation_id}}
   end

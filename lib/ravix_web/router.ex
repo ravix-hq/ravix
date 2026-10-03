@@ -118,6 +118,7 @@ defmodule RavixWeb.Router do
       live "/", WorkspaceLive, :home
       live "/login", WorkspaceLive, :login
       live "/home", WorkspaceLive, :projects
+      live "/search", SearchLive, :search
       live "/schedules", WorkspaceLive, :schedules
       live "/inbox", WorkspaceLive, :inbox
       live "/p/:project", WorkspaceLive, :project
