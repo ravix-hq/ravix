@@ -7,6 +7,7 @@ defmodule Ravix.Tooling.PreviewToolsTest do
 
   alias Ravix.{Previews, Tooling}
   alias Ravix.Previews.{PreviewGrant, Store}
+  alias Ravix.Sprites.Error, as: SpritesError
   alias Ravix.Tooling.{OAuth, PreviewCatalog, Receipt}
 
   setup do
@@ -217,7 +218,7 @@ defmodule Ravix.Tooling.PreviewToolsTest do
   test "provider failures report failed startup and log errors; mutation failures retain claims",
        c do
     configure(c)
-    put(c.provider, :exec_error, Ravix.Sprites.Error.new(502, "offline"))
+    put(c.provider, :exec_error, SpritesError.new(502, "offline"))
     assert {:ok, _} = call(c, "start_preview")
     await_background()
     assert {:ok, %{state: :failed, error: error}} = call(c, "preview_status")
@@ -227,7 +228,7 @@ defmodule Ravix.Tooling.PreviewToolsTest do
     await_background()
 
     stub(Ravix.Sprites, :service_logs, fn _, _, _ ->
-      {:error, Ravix.Sprites.Error.new(502, "offline")}
+      {:error, SpritesError.new(502, "offline")}
     end)
 
     assert {:error, _} = call(c, "preview_logs")
