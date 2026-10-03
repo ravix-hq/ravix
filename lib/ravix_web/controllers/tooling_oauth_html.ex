@@ -107,7 +107,7 @@ defmodule RavixWeb.ToolingOAuthHTML do
 
   defp description("workspaces:write"),
     do:
-      "Create and rename workspaces, manage members and GitHub connections, add repository projects, and organize your sidebar. Adding repository projects uses the project payer's subscription. Your workspace role still limits each action."
+      "Create and rename workspaces, manage members and GitHub connections, add repository projects, move your owned projects between workspaces, and organize your sidebar. Adding repository projects uses the project payer's subscription. Your workspace role still limits each action."
 
   defp description("projects:read"), do: "List accessible projects and repositories."
 

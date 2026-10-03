@@ -518,6 +518,217 @@ defmodule Ravix.Tooling.WorkspaceToolsTest do
              Tooling.call(p, "list_available_workspace_installations", args(c.team))
   end
 
+  test "self-demotion succeeds and its receipt replays only with current membership and grant",
+       c do
+    second_owner = insert_user()
+
+    for role <- ["admin", "member"] do
+      {:ok, team} = Workspaces.create(c.owner, "Demote #{role}")
+      :ok = Store.add_member(team.id, second_owner.id, :owner, c.owner.id)
+      input = write(team, %{"user_id" => c.owner.id, "role" => role})
+      assert {:ok, %{updated: true}} = Tooling.call(c.p, "set_workspace_member_role", input)
+      assert {:ok, %{"updated" => true}} = Tooling.call(c.p, "set_workspace_member_role", input)
+      assert {:ok, %{role: current}} = Workspaces.get(c.owner, team.id)
+      assert Atom.to_string(current) == role
+
+      assert {:error, {:forbidden, _}} =
+               Tooling.call(
+                 c.p,
+                 "set_workspace_member_role",
+                 write(team, %{"user_id" => c.owner.id, "role" => "owner"})
+               )
+
+      :ok = Workspaces.remove_member(second_owner, team.id, c.owner.id)
+      assert {:error, :not_found} = Tooling.call(c.p, "set_workspace_member_role", input)
+    end
+
+    :ok = Store.add_member(c.team.id, second_owner.id, :owner, c.owner.id)
+    input = write(c.team, %{"user_id" => c.owner.id, "role" => "admin"})
+    assert {:ok, _} = Tooling.call(c.p, "set_workspace_member_role", input)
+    :ok = OAuth.disconnect(c.owner, c.p.grant.id)
+    assert {:error, :unauthenticated} = Tooling.call(c.p, "set_workspace_member_role", input)
+  end
+
+  test "leave and self-removal replay only own completed receipts after membership disappears",
+       c do
+    second_owner = insert_user()
+    :ok = Store.add_member(c.team.id, second_owner.id, :owner, c.owner.id)
+    self_remove = write(c.team, %{"user_id" => c.owner.id})
+    assert {:ok, %{updated: true}} = Tooling.call(c.p, "remove_workspace_member", self_remove)
+    assert {:ok, %{"updated" => true}} = Tooling.call(c.p, "remove_workspace_member", self_remove)
+
+    assert {:error, :not_found} =
+             Tooling.call(as(c.owner), "remove_workspace_member", self_remove)
+
+    assert {:error, :not_found} = Tooling.call(c.p, "get_workspace", args(c.team))
+    member = as(c.member)
+    leave = write(c.team)
+    assert {:ok, %{updated: true}} = Tooling.call(member, "leave_workspace", leave)
+    assert {:ok, %{"updated" => true}} = Tooling.call(member, "leave_workspace", leave)
+    assert {:error, :not_found} = Tooling.call(as(c.member), "leave_workspace", leave)
+    assert {:error, :not_found} = Tooling.call(member, "leave_workspace", write(c.team))
+    :ok = OAuth.disconnect(c.member, member.grant.id)
+    assert {:error, :unauthenticated} = Tooling.call(member, "leave_workspace", leave)
+    :ok = OAuth.disconnect(c.owner, c.p.grant.id)
+    assert {:error, :unauthenticated} = Tooling.call(c.p, "remove_workspace_member", self_remove)
+  end
+
+  test "installation binding reports the persisted refresh state and timestamp", c do
+    owner =
+      c.owner
+      |> Ecto.Changeset.change(token_enc: Ravix.Crypto.encrypt("user-owner"))
+      |> Repo.update!()
+
+    p = as(owner)
+
+    for {status, attrs} <- [
+          {:active, %{}},
+          {:revoked, %{gone: true}},
+          {:suspended, %{suspended: true}}
+        ] do
+      app = github(%{77 => Map.merge(%{account: "acme", repos: []}, attrs)}, %{"owner" => [77]})
+      stub(Ravix.Config, :github, fn -> app end)
+      {:ok, team} = Workspaces.create(owner, "Binding #{status}")
+
+      assert {:ok, result} =
+               Tooling.call(
+                 p,
+                 "add_workspace_installation",
+                 write(team, %{"installation_id" => 77})
+               )
+
+      assert result.status == status
+      assert %DateTime{} = result.refreshed_at
+
+      assert {:ok, %{installations: [persisted]}} =
+               Workspaces.Repositories.catalog(owner, team.id)
+
+      assert result.refreshed_at == persisted.refreshed_at
+      assert Workspaces.Installation.status(persisted) == status
+    end
+  end
+
+  test "owned project moves preserve tracks and enforce target roles and repository uniqueness",
+       c do
+    {:ok, target} = Workspaces.create(c.owner, "Target")
+    project = insert_project(user: c.owner, repo_full_name: "acme/api")
+    Store.move_project(project.id, c.team.id)
+    track = insert_track(project: project, visibility: :private)
+
+    assert {:ok, targets} =
+             Tooling.call(c.p, "list_workspace_move_targets", %{"project_id" => project.id})
+
+    assert Enum.any?(targets.items, &(&1.id == target.id))
+    assert targets.current_workspace_id == c.team.id
+
+    assert {:error, :not_found} =
+             Tooling.call(as(c.member), "list_workspace_move_targets", %{
+               "project_id" => project.id
+             })
+
+    assert {:error, :not_found} =
+             Tooling.call(
+               as(c.admin),
+               "move_workspace_project",
+               write(c.team, %{"project_id" => project.id})
+             )
+
+    outsider = insert_user()
+    {:ok, member_only} = Workspaces.create(outsider, "Member-only")
+    :ok = Store.add_member(member_only.id, c.owner.id, :member, outsider.id)
+
+    assert {:error, {:forbidden, _}} =
+             Tooling.call(
+               c.p,
+               "move_workspace_project",
+               write(member_only, %{"project_id" => project.id})
+             )
+
+    input = write(target, %{"project_id" => project.id})
+    assert {:ok, %{workspace_id: id}} = Tooling.call(c.p, "move_workspace_project", input)
+    assert id == target.id
+    assert {:ok, %{"workspace_id" => ^id}} = Tooling.call(c.p, "move_workspace_project", input)
+    assert Repo.get!(Ravix.Tracks.Track, track.id).project_id == project.id
+    assert {:error, :not_found} = Projects.get(c.member, project.id)
+    collision = insert_project(user: c.owner, repo_full_name: "acme/api")
+    Store.move_project(collision.id, c.team.id)
+
+    assert {:error, {:repository_taken, _}} =
+             Tooling.call(
+               c.p,
+               "move_workspace_project",
+               write(target, %{"project_id" => collision.id})
+             )
+
+    assert Repo.get!(Ravix.Projects.Project, collision.id).workspace_id == c.team.id
+  end
+
+  test "closed-track sidebar preferences persist personally and require project access", c do
+    project = insert_project(user: c.owner)
+    Store.move_project(project.id, c.team.id)
+    member = as(c.member)
+
+    assert {:ok, %{show: true}} =
+             Tooling.call(
+               member,
+               "set_workspace_closed_visibility",
+               write(c.team, %{"project_id" => project.id, "show" => true})
+             )
+
+    assert project.id in Sections.closed_shown(c.member)
+    assert {:ok, %{items: [row]}} = Tooling.call(member, "list_workspace_projects", args(c.team))
+    assert row.id == project.id and row.closed_tracks_visible
+    assert row.owner_login == c.owner.login
+    assert {:ok, %{items: [own_row]}} = Tooling.call(c.p, "list_workspace_projects", args(c.team))
+    refute own_row.closed_tracks_visible
+
+    assert {:ok, _} =
+             Tooling.call(
+               member,
+               "set_workspace_closed_visibility",
+               write(c.team, %{"project_id" => project.id, "show" => false})
+             )
+
+    refute project.id in Sections.closed_shown(c.member)
+    stranger = insert_user()
+    guest_project = insert_project(user: stranger)
+    guest_track = insert_track(project: guest_project)
+    insert_track_member(guest_track, c.owner)
+    {:ok, personal} = Store.ensure_personal_workspace(c.owner)
+
+    assert {:error, :not_found} =
+             Tooling.call(
+               c.p,
+               "set_workspace_closed_visibility",
+               write(personal, %{"project_id" => guest_project.id, "show" => true})
+             )
+
+    :ok = Workspaces.remove_member(c.owner, c.team.id, c.member.id)
+    assert {:error, :not_found} = Tooling.call(member, "list_workspace_projects", args(c.team))
+  end
+
+  test "membership removed during a provider read is denied before results return", c do
+    other_owner = insert_user()
+    :ok = Store.add_member(c.team.id, other_owner.id, :owner, c.owner.id)
+    app = github(%{})
+    stub(Ravix.Config, :github, fn -> app end)
+
+    owner =
+      c.owner
+      |> Ecto.Changeset.change(token_enc: Ravix.Crypto.encrypt("user-owner"))
+      |> Repo.update!()
+
+    p = as(owner)
+
+    stub(Ravix.GitHub, :installations_for, fn _, _, :cached ->
+      :ok = Workspaces.remove_member(other_owner, c.team.id, c.owner.id)
+      {:ok, []}
+    end)
+
+    assert {:error, :not_found} =
+             Tooling.call(p, "list_available_workspace_installations", args(c.team))
+  end
+
   test "connect URL uses the browser's secured entry route and is restricted to managers", c do
     app = github(%{})
     stub(Ravix.Config, :github, fn -> app end)

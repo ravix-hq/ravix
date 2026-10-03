@@ -1,13 +1,14 @@
 defmodule Ravix.Tooling.WorkspaceTools do
   @moduledoc "Headless workspace operations through the existing scoped contexts."
+  alias Ravix.{Accounts, Config, Projects, Workspaces}
   alias Ravix.Accounts.Access
   alias Ravix.Projects.Sections
   alias Ravix.Tooling.Mutations
   alias Ravix.Workspaces.{Connect, Installation, Repositories}
-  alias Ravix.{Accounts, Config, Projects, Workspaces}
 
   @capabilities %{
     "update_workspace" => :rename_workspace,
+    "move_workspace_project" => :manage_projects,
     "invite_workspace_member" => :manage_members,
     "revoke_workspace_invitation" => :manage_members,
     "set_workspace_member_role" => :manage_roles,
@@ -19,6 +20,20 @@ defmodule Ravix.Tooling.WorkspaceTools do
   @section_tools ~w(update_workspace_section)
   @revocations ~w(remove_workspace_member leave_workspace)
 
+  # These successful actions change the permission that admitted the caller.
+  # Only this user's/client's completed, fingerprint-matched receipt can replay.
+  # Tooling.call still checks the current OAuth grant before and after execution.
+  def execute(p, "leave_workspace" = name, a), do: replay_or_execute(p, name, a)
+
+  def execute(p, "remove_workspace_member" = name, %{"user_id" => id} = a)
+      when id == p.user.id,
+      do: replay_or_execute(p, name, a)
+
+  def execute(p, "set_workspace_member_role" = name, %{"user_id" => id} = a)
+      when id == p.user.id do
+    with :ok <- member_access(p, a), do: replay_or_execute(p, name, a)
+  end
+
   def execute(p, "delete_workspace_section" = name, a) do
     with :ok <- access(p, name, a),
          :none <- Mutations.replay(p, name, a),
@@ -28,20 +43,32 @@ defmodule Ravix.Tooling.WorkspaceTools do
   end
 
   def execute(p, name, a) do
-    with :ok <- access(p, name, a) do
-      if Map.has_key?(a, "request_id") do
-        Mutations.run(p, name, a, fn -> perform(p, name, a) end,
-          release:
-            name not in ~w(add_workspace_repository add_workspace_installation refresh_workspace_repositories)
-        )
-      else
-        perform(p, name, a)
-      end
-    end
+    with :ok <- access(p, name, a), do: run(p, name, a)
   end
+
+  defp replay_or_execute(p, name, a) do
+    with :none <- Mutations.replay(p, name, a),
+         :ok <- access(p, name, a),
+         do: run(p, name, a)
+  end
+
+  defp run(p, name, %{"request_id" => _} = a) do
+    Mutations.run(p, name, a, fn -> perform(p, name, a) end,
+      release:
+        name not in ~w(add_workspace_repository add_workspace_installation refresh_workspace_repositories)
+    )
+  end
+
+  defp run(p, name, a), do: perform(p, name, a)
 
   defp access(_p, "list_workspaces", _a), do: :ok
   defp access(p, "create_workspace", _a), do: Access.workspace_creation(p.user)
+
+  defp access(p, "list_workspace_move_targets", a) do
+    with :ok <- Access.workspace_creation(p.user),
+         do: ok(Access.project_of(p.user, a["project_id"]))
+  end
+
   defp access(p, "get_workspace", a), do: ok(Workspaces.get(p.user, a["workspace_id"]))
 
   defp access(p, name, a) when name in @revocations do
@@ -62,6 +89,8 @@ defmodule Ravix.Tooling.WorkspaceTools do
       cond do
         name in @section_tools -> own_section(p, a)
         name == "move_workspace_placement" -> placement_access(p, a)
+        name == "set_workspace_closed_visibility" -> project_home(p, a)
+        name == "move_workspace_project" -> ok(Access.project_of(p.user, a["project_id"]))
         true -> :ok
       end
     end
@@ -74,11 +103,16 @@ defmodule Ravix.Tooling.WorkspaceTools do
   end
 
   defp placement_access(p, a) do
-    with {:ok, project} <- Projects.get(p.user, a["project_id"]),
-         true <-
-           Workspaces.home(p.user, Workspaces.list(p.user), project) == a["workspace_id"] ||
-             {:error, :not_found} do
+    with :ok <- project_home(p, a) do
       if a["section_id"] == "", do: :ok, else: own_section(p, a)
+    end
+  end
+
+  defp project_home(p, a) do
+    with {:ok, project} <- Projects.get(p.user, a["project_id"]) do
+      if Workspaces.home(p.user, Workspaces.list(p.user), project) == a["workspace_id"],
+        do: :ok,
+        else: {:error, :not_found}
     end
   end
 
@@ -103,6 +137,48 @@ defmodule Ravix.Tooling.WorkspaceTools do
       map(
         Accounts.put_current_workspace(p.user, a["workspace_id"]),
         &%{workspace_id: &1.current_workspace_id}
+      )
+
+  defp perform(p, "list_workspace_projects", a) do
+    with {:ok, projects} <- Workspaces.projects(p.user, a["workspace_id"]) do
+      closed = MapSet.new(Sections.closed_shown(p.user))
+
+      items =
+        Enum.map(projects, fn row ->
+          Map.take(row.project, [:id, :name, :repo_full_name, :workspace_id])
+          |> Map.merge(%{
+            owner_login: row.owner.login,
+            people: row.people,
+            closed_tracks_visible: MapSet.member?(closed, row.project.id)
+          })
+        end)
+
+      {:ok, page(items, a)}
+    end
+  end
+
+  defp perform(p, "list_workspace_move_targets", a) do
+    map(Workspaces.move_targets(p.user, a["project_id"]), fn result ->
+      page(Enum.map(result.targets, &Map.take(&1, [:id, :name, :kind])), a)
+      |> Map.merge(%{
+        current_workspace_id: result.current && result.current.id,
+        duplicate_of: result.duplicate_of
+      })
+    end)
+  end
+
+  defp perform(p, "move_workspace_project", a),
+    do:
+      map(
+        Workspaces.move_project(p.user, a["project_id"], a["workspace_id"]),
+        &Map.take(&1, [:id, :workspace_id])
+      )
+
+  defp perform(p, "set_workspace_closed_visibility", a),
+    do:
+      map(
+        Sections.show_closed(p.user, a["project_id"], a["show"]),
+        &%{project_id: a["project_id"], show: &1}
       )
 
   defp perform(p, name, a) when name in ~w(list_workspace_members list_workspace_invitations) do
@@ -165,8 +241,14 @@ defmodule Ravix.Tooling.WorkspaceTools do
         &page(Enum.map(&1, fn i -> Map.take(i, [:id, :account]) end), a)
       )
 
-  defp perform(p, "add_workspace_installation", a),
-    do: map(Connect.add(p.user, a["workspace_id"], a["installation_id"]), &installation/1)
+  defp perform(p, "add_workspace_installation", a) do
+    with {:ok, binding} <- Connect.add(p.user, a["workspace_id"], a["installation_id"]),
+         {:ok, catalog} <- Repositories.catalog(p.user, a["workspace_id"]),
+         %Installation{} = current <-
+           Enum.find(catalog.installations, &(&1.id == binding.id)) || {:error, :not_found} do
+      {:ok, installation(current)}
+    end
+  end
 
   defp perform(p, "add_workspace_repository", a),
     do:
@@ -227,6 +309,10 @@ defmodule Ravix.Tooling.WorkspaceTools do
   def recheck(p, "create_workspace", _a, result),
     do: ok(Workspaces.get(p.user, value(result, :id)))
 
+  def recheck(p, "set_workspace_member_role", %{"user_id" => id} = a, _result)
+      when id == p.user.id,
+      do: member_access(p, a)
+
   def recheck(_p, "leave_workspace", _a, _result), do: :ok
 
   def recheck(p, "remove_workspace_member", %{"user_id" => id}, _result) when id == p.user.id,
@@ -240,6 +326,12 @@ defmodule Ravix.Tooling.WorkspaceTools do
       recheck_projects(p, name, result)
     end
   end
+
+  defp recheck_projects(p, "list_workspace_projects", result),
+    do: all(result.items, &Access.project_access(p.user, value(&1, :id)))
+
+  defp recheck_projects(p, "list_workspace_move_targets", result),
+    do: all(result.items, &Access.workspace_grant(p.user, value(&1, :id), :manage_projects))
 
   defp recheck_projects(p, "list_workspace_placements", result),
     do: all(result.items, &visible_project(p, value(&1, :project_id)))
@@ -255,6 +347,9 @@ defmodule Ravix.Tooling.WorkspaceTools do
     do: ok(Access.project_access(p.user, value(value(result, :project), :id)))
 
   defp recheck_projects(_p, _name, _result), do: :ok
+
+  defp member_access(p, a),
+    do: ok(Access.workspace_grant(p.user, a["workspace_id"], :create_track))
 
   defp visible_project(p, id) do
     if Projects.visible?(p.user, id), do: {:ok, id}, else: {:error, :not_found}
