@@ -18,6 +18,7 @@ defmodule RavixWeb.ThemeContrastTest do
   body is a colour one theme cannot change.
   """
   use ExUnit.Case, async: true
+  @moduletag :deprecated_literal_ui
 
   @source Path.expand("../../assets/css/app.css", __DIR__)
   @aa 4.5

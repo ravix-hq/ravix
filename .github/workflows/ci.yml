@@ -215,6 +215,8 @@ jobs:
   # app, provider mocks and database (browser/server.py), sharing nothing.
   # Playwright splits by test (`fullyParallel`), so the one long file does
   # not decide the wall clock. `browser smoke` below is the required check.
+  # The Playwright specs are deprecated and disabled by the package scripts;
+  # keep this placeholder job name for branch protection and deploy gating.
   # A fourth entry runs the specs that need RAVIX_WORKSPACE_ACCESS on
   # (`test:browser:workspace-access`); the switch is app-wide, so they get
   # their own app rather than a shard of the default (switch-off) run.

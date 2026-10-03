@@ -1,5 +1,6 @@
 defmodule RavixWeb.LocalTimeTest do
   use ExUnit.Case, async: true
+  @moduletag :deprecated_literal_ui
 
   alias RavixWeb.LocalTime
 

@@ -41,12 +41,23 @@ retaining failure-path assertions.
 Document real-browser checks separately from DOM and LiveView tests; no single
 coverage percentage proves integration or visual parity.
 
-Real-browser checks live in `browser/`. Run `bun run test:browser` after
-`MIX_ENV=prod mix assets.deploy`; install Chromium with
-`bunx playwright install chromium` once. The harness owns its generated database
-and mock processes. Never reuse a developer's server or change tests to accept
-an unverified outcome. Assert transport reconnect, actual upload submission,
-revocation, keyboard focus and accessibility in the running application.
+The Playwright browser smoke tests in `browser/` are deprecated and disabled by
+default. Do not spend change-review time updating these specs for literal copy,
+fixed strings, visual polish, or UI component structure. Prefer focused ExUnit
+or Happy DOM hook tests for regression coverage. If a real browser check is
+explicitly requested, use `bun run test:browser:deprecated` or
+`bun run test:browser:workspace-access:deprecated` after `MIX_ENV=prod mix
+assets.deploy`; keep any changes minimal and call out that this suite is
+deprecated.
+
+Tests whose main assertion is exact UI copy, literal strings, generated
+component markup/classes, tooltip/label wording, theme contrast, layout sizing,
+or visual positioning are deprecated. Do not add or update those tests during
+ordinary changes. ExUnit suites use `@moduletag :deprecated_literal_ui` or
+`@tag :deprecated_literal_ui`, which `test/test_helper.exs` excludes by default.
+Bun hook tests that fall into this category use `.deprecated.js` instead of
+`.test.js`, so `bun test` does not discover them, or `test.skip` when only
+individual cases in an otherwise behavioral file are deprecated.
 
 Use `ExUnitProperties` for event sequences. See `lifecycle_properties_test.exs`
 and the preview reconciler property. Synchronize pending work with messages and

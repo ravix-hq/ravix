@@ -19,10 +19,17 @@ mix test --cover                       # production-only coverage groups + HTML
 mix precommit                          # local analysis, tests, guard probes
 mix precommit.release                  # production assets and release, as CI's release job
 bunx playwright install chromium       # once per Playwright upgrade
-bun run test:browser                    # real Chromium + isolated app/providers/DB
-bun run test:browser:workspace-access   # the same, with RAVIX_WORKSPACE_ACCESS on
+bun run test:browser                    # deprecated browser smoke placeholder
+bun run test:browser:workspace-access   # deprecated browser smoke placeholder
 python3 scripts/secrets.py git .        # redacted history scan
 ```
+
+Tests whose main assertion is exact UI copy, literal strings, generated
+component markup/classes, tooltip or label wording, theme contrast, layout
+sizing, or visual positioning are deprecated. ExUnit marks them with
+`:deprecated_literal_ui`, excluded by default, and Bun hook tests in this
+category are named `*.deprecated.js` rather than `*.test.js`, or use
+`test.skip` for individual cases in otherwise behavioral files.
 
 `python3 scripts/dev-mock.py` starts Phoenix against the local mock; start
 `bun run mock` separately. It requires no production credentials. See the

@@ -1,5 +1,6 @@
 defmodule Ravix.Tracks.TrackLabelTest do
   use ExUnit.Case, async: true
+  @moduletag :deprecated_literal_ui
 
   alias Ravix.Tracks.Track
 

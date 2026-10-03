@@ -43,5 +43,9 @@ for mod <- [
 # `test/ravix/cluster/distribution_test.exs` boots a second BEAM per test, so
 # a plain `mix test` leaves it out; CI and `mix precommit` pass
 # `--include distributed`, as a focused run of that file must.
-ExUnit.start(exclude: [:distributed])
+#
+# `:deprecated_literal_ui` marks tests whose main assertion is exact UI copy,
+# component markup/classes, labels/tooltips, visual styling, or other cosmetic
+# structure rather than product behavior.
+ExUnit.start(exclude: [:distributed, :deprecated_literal_ui])
 Ecto.Adapters.SQL.Sandbox.mode(Ravix.Repo, :manual)

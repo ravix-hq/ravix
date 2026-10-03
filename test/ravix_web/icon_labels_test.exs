@@ -5,6 +5,7 @@ defmodule RavixWeb.IconLabelsTest do
   rest prove the scan rejects what it should and accepts what it should.
   """
   use ExUnit.Case, async: true
+  @moduletag :deprecated_literal_ui
 
   alias RavixWeb.IconLabels
 

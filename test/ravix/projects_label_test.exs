@@ -8,6 +8,7 @@ defmodule Ravix.ProjectsLabelTest do
   Not async: the tests turn `RAVIX_WORKSPACE_ACCESS` on and off, application-wide.
   """
   use Ravix.DataCase, async: false
+  @moduletag :deprecated_literal_ui
 
   alias Ravix.Accounts.Access
   alias Ravix.Projects

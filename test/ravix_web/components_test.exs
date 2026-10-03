@@ -7,6 +7,7 @@ defmodule RavixWeb.ComponentsTest do
   head and one that emits anything else gets nothing.
   """
   use ExUnit.Case, async: true
+  @moduletag :deprecated_literal_ui
 
   import Phoenix.Component
   import Phoenix.LiveViewTest

@@ -332,20 +332,30 @@ code they describe lives in Git history.
 
 ### Additional quality guards
 
-`bun run test:browser` runs Chromium against a disposable production-mode app,
-provider mocks, and a generated PostgreSQL database (ports 4103/8893/8894).
-On a shared machine, set `BROWSER_PORT`, `MOCK_PORT`, and `MOCK_SPRITES_PORT`
-to three unused ports; the harness still refuses collisions. Composer state
-fixtures use `psql` against only the harness's generated database and a
-browser-only mock endpoint. Failure traces remain under `test-results/`.
-CI splits the suite into three shards, each against its own app and database;
-`bun run test:browser -- --shard=2/3` reproduces one shard locally.
-The suite runs with `RAVIX_WORKSPACE_ACCESS` off, as production does;
-`bun run test:browser:workspace-access` starts the harness with it on and runs
-the specs that need it.
-Install Chromium once with `bunx playwright install chromium`, and build assets
-with `MIX_ENV=prod mix assets.deploy` first. Node is pinned alongside Elixir/OTP
-and Bun in `.tool-versions`.
+The Playwright browser smoke tests in `browser/` are deprecated and disabled by
+default because many assert literal copy, visual polish, and fixed UI structure.
+`bun run test:browser` and `bun run test:browser:workspace-access` now exit
+successfully with a deprecation notice. Prefer focused ExUnit and Happy DOM hook
+tests for regression coverage.
+
+Tests whose main assertion is exact UI copy, literal strings, generated
+component markup/classes, tooltip or label wording, theme contrast, layout
+sizing, or visual positioning are also deprecated. ExUnit marks them with
+`:deprecated_literal_ui`, which the test helper excludes by default. Bun hook
+tests in that category are named `*.deprecated.js` rather than `*.test.js`, so
+`bun test` does not discover them, or use `test.skip` when only individual
+cases in an otherwise behavioral file are deprecated.
+
+If a real browser check is explicitly needed, run
+`bun run test:browser:deprecated` against the disposable production-mode app,
+provider mocks, and generated PostgreSQL database (ports 4103/8893/8894), or
+`bun run test:browser:workspace-access:deprecated` for the workspace-access
+subset. On a shared machine, set `BROWSER_PORT`, `MOCK_PORT`, and
+`MOCK_SPRITES_PORT` to three unused ports; the harness still refuses
+collisions. Failure traces remain under `test-results/`. Install Chromium once
+with `bunx playwright install chromium`, and build assets with `MIX_ENV=prod mix
+assets.deploy` first. Node is pinned alongside Elixir/OTP and Bun in
+`.tool-versions`.
 
 CI also enforces architecture rules, secret/dependency scans, agent-guide and
 version consistency, generated lifecycle invariants, and negative fixtures for

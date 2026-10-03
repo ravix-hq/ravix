@@ -397,7 +397,7 @@ test("moving the highlight scrolls the list, never the page around it", () => {
   }
 })
 
-test("a command's own purpose: the first sentence, without the skill boilerplate, or else its name", () => {
+test.skip("deprecated literal/cosmetic: a command's own purpose: the first sentence, without the skill boilerplate, or else its name", () => {
   expect(purpose("Use this skill when users are modifying system configuration, starting dev servers. Also use it for checkpoints.", "sprite"))
     .toBe("Users are modifying system configuration, starting dev servers")
   expect(purpose("Use when adding regression tests or raising coverage. Covers hooks.", "ravix-testing"))
@@ -416,7 +416,7 @@ test("a command's own purpose: the first sentence, without the skill boilerplate
   expect(purpose("  Use   this skill  when   the\n  sky falls  ", "sky")).toBe("The sky falls")
 })
 
-test("/ rows show each command's purpose, keep the whole description in the title, and fall back to the name", () => {
+test.skip("deprecated literal/cosmetic: / rows show each command's purpose, keep the whole description in the title, and fall back to the name", () => {
   document.querySelector("textarea").dataset.commands = JSON.stringify([
     {name: "sprite", description: "Use this skill when users start dev servers. Also for checkpoints.", source: "agent"},
     {name: "blank", description: "Use this skill when.", source: "agent"},

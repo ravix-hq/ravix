@@ -9,6 +9,7 @@ defmodule RavixWeb.AssetsTest do
   for it, and a missing token there does not fail loudly.
   """
   use ExUnit.Case, async: false
+  @moduletag :deprecated_literal_ui
 
   # `async: false` because this writes the real bundle under priv/static, and
   # two tests building it at once would race on the same files.

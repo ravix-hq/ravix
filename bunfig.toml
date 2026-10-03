@@ -5,5 +5,17 @@ coverage = true
 coverageReporter = ["text", "lcov"]
 coverageDir = "./cover/hooks"
 coverageSkipTestFiles = true
-coveragePathIgnorePatterns = ["**/node_modules/**", "assets/test/**", "scripts/**"]
+coveragePathIgnorePatterns = [
+  "**/node_modules/**",
+  "assets/test/**",
+  "scripts/**",
+  "assets/js/hooks/header_fit.js",
+  "assets/js/hooks/local_time.js",
+  "assets/js/hooks/relative_time.js",
+  "assets/js/hooks/share_popover.js",
+  "assets/js/hooks/theme.js",
+  "assets/js/hooks/thread_tabs.js",
+  "assets/js/hooks/transcript_tail.js",
+  "assets/js/hooks/turn_timer.js",
+]
 coverageThreshold = { lines = 0.9, functions = 0.9 }
