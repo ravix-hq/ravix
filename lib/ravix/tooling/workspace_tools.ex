@@ -89,7 +89,7 @@ defmodule Ravix.Tooling.WorkspaceTools do
       cond do
         name in @section_tools -> own_section(p, a)
         name == "move_workspace_placement" -> placement_access(p, a)
-        name == "set_workspace_closed_visibility" -> project_home(p, a)
+        name == "set_workspace_closed_visibility" -> closed_visibility_access(p, a)
         name == "move_workspace_project" -> ok(Access.project_of(p.user, a["project_id"]))
         true -> :ok
       end
@@ -106,6 +106,13 @@ defmodule Ravix.Tooling.WorkspaceTools do
     with :ok <- project_home(p, a) do
       if a["section_id"] == "", do: :ok, else: own_section(p, a)
     end
+  end
+
+  # A track invitation may place a project in the sidebar, but cannot grant
+  # its closed-track preference, including a previously completed receipt.
+  defp closed_visibility_access(p, a) do
+    with {:ok, _} <- Access.project_access(p.user, a["project_id"]),
+         do: project_home(p, a)
   end
 
   defp project_home(p, a) do
