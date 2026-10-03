@@ -2,6 +2,15 @@ defmodule Ravix.Changelog do
   @moduledoc "Curated user-facing changes shipped with Ravix."
   @entries [
     %{
+      id: "2026-10-03-conductor-setup-import",
+      date: ~D[2026-10-03],
+      kind: :new,
+      title: "Review repository Conductor setup",
+      body:
+        "Discover Conductor setup in Project settings → Machine, review cloud-compatible setup and named run scripts, then apply only the ones you choose. File-copy patterns help identify configuration to provision in the cloud.",
+      action: nil
+    },
+    %{
       id: "2026-10-01-section-create",
       date: ~D[2026-10-01],
       kind: :fixed,

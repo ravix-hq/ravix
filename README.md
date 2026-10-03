@@ -93,6 +93,10 @@ installed on repositories outside the org.
   and machine vitals.
 - Project settings: harness/model, instructions, setup script, packages,
   write-only environment/vault secrets, a project run script, and machine rebuild.
+- [Conductor setup import](docs/conductor-setup-import.md): review shared repository
+  setup and named cloud run scripts in Project settings → Machine, then apply only
+  selected fields through the existing save flow. File-copy patterns are provisioning
+  suggestions; scripts never run on discovery.
 - Project and track sharing: GitHub usernames and revocable invite links.
 - Desktop notifications, switched on from the rail: when a track finishes or
   fails while the tab is in the background, the browser says so.

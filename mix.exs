@@ -74,6 +74,7 @@ defmodule Ravix.MixProject do
       # polling loader. Server-side only -- there is deliberately no `posthog-js`.
       {:posthog, "~> 2.15"},
       {:jason, "~> 1.2"},
+      {:toml_elixir, "~> 3.2"},
       # IANA time zone data compiled into the release; schedules run at their
       # creator's local time. No runtime updater or writable data directory.
       {:tz, "~> 0.28"},
