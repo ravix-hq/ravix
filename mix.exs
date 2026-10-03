@@ -82,7 +82,7 @@ defmodule Ravix.MixProject do
       {:bandit, "~> 1.5"},
       # Fountain and its component libraries (Apache-2.0, maintained upstream).
       {:fountain_sdk, "~> 0.7.0"},
-      {:managoat_acp, "~> 0.4.3"},
+      {:managoat_acp, "~> 0.5.0"},
       # GitHub, Sprites and the preview gateway.
       {:req, "~> 0.7.4"},
       {:jose, "~> 1.11"},
