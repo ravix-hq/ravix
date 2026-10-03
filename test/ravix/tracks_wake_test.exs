@@ -9,6 +9,7 @@ defmodule Ravix.TracksWakeTest do
   alias Ravix.Fountain.{Client, FakeTransport, Shapes}
   alias Ravix.Repo
   alias Ravix.Tracks
+  alias Ravix.Tracks.CredentialRecovery
   alias Ravix.Tracks.Track
 
   setup do
@@ -70,6 +71,61 @@ defmodule Ravix.TracksWakeTest do
 
       # Asked once, and nothing else was tried after the refusal.
       FakeTransport.verify!(client)
+      assert asleep?(ctx.track.id)
+    end
+  end
+
+  describe "a conversation whose credential set has since changed" do
+    # Fountain refuses it for good, so waking it again is refused again: the
+    # wake starts its successor on the same disk instead, as a prompt does.
+    setup ctx do
+      client =
+        fountain_answers(ctx, [
+          {409, [], %{error: "inference_source_changed", message: "source changed"}}
+        ])
+
+      %{client: client}
+    end
+
+    test "is carried onto a successor, which is the wake, and the mark is cleared", ctx do
+      track_id = ctx.track.id
+      stub(CredentialRecovery, :enabled?, fn _, _ -> true end)
+
+      expect(CredentialRecovery, :reject, fn %{id: ^track_id}, _, ^track_id ->
+        {:ok, :ok}
+      end)
+
+      expect(CredentialRecovery, :prepare, fn _, %{id: ^track_id}, _, ^track_id ->
+        :rebound
+      end)
+
+      assert :ok = Tracks.wake(ctx.owner, track_id)
+      FakeTransport.verify!(ctx.client)
+      refute asleep?(track_id)
+    end
+
+    test "a successor not ready yet says so, and the mark stays", ctx do
+      stub(CredentialRecovery, :enabled?, fn _, _ -> true end)
+      stub(CredentialRecovery, :reject, fn _, _, _ -> {:ok, :ok} end)
+      stub(CredentialRecovery, :prepare, fn _, _, _, _ -> :waiting end)
+
+      assert {:error, {:conflict, "agent_reconnecting", message}} =
+               Tracks.wake(ctx.owner, ctx.track.id)
+
+      assert message =~ "Send a message"
+      assert asleep?(ctx.track.id)
+    end
+
+    test "a track recovery does not cover keeps the refusal, and nothing is recovered", ctx do
+      stub(CredentialRecovery, :enabled?, fn _, _ -> false end)
+      reject(&CredentialRecovery.reject/3)
+      reject(&CredentialRecovery.prepare/4)
+
+      capture_log(fn ->
+        assert {:error, %Ravix.Fountain.Error{code: "inference_source_changed"}} =
+                 Tracks.wake(ctx.owner, ctx.track.id)
+      end)
+
       assert asleep?(ctx.track.id)
     end
   end
@@ -200,6 +256,25 @@ defmodule Ravix.TracksWakeTest do
       assert {:ok, :waking} = Tracks.wake_on_open(ctx.owner, ctx.track.id, review.id)
       assert_received {:woke, "conv-review"}
       refute_received {:woke, _}
+    end
+
+    test "a thread whose credential set has changed is recovered, that thread and no other",
+         ctx do
+      {:ok, review} =
+        Tracks.Store.create_thread(%{
+          track_id: ctx.track.id,
+          title: "Review",
+          conversation_id: "conv-review"
+        })
+
+      review_id = review.id
+      wakes({:error, %Ravix.Fountain.Error{status: 409, code: "inference_source_changed"}})
+      stub(CredentialRecovery, :enabled?, fn _, _ -> true end)
+      expect(CredentialRecovery, :reject, fn _, _, ^review_id -> {:ok, :ok} end)
+      expect(CredentialRecovery, :prepare, fn _, _, _, ^review_id -> :rebound end)
+
+      assert {:ok, :waking} = Tracks.wake_on_open(ctx.owner, ctx.track.id, review_id)
+      refute sleeping?(ctx.track.id)
     end
 
     test "a refusal is returned for the caller to keep, and the mark stays", ctx do

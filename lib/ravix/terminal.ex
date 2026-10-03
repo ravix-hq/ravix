@@ -45,7 +45,6 @@ defmodule Ravix.Terminal do
   alias Ravix.Sprites.Pty
   alias Ravix.Terminal.{Shell, Store, Tab}
   alias Ravix.Tracks
-  alias Ravix.Tracks.Sleep
 
   # Enough for a server, a console and a shell to look around in, twice
   # over. Each is a process on the machine and a socket on this server.
@@ -287,7 +286,15 @@ defmodule Ravix.Terminal do
 
   Three distinct answers, and the panel renders a different empty state for
   each: no token on this deployment, no machine yet, or a machine that is
-  asleep or unreachable. Collapsing them into one "unavailable" is how
+  asleep or unreachable.
+
+  Asleep is Fountain's word, not the sprite's. Fountain parks a dedicated
+  track's machine by marking it suspended, and on Sprites the sprite itself
+  scales to zero later, on the platform's schedule; until then it still
+  answers as running. A track `Ravix.Tracks.Sleep` has recorded asleep is
+  therefore reported unreachable whatever the sprite says, so nothing here
+  runs a command that would keep a parked sprite warm, and nothing here
+  clears the mark: Fountain's wake and a turn starting do. Collapsing them into one "unavailable" is how
   people end up filing a bug about a feature that is off by configuration.
   """
   @spec status(User.t(), String.t()) :: {:ok, Status.t()} | {:error, :not_found}
@@ -300,11 +307,17 @@ defmodule Ravix.Terminal do
   defp status_of(nil, track, _project),
     do: %Status{available: false, why: :no_token, cwd: track.workdir}
 
+  defp status_of(
+         _sprites,
+         %{sandbox_layout: :dedicated, sandbox_suspended_at: %DateTime{}} = track,
+         _project
+       ),
+       do: %Status{available: false, why: :unreachable, cwd: track.workdir}
+
   defp status_of(sprites, track, project) do
     case sprite_of(project, track) do
       {:ok, sprite} ->
         if Sprites.running?(sprites, sprite) do
-          woke(track)
           %Status{available: true, why: nil, cwd: track.workdir}
         else
           %Status{available: false, why: :unreachable, cwd: track.workdir}
@@ -317,14 +330,6 @@ defmodule Ravix.Terminal do
         %Status{available: false, why: :no_sprite, cwd: track.workdir}
     end
   end
-
-  # A running machine is not asleep, whatever the stream last said. Only a
-  # row that says otherwise is written, so a probe of an awake one is free.
-  defp woke(%{sandbox_layout: :dedicated, sandbox_suspended_at: %DateTime{}} = track),
-    # ownership: Access.track_access in status/3 admitted this track.
-    do: Sleep.record(track.id, false)
-
-  defp woke(_track), do: :ok
 
   # The machine, then the sprite behind it: the two answers the panels tell apart.
   defp sprite_of(project, track) do
