@@ -3141,6 +3141,7 @@ html[data-input="pointer"] .model-option:has(input:focus-visible) { outline: non
 .review-text { white-space: pre-wrap; }
 .review-line-button { cursor: pointer; padding: 0 .25rem; border: 0; background: transparent; color: inherit; }
 .review-line-button:hover { text-decoration: underline; }
+.review-line-button .diff-number { padding: 0; }
 
 /* Workspace search owns its layout independently of the track shell. */
 .workspace-search { width: min(900px, 100%); margin: 0 auto; padding: 32px 24px; height: 100dvh; overflow-y: auto; }
