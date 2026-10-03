@@ -67,6 +67,7 @@ defmodule RavixWeb.Router do
   scope "/api", RavixWeb do
     pipe_through :api
     post "/tracks/:track_id/preview/agent", PreviewController, :agent
+    post "/routines/:routine_id/webhook", RoutineWebhookController, :create
   end
 
   scope "/", RavixWeb do
@@ -117,6 +118,7 @@ defmodule RavixWeb.Router do
       live "/", WorkspaceLive, :home
       live "/login", WorkspaceLive, :login
       live "/home", WorkspaceLive, :projects
+      live "/search", SearchLive, :search
       live "/schedules", WorkspaceLive, :schedules
       live "/inbox", WorkspaceLive, :inbox
       live "/p/:project", WorkspaceLive, :project

@@ -244,7 +244,7 @@ defmodule Ravix.Tracks.Settlement do
   # A sandbox-wide suspension belongs only to the immediately preceding open
   # turn, exactly as in the transcript. A sleep between turns records nothing.
   defp classify(client, conversation_id, %Event{turn_id: "pending"} = event, runtime) do
-    with {:ok, log} <- Fountain.events(client, conversation_id, []) do
+    with {:ok, log} <- Fountain.events(client, conversation_id, prompts: true) do
       page = Transcript.page(Enum.uniq_by(log ++ [event], &Event.from(&1).id), runtime, %{})
 
       case Enum.find(page.turns, fn turn -> Enum.any?(turn.events, &(&1.id == event.id)) end) do
@@ -261,7 +261,7 @@ defmodule Ravix.Tracks.Settlement do
     else
       # Fetch outside the DB transaction. The lock in persist/4 serializes only
       # classification and its writes, never provider latency.
-      with {:ok, log} <- Fountain.events(client, conversation_id, []) do
+      with {:ok, log} <- Fountain.events(client, conversation_id, prompts: true) do
         events = Enum.filter(log, &(Event.from(&1).turn_id == event.turn_id))
         events = Enum.uniq_by(events ++ [event], &Event.from(&1).id)
         persist(conversation_id, event.turn_id, events, runtime)

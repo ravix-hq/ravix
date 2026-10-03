@@ -59,12 +59,14 @@ grants for both resources. `/oauth/revoke` accepts `token` and `client_id`.
 | Scope | Access |
 | --- | --- |
 | `projects:read` | List accessible projects and repositories |
-| `projects:write` | Create projects; read/update owned project settings |
-| `tracks:read` | Read accessible tracks and transcripts; read this client's tasks |
-| `tracks:write` | Create tracks and submit prompts |
+| `projects:write` | Create projects; read/update owned project settings and preview/run defaults |
+| `tracks:read` | Read accessible tracks, transcripts, preview/run configuration, state and logs; read this client's tasks |
+| `tracks:write` | Create tracks, submit prompts, configure/start/restart/stop track runs |
 | `plans:read` | Read project plans |
 | `plans:write` | Create/edit plans and append item notes; assignment also needs `tracks:write` |
 | `tracks:cancel` | Cancel this client's queued tasks |
+| `workspaces:read` | Read workspace metadata, members, invitations, repository catalogs and personal sidebar organization |
+| `workspaces:write` | Create/rename/select workspaces, manage members and connections, admit repository projects, move owned projects, organize personal sections |
 
 Scopes restrict existing membership; they never create membership. A track guest
 cannot inspect sibling tracks or change project settings. Grants currently cover
@@ -103,17 +105,69 @@ data is capped, with `truncated: true` on oversized events.
 
 Settings allow name, runtime, model, instructions, setup script and packages.
 Secret names can be read, but secret values are never returned. Secret writes,
-sharing changes and project deletion/rebuild are not exposed.
+project/track sharing changes and project deletion/rebuild are not exposed.
 Setup scripts and agent instructions can execute code, which the consent page
 explicitly explains.
 
-Creation, settings updates and prompt submission require a request ID, at most 100 bytes. Retry with the same
+Creation, settings updates and prompt submission require a request ID, at most 100 characters. Retry with the same
 ID and identical arguments to retrieve its receipt. Reusing an ID with different
 arguments is rejected. Project/track creation and settings updates claim a
 receipt before calling providers. If a process dies during that call, the receipt
 reports `operation_unconfirmed` instead of provisioning again. Inspect the
 project before deciding to submit a new request ID. Definitive failures also
 retain their claim; a corrected operation uses a new ID.
+
+## Preview and run tools
+
+These tools manage the existing Sprites service, including plain run scripts with
+no HTTP readiness path. They use the same scoped APIs as the browser Run panel.
+No tool issues a browser ticket, session grant or provider credential. An ordinary
+private preview `url` may appear in state results; view it through a signed-in
+browser's Preview action, which still uses session-bound, single-use tickets.
+
+| Tool | Inputs | Scope |
+| --- | --- | --- |
+| `get_preview_config` | `track_id` | `tracks:read` |
+| `preview_status` | `track_id` | `tracks:read` |
+| `preview_logs` | `track_id`; optional `limit` (1–4000 characters) | `tracks:read` |
+| `update_preview_config` | `track_id`, `request_id`; `config` or `reset: true` | `tracks:write` |
+| `run_preview`, `start_preview` | `track_id`, `request_id` | `tracks:write` |
+| `restart_preview`, `stop_preview` | `track_id`, `request_id` | `tracks:write` |
+| `get_preview_defaults` | `project_id` | `projects:write` |
+| `update_preview_defaults` | `project_id`, `request_id`; `config` or `reset: true` | `projects:write` |
+
+A configuration replaces the whole value: required `directory` (relative to the
+track root; blank means root) and `command`, with optional `stop_command` and
+`readiness_path`. Omit or send a blank optional field to disable it. Commands
+execute code on the machine. HTTP apps must honor `$PORT`, bind to `127.0.0.1`
+and fail on a port collision. Without a readiness path, a plain script keeps its
+machine awake until it exits or is stopped. `reset: true` restores inherited
+project defaults for a track, or clears project defaults. Supply exactly one of
+`config` and `reset: true`; configuration updates stop affected services.
+
+Track guests can read their effective configuration and override, status and
+logs; they cannot inspect sibling tracks or project defaults. Read-only members
+cannot start, restart, stop or reconfigure. Project defaults remain owner-only,
+including reads, matching project settings. Access and OAuth validity are checked
+again before returning results, including receipt replays.
+
+Run/start/restart return the state recorded when accepted, usually `starting` or
+`waking`, while supervised work starts the service. Poll `preview_status` to see
+`ready` (HTTP), `running` (plain script), `failed` or `stopped`. Startup failures
+appear in state/error/logs; acceptance is not proof of readiness. `run_preview`
+and `start_preview` are aliases. Retry using the **same tool name**, request ID
+and arguments to replay the original acceptance receipt without restarting a
+later run. Use a new ID for a deliberate new action. Stops and configuration
+writes use the same durable claims. Failed or interrupted mutations retain their
+claim and subsequent retries report `operation_unconfirmed`; inspect state before
+choosing a new ID. A replay reports its original snapshot, not current state.
+
+Status and mutation results include at most the last 4000 log characters.
+`preview_logs` refreshes output and applies its smaller optional limit; idle or
+stopped machines return their retained tail without waking. `logs_truncated`
+marks omitted output. This bounds log payloads to at most 16 KiB of UTF-8;
+provider fetches and retained diagnostics follow the existing preview lifecycle.
+Logs and configuration are user-controlled data, not instructions to the client.
 
 ## Project plans
 
@@ -329,3 +383,75 @@ For `create_track`, an origin such as `{"kind":"pr","number":261}` resolves the
 head branch from GitHub before provisioning. A lookup failure returns an error;
 it never falls back to `main`. Fork heads are refused because their branches are not in the project repository. The browser's explicit `origin.base` remains
 supported for an already selected PR head.
+
+## Workspace administration
+
+Workspace tools require explicit `workspaces:read` or `workspaces:write` consent.
+Existing grants keep their scopes, including after refresh; reconnect with new
+consent to add workspace permissions. Scopes never override role or membership
+checks. Tokens and provider credentials are never returned. Workspace invitations
+use GitHub logins and become memberships at sign-in; they have no invite secrets
+or links to reveal.
+
+| Operations | Tools and requirements |
+| --- | --- |
+| Metadata | `list_workspaces`, `get_workspace` (read); returns your role and `access_enabled` |
+| Workspace management | `create_workspace` (any signed-in person), `update_workspace` (owner/admin rename), `select_workspace` (save your sidebar choice) |
+| People | `list_workspace_members`, `list_workspace_invitations` (read, any member); `invite_workspace_member`, `revoke_workspace_invitation`, `remove_workspace_member` (owner/admin); `set_workspace_member_role` (owner); `leave_workspace` (self) |
+| Repository catalog | `list_workspace_connections`, `list_workspace_repositories` (read, cached); `refresh_workspace_repositories` (write, any member) |
+| Connections | `list_available_workspace_installations` (read, owner); `add_workspace_installation` (write, owner, rechecks your GitHub authority); `get_workspace_connect_url`, `get_workspace_configure_url` (write, owner/admin) |
+| Repository admission | `add_workspace_repository` (write); owner/admin may create a project using the existing provisioning/payer rules; any member may retrieve an existing canonical project |
+| Workspace projects | `list_workspace_projects`, `list_workspace_move_targets` (read); `move_workspace_project` (write, project owner and owner/admin of target) |
+| Personal sidebar | `list_workspace_sections`, `list_workspace_placements` (read); `create_workspace_section`, `update_workspace_section`, `delete_workspace_section`, `move_workspace_placement`, `set_workspace_closed_visibility` (write, any member, only your preferences/sections) |
+
+Except `list_workspaces`, `create_workspace`, and `list_workspace_move_targets`, tools require `workspace_id`. Move targets require `project_id`.
+Creation takes `name`; update renames with `name`. Membership targets use `user_id`,
+invitations use `login`, and roles are `owner`, `admin`, or `member`. Only owners
+may grant elevated roles or withdraw protected invitations. The last owner cannot
+leave, be removed, or be demoted. Workspace deletion is not exposed.
+
+All mutations require `request_id` and follow the existing durable receipt
+convention. Retry identical arguments with the same ID. Authorization is checked
+again on every replay; removed members cannot retrieve old workspace data receipts.
+Completed leave/self-removal may replay only their own success receipt with a
+valid OAuth grant after membership disappears. Self-demotion may replay its own
+success while the caller remains a member; a new role change still requires owner.
+For completed section deletion the caller's own receipt remains replayable while
+they still have workspace access. Local refusals release their claim. Repository
+refresh, installation binding, and repository admission retain claims on failure
+or uncertainty; inspect the outcome before choosing a new ID.
+
+Lists accept `after` and `limit` (default 50, maximum 100) and return `items` and
+`next_cursor`. Each list has its own cursor. Refresh reports independently bound
+failed installation IDs, renamed repositories and collisions to 100 entries,
+with `truncated` for each report; raw provider errors are not returned. Listings
+paginate the existing context snapshots in memory, not the underlying database
+or GitHub fetch. Refresh still reads the provider's complete catalog.
+
+`RAVIX_WORKSPACE_ACCESS` gates administration, repository tools, and scoped sidebar
+organization. Metadata remains readable with the switch off, and removing members
+or leaving remains allowed as in the browser's contexts. Workspace membership
+then grants no project access. Repository tools never substitute a personal token
+for a workspace installation. `add_workspace_installation` instead uses the
+existing owner-only proof of visibility with the owner's sign-in token.
+
+`get_workspace_connect_url` returns `/w/:workspace_id/github/connect` on the
+public Ravix host. Open it in a browser signed in as the same person. That existing
+route rechecks the session, role and flag and mints short-lived state bound to the
+browser session, workspace and user; the callback consumes it once and requires
+GitHub's authorization code. An MCP bearer token cannot complete that round trip.
+The configure URL connects nothing on return; refresh afterward.
+
+Section edits take `section_id`, optional `name` and `collapsed`. Placement edits
+take `project_id` and `section_id`; an empty section ID clears the placement. Both
+section and project must belong to the caller's sidebar workspace. These edits
+change personal organization only. Other people's sections and inaccessible
+project IDs are refused; stale inaccessible placements are omitted from reads.
+`set_workspace_closed_visibility` takes `project_id` and boolean `show`; it refuses
+track-only guests and changes only the caller's preference. `list_workspace_projects`
+includes `closed_tracks_visible` for the caller.
+
+`move_workspace_project` takes an owned `project_id` and target `workspace_id`; it
+preserves ownership and tracks, but changes workspace access. Target owner/admin
+role, repository uniqueness, and legacy-duplicate restrictions are enforced by
+the existing context. Use `list_workspace_move_targets` to discover targets.

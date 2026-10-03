@@ -1,0 +1,91 @@
+<main class="workspace-search">
+  <header class="search-header">
+    <.link navigate="/inbox">← Workspace</.link>
+    <h1>Search</h1>
+    <p class="hint">Find projects, tracks, human prompts, and assistant replies.</p>
+  </header>
+  <.form
+    for={to_form(%{}, as: :search)}
+    id="workspace-search-form"
+    phx-submit="search"
+    phx-change="draft-search"
+    class="search-form"
+  >
+    <label for="search-query">Search words</label>
+    <div class="search-query-row">
+      <input
+        id="search-query"
+        type="search"
+        name="search[q]"
+        value={query_text(@draft_params)}
+        placeholder="What are you looking for?"
+        maxlength="500"
+        autofocus
+      />
+      <button type="submit" class="primary" phx-disable-with="Searching…">Search</button>
+    </div>
+    <div class="search-filters">
+      <label>
+        Project
+        <select name="search[project]" id="search-project">
+          <option value="">All accessible projects</option>
+          <option
+            :for={project <- @filters.projects}
+            value={project.id}
+            selected={@draft_params["project"] == project.id}
+          >
+            {project.name}
+          </option>
+        </select>
+      </label>
+      <label>
+        Track
+        <select name="search[track]" id="search-track">
+          <option value="">All accessible tracks</option>
+          <option
+            :for={track <- @filters.tracks}
+            value={track.id}
+            selected={@draft_params["track"] == track.id}
+          >
+            {track.name}
+          </option>
+        </select>
+      </label>
+    </div>
+  </.form>
+  <p class="hint search-history-note">
+    All words must match. Completed human and assistant messages are searchable. Older history is added as you open its transcript pages. Very long messages may be shortened. Tool output, reasoning, and attachments are excluded.
+  </p>
+  <section aria-live="polite" aria-busy={to_string(@loading)}>
+    <p :if={@loading} role="status">Searching…</p>
+    <p :if={@error} role="alert">{@error}</p>
+    <p :if={!@loading && !@error && @results == []}>
+      {if String.trim(query_text(@draft_params)) == "",
+        do: "Enter words to search your work.",
+        else: "No results in the work you can access. Try fewer words or different filters."}
+    </p>
+    <div class="search-results">
+      <article
+        :for={row <- @results}
+        id={"search-result-#{row.kind}-#{row.id}"}
+        class="search-result"
+      >
+        <div class="search-result-meta">
+          <span>{kind_label(row.kind)}</span><span>{row.project_name}</span>
+        </div>
+        <h2><.link navigate={result_path(row)}>{row.title}</.link></h2>
+        <p>{row.excerpt}</p>
+        <small :if={row.turn_id} class="hint">Turn {row.turn_id}</small>
+      </article>
+    </div>
+    <nav
+      :if={!@loading && (@page > 1 || @has_more)}
+      aria-label="Search pages"
+      class="search-pagination"
+    >
+      <.link :if={@page > 1} patch={page_path(@params, @page - 1)}>Previous</.link>
+      <span>Page {@page}</span>
+      <.link :if={@has_more && @page < 1000} patch={page_path(@params, @page + 1)}>Next</.link>
+    </nav>
+  </section>
+</main>

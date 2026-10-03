@@ -13,7 +13,9 @@ defmodule RavixWeb.ToolingOAuthHTML do
         </p>
         <p>Return to: <code>{@request.redirect_uri}</code></p>
         <p>Resource: <code>{@request.resource}</code></p>
-        <p>This connection can act on projects and tracks you can access, including future ones:</p>
+        <p>
+          This connection can act on workspaces, projects and tracks you can access, including future ones:
+        </p>
         <ul>
           <li :for={scope <- @request.scopes}>{description(scope)}</li>
         </ul>
@@ -36,7 +38,7 @@ defmodule RavixWeb.ToolingOAuthHTML do
     <div id="connections-panel" class={["connections-page", !assigns[:framed] && "inbox"]}>
       <header>
         <h1 :if={!assigns[:framed]}>Connected applications</h1>
-        <p>Review applications with access to your projects and tracks.</p>
+        <p>Review applications with access to your workspaces, projects and tracks.</p>
         <p>
           Each is named by its client and when it connected, in your time. Last use updates about once a minute; older use may not be recorded.
         </p>
@@ -100,17 +102,26 @@ defmodule RavixWeb.ToolingOAuthHTML do
     """
   end
 
+  defp description("workspaces:read"),
+    do: "Read workspace memberships, repository catalogs and your personal sidebar sections."
+
+  defp description("workspaces:write"),
+    do:
+      "Create and rename workspaces, manage members and GitHub connections, add repository projects, move your owned projects between workspaces, and organize your sidebar. Adding repository projects uses the project payer's subscription. Your workspace role still limits each action."
+
   defp description("projects:read"), do: "List accessible projects and repositories."
 
   defp description("projects:write"),
     do:
-      "Create projects and change owned project settings, including executable setup scripts and agent instructions."
+      "Create projects and read or change owned project settings and run defaults, including executable setup scripts, run commands and agent instructions."
 
   defp description("tracks:read"),
-    do: "Read accessible tracks, transcripts and this client's task results."
+    do:
+      "Read accessible tracks, transcripts, preview and run configuration, status and logs, and this client's task results."
 
   defp description("tracks:write"),
-    do: "Create tracks and send prompts that run code using the project's agent subscription."
+    do:
+      "Create tracks and send prompts that run code using the project's agent subscription. Configure, start, restart and stop track previews and run scripts on their machines."
 
   defp description("plans:read"), do: "Read plans in projects you belong to."
 

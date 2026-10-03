@@ -71,6 +71,7 @@ defmodule RavixWeb.TrackLive do
   alias Ravix.GitHub.ChecksReport
   alias Ravix.{Hub, Previews, PromptQueue, SessionConfig, Terminal, Tracks}
   alias Ravix.Hub.Event
+  alias Ravix.Reviews.Anchor
   alias Ravix.Tracks.{AgentFailure, Diff, Files, Follower, MachineState, Track}
   alias Ravix.Tracks.Transcript
   alias Ravix.Tracks.Transcript.Block, as: TranscriptBlock
@@ -83,6 +84,7 @@ defmodule RavixWeb.TrackLive do
   alias RavixWeb.Live.ModelMenu
   alias RavixWeb.Live.Panel
   alias RavixWeb.Live.Params
+  alias RavixWeb.Live.ReviewPanel
   alias RavixWeb.Live.ThreadConnect
   alias RavixWeb.Live.ToolCall
   alias RavixWeb.Markdown
@@ -157,6 +159,7 @@ defmodule RavixWeb.TrackLive do
         diff_path: nil,
         diff_filter: "",
         diff_show_large: false,
+        review: ReviewPanel.new(),
         # Whether this deployment can serve previews at all (RAV-42). The
         # header's Preview control is not drawn on one that cannot, and the
         # page does not read the track's preview for it.
@@ -702,6 +705,17 @@ defmodule RavixWeb.TrackLive do
       else: {:noreply, reload_panel(socket)}
   end
 
+  def handle_event("review-jump" = event, params, socket) do
+    socket = ReviewPanel.event(event, params, socket)
+
+    if socket.redirected,
+      do: {:noreply, socket},
+      else: {:noreply, socket |> update_panel(&Panel.select(&1, :changes)) |> load_panel()}
+  end
+
+  def handle_event("review-" <> _ = event, params, socket),
+    do: {:noreply, ReviewPanel.event(event, params, socket)}
+
   def handle_event("select-diff", %{"path" => path}, socket) do
     {:noreply, assign(socket, diff_path: path, diff_show_large: false)}
   end
@@ -1197,6 +1211,9 @@ defmodule RavixWeb.TrackLive do
       {:noreply, redirect(socket, to: "/")}
     end
   end
+
+  defp async_result({:review_post, track_id, generation}, response, socket),
+    do: ReviewPanel.completed(track_id, generation, response, socket)
 
   defp async_result({:plan_items, track_id}, {:ok, {:ok, summary}}, socket) do
     if track_id == socket.assigns.track_id do
@@ -2126,6 +2143,7 @@ defmodule RavixWeb.TrackLive do
       diff_path: nil,
       diff_filter: "",
       diff_show_large: false,
+      review: ReviewPanel.new(),
       preview: nil,
       preview_form: Form.new(:preview_config),
       preview_url: nil,
@@ -3217,6 +3235,7 @@ defmodule RavixWeb.TrackLive do
     assigns =
       assign(assigns,
         selected: selected,
+        diff_revision: if(selected, do: Anchor.revision(assigns.data, selected.change.path)),
         filtered: filtered,
         added: Enum.sum(Enum.map(assigns.data.changes, & &1.added)),
         removed: Enum.sum(Enum.map(assigns.data.changes, & &1.removed))
@@ -3282,6 +3301,15 @@ defmodule RavixWeb.TrackLive do
         </p>
         <p :for={line <- @selected.metadata}>{line}</p>
         <p :if={@selected.binary}>Binary files differ</p>
+        <p :if={!@diff_revision}>
+          Complete file revision unavailable; existing discussions remain below.
+        </p>
+        <ReviewPanel.anchor_button
+          :if={@diff_revision}
+          revision={@diff_revision}
+          path={@selected.change.path}
+          side="file"
+        />
         <%= if large_diff?(@selected) and !@diff_show_large do %>
           <p>Large diff hidden to keep this panel responsive.</p>
           <button type="button" phx-click="show-large-diff">Show anyway</button>
@@ -3298,10 +3326,24 @@ defmodule RavixWeb.TrackLive do
               <div :for={line <- hunk.lines}>
                 <div class={"diff-line diff-#{line.kind}"}>
                   <%!-- The gutter is visual; a screen reader hears one phrase instead. --%>
-                  <span class="sr-only">{diff_line_label(line)}</span><span
-                    class="diff-number"
-                    aria-hidden="true"
-                  >{line.old}</span><span class="diff-number" aria-hidden="true">{line.new}</span><span
+                  <span class="sr-only">{diff_line_label(line)}</span>
+                  <span :if={!line.old || !@diff_revision} class="diff-number" aria-hidden="true">{line.old}</span>
+                  <ReviewPanel.anchor_button
+                    :if={line.old && @diff_revision}
+                    revision={@diff_revision}
+                    path={@selected.change.path}
+                    side="old"
+                    line={line.old}
+                  />
+                  <span :if={!line.new || !@diff_revision} class="diff-number" aria-hidden="true">{line.new}</span>
+                  <ReviewPanel.anchor_button
+                    :if={line.new && @diff_revision}
+                    revision={@diff_revision}
+                    path={@selected.change.path}
+                    side="new"
+                    line={line.new}
+                  />
+                  <span
                     class="diff-marker"
                     aria-hidden="true"
                   >{diff_marker(line.kind)}</span><code>{line.text}</code>
@@ -4285,6 +4327,7 @@ defmodule RavixWeb.TrackLive do
     user = socket.assigns.current_user
     id = socket.assigns.track_id
     tab = socket.assigns.panel.tab
+    socket = if tab in [:changes, :checks], do: ReviewPanel.refresh(socket), else: socket
 
     # Git status is read beside the checks rather than inside them, so
     # GitHub being down does not hide what the machine holds, or the reverse.
@@ -4367,6 +4410,8 @@ defmodule RavixWeb.TrackLive do
   # gap rather than the way it is kept current -- and a turn beginning or
   # failing is the one hub event that means the stream may have missed
   # something.
+  defp hub(%Event{name: :review}, socket), do: ReviewPanel.refresh(socket)
+
   defp hub(%Event{name: :here, present: present}, socket),
     do: assign(socket, present: present)
 

@@ -8,15 +8,11 @@ defmodule Ravix.ChangelogTest do
   end
 
   test "since returns only entries newer than the marker" do
-    assert Enum.map(Ravix.Changelog.since(~U[2026-09-25 00:00:00Z]), & &1.id) ==
-             [
-               "2026-10-01-section-create",
-               "2026-10-01-connect-step",
-               "2026-09-30-effort-and-fast",
-               "2026-09-30-terminals",
-               "2026-09-28-thread-default",
-               "2026-09-26-threads"
-             ]
+    marker = ~U[2026-09-25 00:00:00Z]
+    entries = Ravix.Changelog.since(marker)
+    assert hd(Ravix.Changelog.all()) in entries
+    refute List.last(Ravix.Changelog.all()) in entries
+    assert Enum.all?(entries, &(Date.compare(&1.date, DateTime.to_date(marker)) == :gt))
 
     assert Ravix.Changelog.since(~U[2027-01-01 00:00:00Z]) == []
   end

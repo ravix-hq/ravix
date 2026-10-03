@@ -47,5 +47,8 @@ for mod <- [
 # `:deprecated_literal_ui` marks tests whose main assertion is exact UI copy,
 # component markup/classes, labels/tooltips, visual styling, or other cosmetic
 # structure rather than product behavior.
-ExUnit.start(exclude: [:distributed, :deprecated_literal_ui])
+# LiveView's render_async and message handshakes share this bound. Coverage
+# and concurrent database work can exceed ExUnit's 100ms default on CI;
+# completion still wakes the waiter immediately, without a fixed delay.
+ExUnit.start(assert_receive_timeout: 1_000, exclude: [:distributed, :deprecated_literal_ui])
 Ecto.Adapters.SQL.Sandbox.mode(Ravix.Repo, :manual)

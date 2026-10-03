@@ -86,6 +86,8 @@ installed on repositories outside the org.
 
 - `/` and `/inbox`: projects and tracks needing attention.
 - `/home`: project selection; `/p/:project`: one project's tracks.
+- `/search`: scoped full-text search across projects, tracks, pending prompts, and
+  indexed human/assistant conversation text; see [search coverage](docs/workspace-search.md).
 - `/schedules`: personal hourly, daily, or weekly project prompts (UTC), with
   editing, pause/resume, and links to the latest dispatched track.
 - `/p/:project/t/:track`: conversation, image attachments, queued prompts,
@@ -93,9 +95,27 @@ installed on repositories outside the org.
   and machine vitals.
 - Project settings: harness/model, instructions, setup script, packages,
   write-only environment/vault secrets, a project run script, and machine rebuild.
+- [Conductor setup import](docs/conductor-setup-import.md): review shared repository
+  setup and named cloud run scripts in Project settings → Machine, then apply only
+  selected fields through the existing save flow. File-copy patterns are provisioning
+  suggestions; scripts never run on discovery.
 - Project and track sharing: GitHub usernames and revocable invite links.
 - Desktop notifications, switched on from the rail: when a track finishes or
   fails while the tab is in the background, the browser says so.
+
+Webhook-triggered project prompts are also managed from Schedules. See
+[webhook routines](docs/webhook-routines.md) for credentials, JSON delivery,
+idempotency, and dispatch outcomes.
+
+Changes supports persistent human review discussions on files or old/new diff lines.
+Checks lists the same discussions and links back to the file and original anchor.
+Track readers can reply and resolve/reopen. Reviews never become transcript notes,
+agent prompts, or GitHub comments. A revision fingerprints the file’s Git diff section, including blob indexes, rather
+than a Git commit. Extra untracked files and reader/writer retrieval differences do
+not invalidate tracked discussions. Changed files retain outdated discussions and
+original line text; stale submissions require a refresh. Partial files and binaries
+without blob identities remain unverifiable and cannot accept new anchors. Binary
+and metadata-only changes accept file discussions only.
 
 Schedules recheck the creator's project membership before opening each fresh
 track and use the durable prompt queue. A cluster singleton polls every 30 seconds;
@@ -454,7 +474,8 @@ command. Shared tracks keep their separate port allocations; dedicated tracks
 run on their own machines.
 
 The track agent helper supports `run` (an alias for `start`), `restart`, `stop`,
-`status`, and `logs`. The MCP catalog does not yet expose preview/run tools.
+`status`, and `logs`. The MCP catalog exposes preview/run configuration, start, restart, stop, status,
+and bounded logs; see [agent tooling](docs/agent-tooling.md#preview-and-run-tools).
 
 Plain run scripts are observed after startup, not automatically relaunched.
 A successful exit becomes stopped; a non-zero exit, provider failure, or

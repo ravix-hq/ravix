@@ -97,6 +97,15 @@ defmodule RavixWeb.Live.ProjectSettings do
      |> assign(agents: Enum.uniq([agent | socket.assigns.agents || []]), agent_error: nil)}
   end
 
+  def update(%{conductor_selection: selection, conductor_repository: repository}, socket) do
+    {:noreply, socket} =
+      Hooks.component(socket, fn ->
+        apply_conductor_selection(socket, selection, repository)
+      end)
+
+    {:ok, socket}
+  end
+
   def update(assigns, socket) do
     before = socket.assigns[:section]
     socket = assign(socket, assigns)
@@ -694,6 +703,32 @@ defmodule RavixWeb.Live.ProjectSettings do
          do: Enum.count(tracks, &(&1.sandbox_layout == :shared)),
          else: length(tracks)
        )}
+    end
+  end
+
+  defp apply_conductor_selection(socket, selection, repository) do
+    with {:ok, project} <- Access.project_of(user(socket), project_id(socket)),
+         true <- repository == {project.repo_full_name, project.default_branch || "main"},
+         true <- socket.assigns.section == "machine" and MapSet.size(socket.assigns.pending) == 0 do
+      environment = socket.assigns.environment_form.params
+      run = socket.assigns.defaults_form.params
+
+      environment =
+        if selection.setup,
+          do: Map.put(environment, "setup_script", selection.setup),
+          else: environment
+
+      run = if selection.run, do: Map.merge(run, selection.run), else: run
+
+      {:noreply,
+       assign(socket,
+         environment_form: Form.new(:settings, environment),
+         defaults_form: Form.new(:preview_defaults, run),
+         machine_review: nil
+       )}
+    else
+      {:error, reason} -> {:noreply, error(socket, reason)}
+      false -> {:noreply, socket}
     end
   end
 
@@ -1503,6 +1538,14 @@ defmodule RavixWeb.Live.ProjectSettings do
       discard="discard-machine"
       target={@myself}
     >
+      <.live_component
+        module={RavixWeb.Live.ConductorSetupImport}
+        id={"conductor-setup-#{@project.id}"}
+        settings_id={@id}
+        project={@project}
+        current_user={@current_user}
+        session_hash={@session_hash}
+      />
       <form
         id="machine-form"
         phx-target={@myself}

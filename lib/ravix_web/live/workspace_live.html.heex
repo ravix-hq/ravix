@@ -56,7 +56,7 @@
     <aside id="yard" class={["yard", @yard_open && "forced"]} aria-label="Projects">
       <%!-- Create stays the first tab stop (RAV-98): the nav comes first in
         the document, `.yard-top` is drawn above it with `order`, and the
-        rows are ordered Home, Create, Routines, Inbox, Add a repository. --%>
+        rows are ordered Home, Create, Routines, Inbox, Add a repository, Search. --%>
       <div class="workspace-actions yard-nav">
         <button
           id="top-new-track"
@@ -86,6 +86,9 @@
         >
           <.icon name="folder" />Add a repository
         </button>
+        <.link navigate="/search" class="yard-item">
+          <.icon name="search" />Search conversations
+        </.link>
       </div>
       <%!-- Account preferences live in the sidebar footer; the native popover
         retains light dismiss, Escape and focus return. --%>
@@ -615,6 +618,7 @@
           <.icon name="chevron" size={13} open={@yard_open} class="ico" />Menu
         </button>
         <.link patch="/home" aria-current={@live_action == :projects && "page"}>Home</.link>
+        <.link navigate="/search">Search conversations</.link>
         <.link patch="/schedules">Routines</.link>
         <.link patch="/inbox" aria-current={@live_action in [:home, :inbox] && "page"}>Inbox</.link>
         <button

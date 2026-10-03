@@ -33,7 +33,7 @@ defmodule Ravix.HubTest do
       assert %Event{user_id: nil} = Event.new(:tracks, "p1", track_id: "t1")
     end
 
-    test "refuses a name that is not one of the ten" do
+    test "refuses a name outside the event catalog" do
       # The set is closed on purpose: these are written here and never
       # received from outside, so a typo should not become a live event
       # nobody handles.
@@ -50,6 +50,7 @@ defmodule Ravix.HubTest do
                  :queue,
                  :read,
                  :reply,
+                 :review,
                  :settings,
                  :tracks,
                  :turn
