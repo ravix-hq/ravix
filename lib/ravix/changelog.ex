@@ -2,6 +2,15 @@ defmodule Ravix.Changelog do
   @moduledoc "Curated user-facing changes shipped with Ravix."
   @entries [
     %{
+      id: "2026-10-01-section-create",
+      date: ~D[2026-10-01],
+      kind: :fixed,
+      title: "Creating a section clears the field",
+      body:
+        "After you create a sidebar section, the New section field empties and keeps the focus for the next name, the new section is pointed out, and a name you already use is explained under the field instead of in a toast.",
+      action: nil
+    },
+    %{
       id: "2026-10-01-connect-step",
       date: ~D[2026-10-01],
       kind: :fixed,

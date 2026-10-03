@@ -2738,6 +2738,17 @@ body:has(.phx-error) #request-progress { display: none; }
 .workspace-project.dragging { opacity: 0.5; }
 .project-section.drop-target { border-radius: var(--radius); background: var(--accent-soft); outline: 1px dashed var(--accent-line); outline-offset: -1px; }
 .section-editor { margin-top: 16px; }
+/* The section just created is pointed out for a moment, in the dialog's
+   list and in the sidebar, so a create whose form simply emptied is seen to
+   have done something (RAV-130). Without motion the fill simply stays until
+   the next change. */
+@keyframes section-created { from { background: var(--accent-soft); } to { background: transparent; } }
+.section-editor.created, .project-section.created {
+  border-radius: var(--radius); animation: section-created 1.8s ease-out both;
+}
+@media (prefers-reduced-motion: reduce) {
+  .section-editor.created, .project-section.created { animation: none; background: var(--accent-soft); }
+}
 
 /* Project tracks share the sidebar's native vertical scrolling and mobile drawer. */
 .track-tab { display: flex; flex: none; align-items: center; gap: 8px; min-width: 0; padding: 6px 10px; white-space: nowrap; color: var(--dim); text-decoration: none; border-radius: 8px; border-bottom: 0; }

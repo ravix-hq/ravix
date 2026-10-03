@@ -36,8 +36,15 @@ defmodule Ravix.ProjectSectionsTest do
     user = insert_user()
     assert {:error, _} = Sections.create(user, nil, %{name: "   "})
     assert {:error, _} = Sections.create(user, nil, %{name: String.duplicate("x", 81)})
-    assert {:ok, _} = Sections.create(user, nil, %{name: "Work"})
-    assert {:error, _} = Sections.create(user, nil, %{name: "Work"})
+    assert {:ok, work} = Sections.create(user, nil, %{name: "Work"})
+    # A taken name is refused in a sentence that names it, on the field
+    # (RAV-130), when creating and when renaming.
+    assert {:error, %Ecto.Changeset{} = taken} = Sections.create(user, nil, %{name: "Work"})
+    assert [name: {"You already have a section called Work.", _}] = taken.errors
+    assert {:ok, %{id: later}} = Sections.create(user, nil, %{name: "Later"})
+    assert {:error, %Ecto.Changeset{} = renamed} = Sections.update(user, later, %{name: " Work "})
+    assert [name: {"You already have a section called Work.", _}] = renamed.errors
+    assert {:ok, _} = Sections.update(user, work.id, %{name: "Work"})
     assert {:ok, _} = Sections.create(insert_user(), nil, %{name: "Work"})
   end
 
