@@ -1,6 +1,7 @@
 import Config
 config :ravix, :threads_enabled, true
 config :ravix, Ravix.Tracks.Sandbox.Reconciler, interval: false
+config :ravix, Ravix.Tracks.Sandbox.CloneTokens, interval: false
 # How long `Tracks.wake/2` waits for a resuming machine to answer a read.
 config :ravix, :wake_ready, interval_ms: 5, timeout_ms: 50
 
