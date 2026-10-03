@@ -17,7 +17,7 @@ defmodule RavixWeb.SearchLive do
        draft_params: %{},
        results: [],
        filters: %{projects: [], tracks: []},
-       query: %Query{},
+       query: nil,
        page: 1,
        has_more: false,
        loading: false,
@@ -70,14 +70,20 @@ defmodule RavixWeb.SearchLive do
   def handle_info({:hub, %Hub.Event{name: name}}, socket)
       when name in [:people, :tracks, :reply] do
     socket = refresh(socket)
-    user = socket.assigns.current_user
-    query = socket.assigns.query
 
-    {:noreply,
-     socket
-     |> cancel_async(:search)
-     |> assign(loading: true)
-     |> start_async(:search, fn -> Search.run(user, query) end)}
+    case socket.assigns.query do
+      %Query{} = query ->
+        user = socket.assigns.current_user
+
+        {:noreply,
+         socket
+         |> cancel_async(:search)
+         |> assign(loading: true)
+         |> start_async(:search, fn -> Search.run(user, query) end)}
+
+      nil ->
+        {:noreply, socket}
+    end
   end
 
   def handle_info(_message, socket), do: {:noreply, socket}
@@ -113,15 +119,19 @@ defmodule RavixWeb.SearchLive do
 
   defp load(socket, _params), do: redirect(socket, to: "/login")
 
-  defp refresh(%{assigns: %{loading: true}} = socket), do: socket
-  defp refresh(%{assigns: %{error: error}} = socket) when not is_nil(error), do: socket
+  defp refresh(%{assigns: %{query: nil}} = socket), do: socket
 
   defp refresh(socket) do
-    apply_page(socket, %{
-      results: socket.assigns.results,
-      page: socket.assigns.page,
-      has_more: socket.assigns.has_more
-    })
+    refreshed =
+      apply_page(socket, %{
+        results: socket.assigns.results,
+        page: socket.assigns.page,
+        has_more: socket.assigns.has_more
+      })
+
+    if refreshed.assigns.query,
+      do: assign(refreshed, loading: socket.assigns.loading),
+      else: refreshed
   end
 
   defp apply_page(socket, page) do
@@ -142,14 +152,19 @@ defmodule RavixWeb.SearchLive do
     end
   end
 
-  defp failed(socket, reason),
-    do:
-      assign(socket,
-        loading: false,
-        results: [],
-        has_more: false,
-        error: RavixWeb.Error.from(reason).message
-      )
+  defp failed(socket, reason) do
+    socket
+    |> cancel_async(:search)
+    |> subscriptions(%{projects: [], tracks: []}, [])
+    |> assign(
+      loading: false,
+      results: [],
+      filters: %{projects: [], tracks: []},
+      query: nil,
+      has_more: false,
+      error: RavixWeb.Error.from(reason).message
+    )
+  end
 
   defp subscriptions(socket, filters, results) do
     wanted = MapSet.new(Enum.map(filters.projects, & &1.id) ++ Enum.map(results, & &1.project_id))
