@@ -1471,9 +1471,12 @@ defmodule Ravix.Tracks do
   it. Anything else asks Fountain to wake the track's conversation
   (`Ravix.Fountain.wake/2`), which resumes the machine without opening a
   turn and is refused for the reasons a prompt would be, a 404 included.
-  Either answer clears the asleep mark (`Ravix.Tracks.Sleep`): `:awake` is a
-  machine already up, and `:waking` one Fountain has resumed or is replacing,
-  which no stream event will say again. A track with no conversation yet has
+  Either answer clears the asleep mark (`Ravix.Tracks.Sleep`) once the
+  machine answers a read, since Fountain's `:waking` comes back while it is
+  still resuming: `:awake` is a machine already up, and `:waking` one
+  Fountain has resumed or is replacing, which no stream event will say
+  again. One that has not answered within the wait is refused as still
+  waking, and stays marked asleep. A track with no conversation yet has
   nothing to wake and is refused. Write access, like a message: a Read
   member (ADR 0010) cannot wake a machine they could not prompt.
   """
@@ -1593,7 +1596,8 @@ defmodule Ravix.Tracks do
              track,
              project,
              thread_id
-           ) do
+           ),
+         :ok <- await_ready(client, track, project, state) do
       Trace.annotate(%{"ravix.wake_state" => Atom.to_string(state)})
       # ownership: wake/2 and wake_on_open/3 admitted this track with Write.
       if asleep?(track), do: Sleep.record(track.id, false)
@@ -1635,6 +1639,67 @@ defmodule Ravix.Tracks do
   end
 
   defp recover_refused(result, _client, _track, _project, _thread_id), do: result
+
+  # Fountain answers `waking` once it has started the conversation's server,
+  # but the machine behind it goes on resuming for tens of seconds: a read in
+  # that time is refused as suspended, or hangs and fails as unreachable
+  # (managoat/fountain#2555). Clearing the asleep mark on the answer alone had
+  # the inspector read straight into that window, show the failure, and mark
+  # the machine asleep again with nothing left to read once it was up. So the
+  # wake answers once a read does: a live listing, not the park's snapshot.
+  # An `awake` answer for a row not marked asleep is a machine already up,
+  # and is not asked again.
+  defp await_ready(_client, %Track{sandbox_suspended_at: nil}, _project, :awake), do: :ok
+
+  defp await_ready(client, track, project, _state) do
+    case machine_of_track(project, track) do
+      {:ok, %{sandbox_id: sandbox_id}} when is_binary(sandbox_id) ->
+        config = Application.get_env(:ravix, :wake_ready, [])
+        deadline = System.monotonic_time(:millisecond) + Keyword.get(config, :timeout_ms, 120_000)
+        poll_ready(client, sandbox_id, deadline, Keyword.get(config, :interval_ms, 2_000))
+
+      _ ->
+        :ok
+    end
+  end
+
+  defp poll_ready(client, sandbox_id, deadline, interval) do
+    case Fountain.listing(client, sandbox_id, ".") do
+      {:ok, %{"snapshot_at" => at}} when is_binary(at) ->
+        poll_again(client, sandbox_id, deadline, interval)
+
+      {:ok, _} ->
+        :ok
+
+      {:error, %Fountain.Error{} = error} ->
+        if still_resuming?(error),
+          do: poll_again(client, sandbox_id, deadline, interval),
+          else: :ok
+
+      {:error, _} ->
+        :ok
+    end
+  end
+
+  defp poll_again(client, sandbox_id, deadline, interval) do
+    if System.monotonic_time(:millisecond) + interval < deadline do
+      Process.sleep(interval)
+      poll_ready(client, sandbox_id, deadline, interval)
+    else
+      Trace.annotate(%{"ravix.wake_ready" => "timeout"})
+
+      {:error,
+       {:unavailable, "machine_waking",
+        "This track's machine is still waking. Try again in a moment, or send a message."}}
+    end
+  end
+
+  # What a resuming machine answers. Anything else is not the wake's to wait
+  # out (a sandbox replaced or gone, a refused path): the wake Fountain
+  # accepted stands, and the reads that follow say what they find.
+  defp still_resuming?(%Fountain.Error{status: 409, code: "sandbox_not_ready"}), do: true
+  defp still_resuming?(%Fountain.Error{status: status}) when status in 502..504, do: true
+  defp still_resuming?(error), do: Fountain.Error.unreachable?(error)
 
   defp send_opening_turn(_client, %Track{conversation_id: nil}, _project, _origin, _mode), do: :ok
 
