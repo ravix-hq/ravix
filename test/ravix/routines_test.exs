@@ -2,8 +2,8 @@ defmodule Ravix.RoutinesTest do
   use Ravix.DataCase, async: true
   import Mimic
   alias Ravix.{Crypto, Routines, Tracks}
-  alias Ravix.Routines.{Dispatch, Store}
   alias Ravix.Fountain.FakeTransport
+  alias Ravix.Routines.{Dispatch, Store}
 
   setup :verify_on_exit!
 
