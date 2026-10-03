@@ -13,6 +13,7 @@ defmodule Ravix.Previews.WakeTest do
 
   import Ravix.PreviewsFixture
 
+  alias Ravix.Fountain.AwakeReads
   alias Ravix.Previews
   alias Ravix.Previews.{Lifecycle, Reconciler, Server, Store}
   alias Ravix.Tracks.Track
@@ -70,6 +71,8 @@ defmodule Ravix.Previews.WakeTest do
 
     # Held until the test has seen the page's first answer, so "waking" is
     # observed rather than raced past.
+    AwakeReads.stub()
+
     stub(Ravix.Fountain, :wake, fn _client, "c1" ->
       send(me, {:waking, self()})
       receive do: (:wake -> {:ok, :waking})
@@ -103,6 +106,8 @@ defmodule Ravix.Previews.WakeTest do
     asleep!(ctx.track)
     assert :ok = Previews.subscribe(ctx.owner, ctx.track.id)
 
+    AwakeReads.stub()
+
     stub(Ravix.Fountain, :wake, fn _client, "c1" ->
       {:error,
        %Ravix.Fountain.Error{status: 503, code: "sandbox_unavailable", message: "provider text"}}
@@ -123,6 +128,8 @@ defmodule Ravix.Previews.WakeTest do
   test "a wake that fails after a Stop leaves the stop alone", ctx do
     asleep!(ctx.track)
     me = self()
+
+    AwakeReads.stub()
 
     stub(Ravix.Fountain, :wake, fn _client, "c1" ->
       send(me, {:waking, self()})

@@ -3,8 +3,8 @@ defmodule RavixWeb.TrackLiveTest do
   import Phoenix.LiveViewTest
   import Mimic
   alias Ravix.Accounts.{Access, Session, ThreadPreference}
+  alias Ravix.Fountain.{AwakeReads, FakeTransport, Shapes}
   alias Ravix.Fountain.Error, as: FountainError
-  alias Ravix.Fountain.{FakeTransport, Shapes}
   alias Ravix.Hub.Event
   alias Ravix.{People, Previews, PromptQueue, QueryCount, Repo, Terminal, Tracks, Vitals}
   alias Ravix.Previews.Lifecycle, as: PreviewLifecycle
@@ -3085,6 +3085,8 @@ defmodule RavixWeb.TrackLiveTest do
     defp held_wake(answer) do
       test = self()
 
+      AwakeReads.stub()
+
       expect(Ravix.Fountain, :wake, fn _, conversation ->
         send(test, {:fountain_wake, self(), conversation})
         assert_receive :go, 5_000
@@ -3125,6 +3127,8 @@ defmodule RavixWeb.TrackLiveTest do
     test "an awake track is asked once, answers awake, and nothing on the page moves", ctx do
       fountain_reachable()
       test = self()
+
+      AwakeReads.stub()
 
       expect(Ravix.Fountain, :wake, fn _, conversation ->
         send(test, {:fountain_wake, conversation})

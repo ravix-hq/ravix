@@ -315,3 +315,25 @@ defmodule Ravix.Fountain.FakeTransport do
     end
   end
 end
+
+defmodule Ravix.Fountain.AwakeReads do
+  @moduledoc """
+  For a test that stubs `Ravix.Fountain.wake/2` at the function: the read
+  `Ravix.Tracks.wake/2` makes to see the machine answer once Fountain has
+  woken it, answered as an awake machine answers it. Every other listing is
+  passed through.
+  """
+
+  @spec stub() :: :ok
+  def stub do
+    Mimic.stub(Ravix.Fountain, :listing, fn
+      _client, _sandbox_id, "." ->
+        {:ok, %{"path" => "/home/sprite", "entries" => [], "truncated" => false}}
+
+      client, sandbox_id, path ->
+        Mimic.call_original(Ravix.Fountain, :listing, [client, sandbox_id, path])
+    end)
+
+    :ok
+  end
+end

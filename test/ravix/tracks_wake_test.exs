@@ -195,6 +195,96 @@ defmodule Ravix.TracksWakeTest do
     assert Repo.get!(Track, ctx.track.id).setup_state == "retry"
   end
 
+  describe "a machine still resuming after Fountain answers" do
+    # Fountain answers `waking` with the machine still coming up: reads are
+    # refused as suspended, or fail as unreachable, for tens of seconds
+    # (managoat/fountain#2555). The wake answers once a live read does.
+    setup ctx do
+      track = Repo.update!(Ecto.Changeset.change(ctx.track, sandbox_id: "sbx-#{ctx.track.id}"))
+      %{track: track}
+    end
+
+    defp listing(ctx), do: %{method: "GET", path: "/api/sandboxes/sbx-#{ctx.track.id}/files"}
+
+    defp wake_call(ctx),
+      do: %{method: "POST", path: "/api/conversations/conv-#{ctx.track.id}/wake"}
+
+    defp scripted(ctx, wake, reads, opts \\ []) do
+      client =
+        FakeTransport.client(
+          [{wake_call(ctx), wake} | Enum.map(reads, &{listing(ctx), &1})],
+          opts
+        )
+
+      stub(Ravix.Fountain, :client, fn -> client end)
+      client
+    end
+
+    @suspended {409, [], %{error: "sandbox_not_ready", status: "suspended"}}
+    @unreachable {503, [],
+                  %{error: "sandbox_unreachable", message: "could not reach the sandbox"}}
+    @live {200, [], %{data: %{path: "/home/sprite", entries: [], truncated: false}}}
+
+    test "waits through refused and unreachable reads, then clears the mark", ctx do
+      client = scripted(ctx, {200, [], %{status: "waking"}}, [@suspended, @unreachable, @live])
+
+      capture_log(fn -> assert :ok = Tracks.wake(ctx.owner, ctx.track.id) end)
+      FakeTransport.verify!(client)
+      refute asleep?(ctx.track.id)
+    end
+
+    test "a listing from the park's snapshot is the machine still parked", ctx do
+      snapshot =
+        {200, [],
+         %{data: %{path: "/home/sprite", entries: [], snapshot_at: "2026-10-03T03:00:00Z"}}}
+
+      client = scripted(ctx, {200, [], %{status: "waking"}}, [snapshot, @live])
+
+      assert :ok = Tracks.wake(ctx.owner, ctx.track.id)
+      FakeTransport.verify!(client)
+      refute asleep?(ctx.track.id)
+    end
+
+    test "one that never answers is refused as still waking, and stays marked asleep", ctx do
+      # More refusals than the test config's wait can ask for.
+      scripted(ctx, {200, [], %{status: "waking"}}, List.duplicate(@suspended, 40), verify: false)
+
+      assert {:error, {:unavailable, "machine_waking", message} = reason} =
+               Tracks.wake(ctx.owner, ctx.track.id)
+
+      assert message =~ "still waking"
+      assert RavixWeb.Error.from(reason).message =~ "still waking"
+      assert asleep?(ctx.track.id)
+    end
+
+    test "a sandbox the read cannot find leaves the wake Fountain accepted standing", ctx do
+      client =
+        scripted(ctx, {200, [], %{status: "waking"}}, [
+          {404, [], %{error: "sandbox_not_found"}}
+        ])
+
+      capture_log(fn -> assert :ok = Tracks.wake(ctx.owner, ctx.track.id) end)
+      FakeTransport.verify!(client)
+      refute asleep?(ctx.track.id)
+    end
+
+    test "an awake machine not marked asleep is not read at all", ctx do
+      Repo.update!(Ecto.Changeset.change(ctx.track, sandbox_suspended_at: nil))
+      client = scripted(ctx, {200, [], %{status: "awake"}}, [])
+
+      assert :ok = Tracks.wake(ctx.owner, ctx.track.id)
+      FakeTransport.verify!(client)
+    end
+
+    test "an awake answer for a row marked asleep is read before the mark clears", ctx do
+      client = scripted(ctx, {200, [], %{status: "awake"}}, [@suspended, @live])
+
+      assert :ok = Tracks.wake(ctx.owner, ctx.track.id)
+      FakeTransport.verify!(client)
+      refute asleep?(ctx.track.id)
+    end
+  end
+
   describe "wake_on_open/3" do
     # Somebody opened the track (RAV-141). Fountain is stubbed at its own
     # functions, and the conversation list at the memo, which is shared
