@@ -909,10 +909,7 @@ defmodule RavixWeb.CoreComponents do
   end
 
   @doc """
-  The wordmark: the product name set in the app's own sans.
-
-  Plain type on purpose. A drawn or pixel-grid logotype invites comparison
-  with other products' marks; the typeface we already ship does not.
+  The product mark, with the product name kept as its accessible label.
 
       <.wordmark />
       <.wordmark size={24} />
@@ -922,7 +919,9 @@ defmodule RavixWeb.CoreComponents do
 
   def wordmark(assigns) do
     ~H"""
-    <span class="wordmark" style={"font-size: #{@size}px"}>{@text}</span>
+    <span class="wordmark" style={"--wordmark-size: #{@size}px"} aria-label={@text}>
+      <img src="/images/logo.png" alt="" width={@size} height={@size} />
+    </span>
     """
   end
 

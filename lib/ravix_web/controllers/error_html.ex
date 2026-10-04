@@ -29,7 +29,7 @@ defmodule RavixWeb.ErrorHTML do
       <body>
         <main class="centred">
           <div class="hero">
-            <p class="wordmark">Ravix</p>
+            <.wordmark />
             <h1>{@status} · {@title}</h1>
             <p class="hero-sub">{render_slot(@inner_block)}</p>
             <a href={~p"/home"}>Home</a>

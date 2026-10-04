@@ -2072,6 +2072,7 @@ html:not([data-input="pointer"]) .repo-choice label.repo-option:has(input:focus-
   display: inline-block; font-family: var(--sans); font-weight: 600;
   line-height: 1; letter-spacing: 0; color: var(--ink);
 }
+.wordmark img { display: block; width: var(--wordmark-size, 1em); height: var(--wordmark-size, 1em); object-fit: contain; }
 .hero-sub { color: var(--dim); text-align: left; max-width: 48ch; margin: -8px 0 0; line-height: 1.55; }
 
 /* RAV-46 home: one centered list, with quiet rows on a shared column grid. */
@@ -2597,7 +2598,7 @@ section.first-prompt#project-start { align-self: center; padding: 32px 24px; }
    agent's `[hidden] { display: none }` loses to any author rule that sets
    `display` on the same element — `.toast`, `.workspace-mobile-nav` and the
    dock all do — so this `!important` is how an attribute outranks every class
-   rule at once. The home wordmark is the other: its size is an inline style. */
+   rule at once. */
 [hidden] { display: none !important; }
 
 /* The socket. `.phx-connected` is the normal state and needs no style; the
