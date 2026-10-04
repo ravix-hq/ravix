@@ -21,6 +21,12 @@ before applying it. Do not capture an entire socket in a task. Preserve entered
 text and attachments on failure. Consider duplicate submissions and stale
 results, not only the successful click.
 
+For a browser hook owned by a LiveComponent, send component events with
+`pushEventTo(this.el, ...)` and keep `phx-target={@myself}` on its root.
+`pushEvent(...)` goes to the parent LiveView even when that target is present;
+exercise the real keyboard submission, since direct component-event tests
+cannot catch that routing mistake.
+
 For OTP changes, identify the owner, supervisor, shutdown signal, and outstanding
 callers. A load that is invalidated or reset must still settle its waiters; an old
 result must not overwrite a new generation. Use Registry/DynamicSupervisor for

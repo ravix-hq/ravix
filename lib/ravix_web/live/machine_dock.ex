@@ -560,6 +560,7 @@ defmodule RavixWeb.Live.MachineDock do
         <button
           :for={{tab, label} <- tabs()}
           class={["dock-tab", if(@dock == tab, do: "selected", else: "ghost")]}
+          aria-pressed={to_string(@dock == tab)}
           phx-click="dock"
           phx-target={@myself}
           phx-value-name={tab}
@@ -570,6 +571,7 @@ defmodule RavixWeb.Live.MachineDock do
         <span :for={shell <- @shells} class="dock-shell-tab" data-shell-tab={shell.tab.id}>
           <button
             class={["dock-tab", if(@dock == {:shell, shell.tab.id}, do: "selected", else: "ghost")]}
+            aria-pressed={to_string(@dock == {:shell, shell.tab.id})}
             phx-click="shell"
             phx-target={@myself}
             phx-value-id={shell.tab.id}
@@ -651,15 +653,16 @@ defmodule RavixWeb.Live.MachineDock do
           class="term workspace-terminal"
         >
           <div class="term-scroll" data-terminal-output>
-            <div :for={block <- @output}>
-              <strong>$ {block.command}</strong><pre>{block.stdout}</pre><pre class="error">{block.stderr}</pre>
-              <span :if={block.code && block.code != 0}>
+            <div :for={block <- @output} class="term-block">
+              <strong class="term-command-line"><span class="ps1">$ </span>{block.command}</strong>
+              <pre>{block.stdout}</pre><pre class="error">{block.stderr}</pre>
+              <span :if={block.code && block.code != 0} class="term-exit">
                 Exit {block.code}
               </span>
             </div>
             <div :if={@output == [] && @dock == :terminal} class="dock-empty">
               <.empty icon="terminal" title="No commands yet">
-                Run a command below, or open an interactive terminal with +.
+                Enter a command below. Use + for an interactive terminal.
                 <:action label="Open Preview" click={JS.push("panel", value: %{name: "preview"})} />
               </.empty>
             </div>

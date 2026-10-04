@@ -8,7 +8,7 @@
 // round-trip: the line is edited here, history is kept here, and only a
 // finished command goes to the server. What the hook expects, on the panel:
 //
-//   <div phx-hook="Terminal" id="terminal" class="term">
+//   <div phx-hook="Terminal" id="terminal" class="term" phx-target={@myself}>
 //     <div class="term-scroll" data-terminal-output>… the blocks …</div>
 //     <div class="term-input">
 //       <span class="ps1">{@cwd_base} $</span>
@@ -21,7 +21,7 @@
 //     </div>
 //   </div>
 //
-// Events pushed to the LiveView:
+// Events pushed to the owning dock component:
 //
 //   "exec"   %{"command" => "git status"}   on Enter, with a non-empty line
 //   "clear"  %{}                             on Ctrl+L or Cmd+L
@@ -65,7 +65,7 @@ export const Terminal = {
       }
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "l") {
         e.preventDefault()
-        this.pushEvent("clear", {})
+        this.pushEventTo(this.el, "clear", {})
         return
       }
       if (e.key === "ArrowUp" || e.key === "ArrowDown") {
@@ -132,7 +132,7 @@ export const Terminal = {
     if (input) input.value = ""
     this.following = true
     this.wasBusy = true
-    this.pushEvent("exec", {command})
+    this.pushEventTo(this.el, "exec", {command})
   },
 
   stick() {

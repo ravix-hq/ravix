@@ -77,6 +77,7 @@ defmodule RavixWeb.Live.ModelMenu do
   attr :label, :string, default: nil, doc: "the model's friendly name when empty"
   attr :checked, :boolean, required: true
   attr :tag, :string, default: nil, doc: "marks the default, as \"Project default\""
+  attr :icon, :string, default: nil
   attr :name, :string, default: nil, doc: "a radio input of this name, instead of a button"
   attr :form, :string, default: nil
   attr :close, :boolean, default: true, doc: "whether picking the radio closes the menu"
@@ -100,7 +101,7 @@ defmodule RavixWeb.Live.ModelMenu do
       data-filter-text={@filter}
       {@rest}
     >
-      <.option_label label={@label} checked={@checked} tag={@tag} />
+      <.option_label label={@label} checked={@checked} tag={@tag} icon={@icon} />
     </button>
     """
   end
@@ -118,7 +119,7 @@ defmodule RavixWeb.Live.ModelMenu do
         data-chip-close={@close}
         {@rest}
       />
-      <.option_label label={@label} checked={@checked} tag={@tag} />
+      <.option_label label={@label} checked={@checked} tag={@tag} icon={@icon} />
     </label>
     """
   end
@@ -126,14 +127,16 @@ defmodule RavixWeb.Live.ModelMenu do
   attr :label, :string, required: true
   attr :checked, :boolean, required: true
   attr :tag, :string, required: true
+  attr :icon, :string, required: true
 
   defp option_label(assigns) do
     ~H"""
-    <span class="truncate">{@label}</span><small :if={@tag}>{@tag}</small><span class="spacer"></span><span
-      :if={@checked}
-      class="check"
-      aria-hidden="true"
-    >✓</span>
+    <.icon :if={@icon} name={@icon} size={14} class="model-option-icon" />
+    <span class="model-option-text"><span class="truncate">{@label}</span><small :if={@tag}>{@tag}</small></span><.icon
+      name="check"
+      size={14}
+      class={["check", !@checked && "model-check-empty"]}
+    />
     """
   end
 
@@ -233,10 +236,12 @@ defmodule RavixWeb.Live.ModelMenu do
           role={if group.current?, do: "radiogroup", else: "group"}
           aria-label={group.label}
         >
+          <p class="model-section-label">{group.label}</p>
           <.option
             :for={choice <- group.models}
             :if={group.current?}
             model={choice}
+            icon="code"
             checked={choice == @model}
             tag={if choice == @project_model, do: "Project default"}
             popovertarget="model-menu"
@@ -333,7 +338,8 @@ defmodule RavixWeb.Live.ModelMenu do
       phx-value-runtime={@runtime}
       phx-value-model={@model}
     >
-      <span class="truncate">{@label}</span><small :if={@tag}>{@tag}</small><span class="spacer"></span><.icon
+      <.icon name="code" size={14} class="model-option-icon" />
+      <span class="model-option-text"><span class="truncate">{@label}</span><small :if={@tag}>{@tag}</small></span><.icon
         :if={@enabled}
         name="external"
         size={13}

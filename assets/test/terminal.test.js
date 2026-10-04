@@ -6,7 +6,7 @@ beforeEach(() => {
   document.body.innerHTML = `<div id="terminal"><div data-terminal-output></div><input data-terminal-input></div>`
 })
 
-test("commands send once with a usable deduplicated history and clear shortcut", () => {
+test("commands and clear reach the dock with a usable deduplicated history", () => {
   const {hook, events} = mountHook(Terminal, "#terminal")
   const input = hook.input()
   key(input, "ArrowUp")
@@ -15,6 +15,7 @@ test("commands send once with a usable deduplicated history and clear shortcut",
     key(input,"Enter")
   }
   expect(events.map(e=>e.payload.command)).toEqual(["pwd","ls","pwd"])
+  expect(events.every(event => event.target === hook.el)).toBe(true)
   expect(input.value).toBe("")
   key(input,"ArrowUp")
   expect(input.value).toBe("pwd")
@@ -25,7 +26,7 @@ test("commands send once with a usable deduplicated history and clear shortcut",
   key(input,"ArrowDown")
   expect(input.value).toBe("")
   key(input,"l",{ctrlKey:true})
-  expect(events.at(-1)).toEqual({name:"clear",payload:{}})
+  expect(events.at(-1)).toEqual({name:"clear",payload:{},target:hook.el})
   input.value = "typed draft"
   input.dispatchEvent(new Event("input",{bubbles:true}))
   expect(hook.cursor).toBeNull()
@@ -74,7 +75,7 @@ test("a busy fieldset prevents execution and releases focus when the command fin
   expect(document.activeElement).toBe(input)
   key(input, "Enter")
   expect(input.value).toBe("")
-  expect(events).toEqual([{name: "exec", payload: {command: "echo unfinished"}}])
+  expect(events).toEqual([{name: "exec", payload: {command: "echo unfinished"}, target: hook.el}])
 })
 
 test("Ctrl+` clicks the dock's New terminal item unless it is missing or disabled", () => {

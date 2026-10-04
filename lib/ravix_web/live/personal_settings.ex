@@ -223,7 +223,7 @@ defmodule RavixWeb.Live.PersonalSettings do
     </section>
     <section
       id="settings-inbox"
-      class="personal-section"
+      class="personal-section settings-note"
       aria-labelledby="settings-inbox-title"
     >
       <h2 id="settings-inbox-title">What reaches your Inbox</h2>

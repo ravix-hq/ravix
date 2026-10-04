@@ -404,7 +404,6 @@ defmodule RavixWeb.Live.Settings do
         hidden
       >
         <span class="unsaved-label">Unsaved changes</span>
-        <span class="unsaved-sep" aria-hidden="true">·</span>
         <span class="spacer"></span>
         <button type="button" class="ghost" data-unsaved-discard>Discard</button>
         <button type="submit" class="primary" form={@form} data-unsaved-save>{@save_label}</button>

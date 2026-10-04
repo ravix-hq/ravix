@@ -1156,7 +1156,7 @@ defmodule RavixWeb.Live.ProjectSettings do
   @impl true
   def render(assigns) do
     ~H"""
-    <div class="settings-host project-settings">
+    <div class="settings-host settings-shell project-settings">
       <Settings.frame
         kind={:project}
         section={@section}
@@ -1191,23 +1191,28 @@ defmodule RavixWeb.Live.ProjectSettings do
   defp general(assigns) do
     ~H"""
     <section id="general-repository" class="settings-part" aria-labelledby="general-repository-title">
-      <h2 id="general-repository-title">Repository</h2>
-      <p :if={@project.repo} class="settings-repo">
-        <code>{@project.repo}</code>
-        <a
-          :if={github_url(@project.repo)}
-          id="general-repository-link"
-          href={github_url(@project.repo)}
-          target="_blank"
-          rel="noopener noreferrer"
-        >Open on GitHub ↗</a>
-      </p>
-      <p :if={!@project.repo} class="settings-help">
-        This project has no repository: its tracks start from an empty directory.
-      </p>
-      <p :if={@project.repo} class="settings-help">
-        Every track is a branch of this repository.
-      </p>
+      <div class="settings-row">
+        <div class="settings-row-copy">
+          <h2 id="general-repository-title">Repository</h2>
+          <p :if={@project.repo} class="settings-repo"><code>{@project.repo}</code></p>
+          <p :if={!@project.repo} class="hint">
+            This project has no repository: its tracks start from an empty directory.
+          </p>
+          <p :if={@project.repo} class="hint">
+            Every track is a branch of this repository.
+          </p>
+        </div>
+        <div :if={@project.repo} class="settings-row-controls">
+          <a
+            :if={github_url(@project.repo)}
+            id="general-repository-link"
+            class="link-button"
+            href={github_url(@project.repo)}
+            target="_blank"
+            rel="noopener noreferrer"
+          >Open on GitHub ↗</a>
+        </div>
+      </div>
       <dl :if={@project.repo} class="project-repository-facts">
         <div>
           <dt>Default branch</dt>
@@ -1982,26 +1987,31 @@ defmodule RavixWeb.Live.ProjectSettings do
       <form
         :if={@orphan_count > 0}
         id="close-orphaned-private-form"
+        class="settings-row"
         phx-target={@myself}
         phx-submit="close-orphaned-private"
       >
-        <h3>Close orphaned private tracks</h3>
-        <p>{@orphan_count} private tracks with no remaining members</p>
-        <p>
-          Closing deletes their machines and uncommitted work. No track contents will be opened.
-        </p>
-        <.input
-          name="confirm"
-          id="close-orphaned-private-confirm"
-          value=""
-          label={"Type #{@project.name} to confirm closing orphaned tracks"}
-          required
-        />
-        <button
-          class="danger"
-          disabled={MapSet.size(@pending) > 0}
-          phx-disable-with="Closing…"
-        >Close orphaned private tracks</button>
+        <div class="settings-row-copy">
+          <h3>Close orphaned private tracks</h3>
+          <p class="hint">{@orphan_count} private tracks with no remaining members</p>
+          <p class="hint">
+            Closing deletes their machines and uncommitted work. No track contents will be opened.
+          </p>
+        </div>
+        <div class="settings-row-controls">
+          <.input
+            name="confirm"
+            id="close-orphaned-private-confirm"
+            value=""
+            label={"Type #{@project.name} to confirm closing orphaned tracks"}
+            required
+          />
+          <button
+            class="danger"
+            disabled={MapSet.size(@pending) > 0}
+            phx-disable-with="Closing…"
+          >Close orphaned private tracks</button>
+        </div>
       </form>
       <p :if={Map.get(@settings, :shared_tracks) != nil}>
         Rebuild an individual track from that track; sibling tracks are unaffected.
@@ -2010,28 +2020,32 @@ defmodule RavixWeb.Live.ProjectSettings do
       <p :if={Map.get(@settings, :shared_tracks) == nil}>
         These actions also affect private tracks you cannot see. Rebuilding discards the machine’s disk and closes every track, keeping project settings and secrets for the next machine. Unpushed work on that disk is lost. Deleting also removes the project settings and secrets. These actions cannot be undone.
       </p>
-      <section id="change-repository" aria-labelledby="change-repository-title">
-        <h3 id="change-repository-title">Change repository</h3>
-        <p id="change-repository-current">
-          <%= if @project.repo do %>
-            This project uses <code>{@project.repo}</code>.
-          <% else %>
-            This project has no repository yet.
-          <% end %>
-        </p>
-        <p>
-          Point the project at another repository the Ravix GitHub App can read. The machine is rebuilt from it and every open track closes; settings, secrets, members and history stay.
-        </p>
-        <button
-          type="button"
-          id="open-change-repository"
-          class="ghost"
-          phx-click="open-change-repository"
-          phx-target={@myself}
-          disabled={MapSet.size(@pending) > 0}
-        >
-          Change repository…
-        </button>
+      <section id="change-repository" class="settings-row" aria-labelledby="change-repository-title">
+        <div class="settings-row-copy">
+          <h3 id="change-repository-title">Change repository</h3>
+          <p id="change-repository-current" class="hint">
+            <%= if @project.repo do %>
+              This project uses <code>{@project.repo}</code>.
+            <% else %>
+              This project has no repository yet.
+            <% end %>
+          </p>
+          <p class="hint">
+            Point the project at another repository the Ravix GitHub App can read. The machine is rebuilt from it and every open track closes; settings, secrets, members and history stay.
+          </p>
+        </div>
+        <div class="settings-row-controls">
+          <button
+            type="button"
+            id="open-change-repository"
+            class="ghost"
+            phx-click="open-change-repository"
+            phx-target={@myself}
+            disabled={MapSet.size(@pending) > 0}
+          >
+            Change repository…
+          </button>
+        </div>
         <.change_repository_dialog
           :if={@change_dialog}
           project={@project}
@@ -2052,29 +2066,34 @@ defmodule RavixWeb.Live.ProjectSettings do
         }
         :if={action != "rebuild" or not Map.get(@settings, :default_only, false)}
         id={"project-#{action}-form"}
+        class="settings-row"
         phx-target={@myself}
         phx-change="confirm-danger"
         phx-submit="project-danger"
       >
-        <h3>{label}</h3>
+        <div class="settings-row-copy">
+          <h3>{label}</h3>
+        </div>
         <input type="hidden" name="action" value={action} />
-        <.input
-          name="confirm"
-          id={"#{action}-confirm"}
-          label={"Type #{@project.name} to confirm #{if action == "rebuild", do: "rebuilding", else: "deletion"}"}
-          value={Map.get(@confirmations, action, "")}
-          autocomplete="off"
-          required
-        />
-        <button
-          name="action"
-          value={action}
-          class={if action == "delete", do: "danger", else: "ghost"}
-          disabled={Map.get(@confirmations, action) != @project.name or MapSet.size(@pending) > 0}
-          phx-disable-with="Working…"
-        >
-          {if action == "rebuild", do: "Rebuild machine", else: label}
-        </button>
+        <div class="settings-row-controls">
+          <.input
+            name="confirm"
+            id={"#{action}-confirm"}
+            label={"Type #{@project.name} to confirm #{if action == "rebuild", do: "rebuilding", else: "deletion"}"}
+            value={Map.get(@confirmations, action, "")}
+            autocomplete="off"
+            required
+          />
+          <button
+            name="action"
+            value={action}
+            class={if action == "delete", do: "danger", else: "ghost"}
+            disabled={Map.get(@confirmations, action) != @project.name or MapSet.size(@pending) > 0}
+            phx-disable-with="Working…"
+          >
+            {if action == "rebuild", do: "Rebuild machine", else: label}
+          </button>
+        </div>
       </form>
     </section>
     """

@@ -2,6 +2,15 @@ defmodule Ravix.Changelog do
   @moduledoc "Curated user-facing changes shipped with Ravix."
   @entries [
     %{
+      id: "2026-10-04-compact-workspace",
+      date: ~D[2026-10-04],
+      kind: :improved,
+      title: "A quieter, more compact workspace",
+      body:
+        "Find tracks in a lighter search palette, browse tighter file and model lists, and use cleaner settings controls. The sidebar and utility panels leave more room for your work.",
+      action: nil
+    },
+    %{
       id: "2026-10-03-routines-search-review-tools",
       date: ~D[2026-10-03],
       kind: :new,

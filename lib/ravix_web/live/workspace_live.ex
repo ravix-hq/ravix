@@ -2880,6 +2880,7 @@ defmodule RavixWeb.WorkspaceLive do
         title={Track.tooltip(track)}
         data-jump-result
       >
+        <.icon name="branch" size={14} />
         <span class="search-label">{Track.label(track)}</span><span :if={track.visibility == :private}><.icon name="lock" />
         Private</span>
         <span :if={attention?(track)} class="badge" aria-label="1 unread">1</span>
