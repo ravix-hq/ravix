@@ -180,7 +180,8 @@ defmodule Ravix.Projects.Machine do
   with "Authentication failed" in the middle of a turn. Every path that is
   about to make the machine talk to GitHub calls this first. Mint a fresh
   token for each preparation, and propagate failures so queued prompts can
-  retry.
+  retry. A turn that outlives the hour is kept supplied by
+  `Ravix.Tracks.Sandbox.CloneTokens`, which calls this again while it runs.
   """
   @spec refresh_clone_token(
           %{vault_id: String.t(), installation_id: integer()},

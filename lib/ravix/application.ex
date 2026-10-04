@@ -49,6 +49,12 @@ defmodule Ravix.Application do
          child:
            {Ravix.Tracks.Sandbox.Reconciler,
             Application.get_env(:ravix, Ravix.Tracks.Sandbox.Reconciler, [])}},
+        # A running turn's GitHub token, re-minted before the hour it lives runs out.
+        {Ravix.Cluster.Singleton,
+         key: "track.clone_tokens",
+         child:
+           {Ravix.Tracks.Sandbox.CloneTokens,
+            Application.get_env(:ravix, Ravix.Tracks.Sandbox.CloneTokens, [])}},
         # Start to serve requests, typically the last entry
         RavixWeb.Endpoint,
         # Stop claiming before draining the endpoint (20s). Queue shutdown is

@@ -364,6 +364,21 @@ defmodule Ravix.Tracks.Store do
 
   def track_by_conversation(_), do: nil
 
+  @doc "The open tracks that have a thread on one of `conversation_ids`, each once."
+  @spec open_tracks_by_conversations([String.t()]) :: [Track.t()]
+  def open_tracks_by_conversations([]), do: []
+
+  def open_tracks_by_conversations(conversation_ids) when is_list(conversation_ids),
+    do:
+      Repo.all(
+        from(t in Track,
+          join: th in Thread,
+          on: th.track_id == t.id,
+          where: th.conversation_id in ^conversation_ids and is_nil(t.closed_at),
+          distinct: true
+        )
+      )
+
   @typedoc "The open tracks of a project, or every one it ever had."
   @type scope :: :open | :all
 
