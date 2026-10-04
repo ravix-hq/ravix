@@ -943,20 +943,24 @@ defmodule RavixWeb.Live.AgentPanel do
       phx-change="change-thread-default"
       phx-target={@myself}
     >
-      <label for="thread-default-choice">Default agent for new threads</label>
-      <select id="thread-default-choice" name="preference[choice]" disabled={@busy}>
-        <option
-          :for={choice <- @thread_defaults.choices}
-          value={choice.runtime <> "|" <> choice.model}
-          selected={choice == @thread_defaults.preference}
-        >
-          {RavixWeb.AgentName.label(choice.runtime)} · {RavixWeb.ModelName.friendly(choice.model)}
-        </option>
-      </select>
-      <button type="submit" disabled={@busy}>Save thread default</button>
-      <p>
-        Used when the project's payer has connected this agent. Existing threads keep their agent.
-      </p>
+      <div class="thread-default-copy">
+        <label for="thread-default-choice">Default agent for new threads</label>
+        <p>
+          Used when the project's payer has connected this agent. Existing threads keep their agent.
+        </p>
+      </div>
+      <div class="thread-default-controls">
+        <select id="thread-default-choice" name="preference[choice]" disabled={@busy}>
+          <option
+            :for={choice <- @thread_defaults.choices}
+            value={choice.runtime <> "|" <> choice.model}
+            selected={choice == @thread_defaults.preference}
+          >
+            {RavixWeb.AgentName.label(choice.runtime)} · {RavixWeb.ModelName.friendly(choice.model)}
+          </option>
+        </select>
+        <button type="submit" disabled={@busy}>Save thread default</button>
+      </div>
       <p :if={@thread_default_saved} role="status">Thread default saved.</p>
       <p :if={@thread_default_error} role="alert">{@thread_default_error}</p>
     </form>

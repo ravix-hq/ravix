@@ -2,6 +2,15 @@ defmodule Ravix.Changelog do
   @moduledoc "Curated user-facing changes shipped with Ravix."
   @entries [
     %{
+      id: "2026-10-04-workspace-details",
+      date: ~D[2026-10-04],
+      kind: :improved,
+      title: "Clearer files, menus and settings",
+      body:
+        "Filter sidebar tracks from a compact menu beside Projects. File lists, model menus, review discussions and settings now align their details and fit smaller windows.",
+      action: nil
+    },
+    %{
       id: "2026-10-04-compact-workspace",
       date: ~D[2026-10-04],
       kind: :improved,

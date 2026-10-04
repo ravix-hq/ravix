@@ -1,7 +1,7 @@
 <main class="workspace-search">
   <header class="search-header">
-    <.link navigate="/inbox">← Workspace</.link>
-    <h1>Search</h1>
+    <.link navigate="/inbox" class="search-back">← Workspace</.link>
+    <h1><.icon name="search" size={18} />Search</h1>
     <p class="hint">Find projects, tracks, human prompts, and assistant replies.</p>
   </header>
   <.form
@@ -11,8 +11,9 @@
     phx-change="draft-search"
     class="search-form"
   >
-    <label for="search-query">Search words</label>
+    <label for="search-query" class="sr-only">Search words</label>
     <div class="search-query-row">
+      <.icon name="search" size={16} />
       <input
         id="search-query"
         type="search"
@@ -56,7 +57,7 @@
   <p class="hint search-history-note">
     All words must match. Completed human and assistant messages are searchable. Older history is added as you open its transcript pages. Very long messages may be shortened. Tool output, reasoning, and attachments are excluded.
   </p>
-  <section aria-live="polite" aria-busy={to_string(@loading)}>
+  <section class="search-results-region" aria-live="polite" aria-busy={to_string(@loading)}>
     <p :if={@loading} role="status">Searching…</p>
     <p :if={@error} role="alert">{@error}</p>
     <p :if={!@loading && !@error && @results == []}>

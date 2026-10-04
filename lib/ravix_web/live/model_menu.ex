@@ -132,7 +132,10 @@ defmodule RavixWeb.Live.ModelMenu do
   defp option_label(assigns) do
     ~H"""
     <.icon :if={@icon} name={@icon} size={14} class="model-option-icon" />
-    <span class="model-option-text"><span class="truncate">{@label}</span><small :if={@tag}>{@tag}</small></span><.icon
+    <span class="model-option-text"><span class="truncate">{@label}</span><small
+      :if={@tag}
+      class="model-option-meta"
+    >{@tag}</small></span><.icon
       name="check"
       size={14}
       class={["check", !@checked && "model-check-empty"]}
@@ -339,10 +342,13 @@ defmodule RavixWeb.Live.ModelMenu do
       phx-value-model={@model}
     >
       <.icon name="code" size={14} class="model-option-icon" />
-      <span class="model-option-text"><span class="truncate">{@label}</span><small :if={@tag}>{@tag}</small></span><.icon
-        :if={@enabled}
+      <span class="model-option-text"><span class="truncate">{@label}</span><small
+        :if={@tag}
+        class="model-option-meta"
+      >{@tag}</small></span><.icon
         name="external"
         size={13}
+        class={["model-option-trailing", !@enabled && "model-check-empty"]}
       />
     </button>
     """

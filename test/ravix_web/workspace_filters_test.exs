@@ -44,7 +44,7 @@ defmodule RavixWeb.WorkspaceFiltersTest do
     mine_tab = "#project-track-tab-#{ctx.mine.id}"
     their_tab = "#project-track-tab-#{ctx.theirs.id}"
 
-    assert has_element?(view, "#rail-scope-everyone[aria-pressed=true]")
+    assert has_element?(view, "#rail-scope-everyone[aria-checked=true]")
     assert has_element?(view, their_tab)
 
     # Creator avatars: an image with an accessible name, or initials without one.
@@ -57,7 +57,7 @@ defmodule RavixWeb.WorkspaceFiltersTest do
     assert has_element?(view, "#{mine_tab}[aria-label*='created by @ada-lovelace']")
 
     view |> element("#rail-scope-mine") |> render_click()
-    assert has_element?(view, "#rail-scope-mine[aria-pressed=true]")
+    assert has_element?(view, "#rail-scope-mine[aria-checked=true]")
     assert has_element?(view, mine_tab)
     refute has_element?(view, their_tab)
     assert Accounts.Store.get_user(ctx.viewer.id).rail_scope == :mine
