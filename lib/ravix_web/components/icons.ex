@@ -31,6 +31,7 @@ defmodule RavixWeb.Icons do
     "home" => ~S(<path d="M3 10.5 12 3l9 7.5" /><path d="M5 9.5V21h14V9.5" />),
     "plus" => ~S(<path d="M12 5v14M5 12h14" />),
     "search" => ~S(<circle cx="11" cy="11" r="7" /><path d="m20 20-3.6-3.6" />),
+    "filter" => ~S(<path d="M3 4h18l-7 8v7l-4 2v-9z" />),
     "folder" =>
       ~S(<path d="M3 7.5A1.5 1.5 0 0 1 4.5 6h4l2 2.5h7A1.5 1.5 0 0 1 19 10v7.5A1.5 1.5 0 0 1 17.5 19h-13A1.5 1.5 0 0 1 3 17.5z" />),
     "folder-plus" =>

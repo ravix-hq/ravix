@@ -1040,7 +1040,10 @@
             <.icon name="refresh" size={14} />
           </button>
         </nav>
-        <div class={["workspace-panel inspector-panel", @panel.tab == :files && "inspector-files"]}>
+        <div
+          class={["workspace-panel inspector-panel", @panel.tab == :files && "inspector-files"]}
+          data-panel={@panel.tab}
+        >
           <%= case inspector_state(@track, @turn.machine, @panel) do %>
             <% {:setup, step} -> %>
               <%!-- The setup banner is the live region for these words. --%>

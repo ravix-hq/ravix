@@ -52,6 +52,22 @@ defmodule RavixWeb.Live.Settings do
     {"danger", "Danger zone"}
   ]
 
+  @section_icons %{
+    "profile" => "person",
+    "agents" => "code",
+    "notifications" => "issue",
+    "appearance" => "moon",
+    "connected-apps" => "plug",
+    "general" => "settings",
+    "members" => "person",
+    "repositories" => "branch",
+    "projects" => "folder",
+    "access" => "lock",
+    "agent" => "code",
+    "machine" => "machine",
+    "danger" => "info"
+  }
+
   # The project dialog's eight tabs became five pages (RAV-74). A tab that
   # is now a part of a page keeps its URL, which opens that page at it.
   @moved %{
@@ -298,7 +314,7 @@ defmodule RavixWeb.Live.Settings do
   mounted, and the URL is the section.
   """
   def frame(assigns) do
-    assigns = assign(assigns, title: label(assigns.kind, assigns.section))
+    assigns = assign(assigns, title: label(assigns.kind, assigns.section), icons: @section_icons)
 
     ~H"""
     <div
@@ -332,6 +348,7 @@ defmodule RavixWeb.Live.Settings do
                   class={["settings-link", item.danger && "danger"]}
                   aria-current={if item.key == @section, do: "page"}
                 >
+                  <.icon name={Map.fetch!(@icons, item.key)} size={14} />
                   <span class="truncate">{item.label}</span>
                   <span :if={item.count not in [nil, 0]} class="settings-count">{item.count}</span>
                 </.link>

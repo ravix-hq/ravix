@@ -365,6 +365,10 @@ is reused. `BROWSER_DATABASE_SERVER` can change local PostgreSQL credentials.
 Keep browser tests under `browser/` and retain failure traces. Axe covers the
 default theme; manual checks still matter for other themes and assistive devices.
 
+For reference-driven UI work, match the control type and placement before
+polishing its appearance. A filter dropdown should not become a persistent
+segmented switch.
+
 An icon-only control is `<.icon_button>`, or carries `aria-label` and
 `data-tip` itself: `data-tip` is the app's one tooltip (`assets/js/tooltip.js`,
 with `data-tip-kbd="Mod+K"` for a shortcut), not the native `title`. Focus

@@ -64,7 +64,7 @@
           phx-click={JS.push_focus() |> JS.push("dialog")}
           phx-value-name="new-project"
         >
-          <.icon name="folder" />Add a repository
+          <.icon name="plus" />Add a repository
         </button>
         <.link patch="/schedules" class={["yard-item", @live_action == :schedules && "on"]}>
           <.icon name="clock" />Routines
@@ -80,7 +80,8 @@
           phx-click={JS.push_focus() |> JS.push("dialog")}
           phx-value-name="search"
         >
-          <.icon name="search" />Search conversations
+          <.icon name="search" /><span class="truncate">Search conversations</span>
+          <kbd class="yard-shortcut" aria-hidden="true">{if @mac, do: "⌘K", else: "⌃K"}</kbd>
         </button>
       </div>
       <%!-- Account preferences live in the sidebar footer; the native popover
@@ -196,6 +197,62 @@
       <div class="yard-scroll">
         <div class="section-label">
           <strong>Projects</strong><span class="spacer"></span>
+          <div id="rail-scope" class="rail-filter" phx-hook="ChipMenu">
+            <button
+              type="button"
+              id="rail-filter-trigger"
+              class="section-action rail-filter-trigger"
+              aria-label={
+                if @current_user.rail_scope == :mine,
+                  do: "Filter tracks: Mine",
+                  else: "Filter tracks"
+              }
+              data-tip={
+                if @current_user.rail_scope == :mine,
+                  do: "Showing your tracks",
+                  else: "Filter tracks"
+              }
+              aria-haspopup="menu"
+              aria-expanded="false"
+              aria-controls="rail-filter-menu"
+              popovertarget="rail-filter-menu"
+              phx-mounted={JS.ignore_attributes(["aria-expanded"])}
+            >
+              <.icon name="filter" size={14} />
+              <span
+                :if={@current_user.rail_scope == :mine}
+                class="rail-filter-dot"
+                aria-hidden="true"
+              />
+            </button>
+            <div
+              id="rail-filter-menu"
+              class="rail-filter-menu"
+              popover
+              role="menu"
+              aria-label="Show tracks from"
+            >
+              <label
+                :for={{scope, label} <- [everyone: "Everyone", mine: "Mine"]}
+                class="account-item rail-filter-option"
+              >
+                <input
+                  type="radio"
+                  id={"rail-scope-#{scope}"}
+                  name="rail-scope"
+                  value={scope}
+                  role="menuitemradio"
+                  checked={@current_user.rail_scope == scope}
+                  aria-checked={to_string(@current_user.rail_scope == scope)}
+                  data-chip-close
+                  phx-click="rail-scope"
+                  phx-value-scope={scope}
+                />
+                <span>{label}</span><span class="spacer"></span>
+                <span class="menu-check" aria-hidden="true"><.icon name="check" size={14} /></span>
+              </label>
+            </div>
+          </div>
           <button
             type="button"
             id="manage-sections"
@@ -207,22 +264,6 @@
           >
             <.icon name="settings" size={13} />
           </button>
-        </div>
-        <div id="rail-scope" class="rail-scope" role="group" aria-label="Show tracks from">
-          <button
-            :for={{scope, label} <- [everyone: "Everyone", mine: "Mine"]}
-            type="button"
-            id={"rail-scope-#{scope}"}
-            class={if @current_user.rail_scope == scope, do: "on", else: "ghost"}
-            aria-pressed={to_string(@current_user.rail_scope == scope)}
-            title={
-              if scope == :mine,
-                do: "Only tracks you created",
-                else: "Every track you can see"
-            }
-            phx-click="rail-scope"
-            phx-value-scope={scope}
-          >{label}</button>
         </div>
         <div
           id="project-sections"
@@ -808,7 +849,9 @@
             <ul class="first-prompt-recent">
               <li :for={track <- Enum.take(@tracks[@project.id], 5)}>
                 <.link patch={"/p/#{@project.id}/t/#{track.id}"}>
-                  <strong title={Track.tooltip(track)}>{Track.label(track)}</strong>
+                  <.status_slot track={track} />
+                  <strong class="truncate" title={Track.tooltip(track)}>{Track.label(track)}</strong>
+                  <.age id={"project-recent-age-#{track.id}"} at={track.activity_at} />
                 </.link>
               </li>
             </ul>
@@ -879,7 +922,7 @@
                     )
                   }
                 >
-                  <.creator track={track} />
+                  <.status_slot track={track} />
                   <span class="recent-main">
                     <strong class="truncate" title={Track.tooltip(track)}>{Track.label(track)}</strong>
                     <span class="recent-meta truncate">
@@ -892,6 +935,7 @@
                     </span>
                   </span>
                   <span class="recent-owner truncate">@{track.created_by_login}</span>
+                  <.creator track={track} />
                   <.age id={"home-track-age-#{track.id}"} at={track.activity_at} />
                 </.link>
               </li>

@@ -161,8 +161,11 @@ defmodule RavixWeb.Live.ReviewPanel do
 
     ~H"""
     <section id="diff-review" class="review-panel" aria-label="Diff review discussions">
-      <h3>Review discussions <span class="chip">{@open} open</span></h3>
-      <p :if={@state.discussions == []}>
+      <h3>
+        <.icon name="eye" size={14} />Review discussions
+        <span class="review-count">{@open} open</span>
+      </h3>
+      <p :if={@state.discussions == []} class="review-hint">
         Choose a file or an old/new line in Changes to start a discussion.
       </p>
       <nav aria-label="Review summary" class="review-summary">
@@ -172,9 +175,11 @@ defmodule RavixWeb.Live.ReviewPanel do
           phx-click="review-jump"
           phx-value-id={discussion.id}
         >
-          {discussion.path}{position(discussion)} · {if discussion.resolved,
-            do: "Resolved",
-            else: "Open"}
+          <.icon name="file" size={13} />
+          <span class="review-path">{discussion.path}<span class="review-position">{position(
+            discussion
+          )}</span></span>
+          <span class="review-state">{if discussion.resolved, do: "Resolved", else: "Open"}</span>
         </a>
       </nav>
       <p :if={@state.error} role="alert">{@state.error}</p>
@@ -184,11 +189,15 @@ defmodule RavixWeb.Live.ReviewPanel do
         phx-submit="review-post"
         phx-change="review-draft"
       >
-        <p>Discuss {@state.anchor.path}{position(@state.anchor)}</p>
+        <p class="review-anchor">
+          Discuss <span class="review-path">{@state.anchor.path}{position(@state.anchor)}</span>
+        </p>
         <label for="review-body">Review comment</label>
         <textarea id="review-body" name="body" maxlength="10000" required disabled={@state.busy?}>{@state.body}</textarea>
-        <button type="submit" disabled={@state.busy?}>Add discussion</button>
-        <button type="button" phx-click="review-cancel" disabled={@state.busy?}>Cancel</button>
+        <div class="review-actions">
+          <button type="submit" disabled={@state.busy?}>Add discussion</button>
+          <button type="button" class="ghost" phx-click="review-cancel" disabled={@state.busy?}>Cancel</button>
+        </div>
       </form>
       <article
         :for={discussion <- @state.discussions}
@@ -203,8 +212,10 @@ defmodule RavixWeb.Live.ReviewPanel do
         }
         data-revision-status={@statuses[discussion.id]}
       >
-        <h4>{discussion.path}{position(discussion)}</h4>
-        <p>
+        <h4 class="review-path">
+          {discussion.path}<span class="review-position">{position(discussion)}</span>
+        </h4>
+        <p class="review-meta">
           {if discussion.resolved, do: "Resolved", else: "Open"} ·
           <%= cond do %>
             <% @statuses[discussion.id] == :unchecked -> %>
@@ -221,7 +232,11 @@ defmodule RavixWeb.Live.ReviewPanel do
           <summary>Revision {String.slice(discussion.revision, 0, 12)}</summary><code>{discussion.revision}</code>
         </details>
         <pre :if={discussion.excerpt != nil}>{discussion.excerpt}</pre>
-        <div :for={message <- discussion.messages} id={"review-message-#{message.id}"}>
+        <div
+          :for={message <- discussion.messages}
+          id={"review-message-#{message.id}"}
+          class="review-message"
+        >
           <strong>{message.author.login}</strong><p class="review-text">{message.body}</p>
         </div>
         <form id={"review-reply-#{discussion.id}"} phx-submit="review-reply">
@@ -232,6 +247,7 @@ defmodule RavixWeb.Live.ReviewPanel do
         </form>
         <button
           type="button"
+          class="ghost review-resolve"
           phx-click="review-resolve"
           phx-value-id={discussion.id}
           phx-value-resolved={to_string(!discussion.resolved)}

@@ -555,7 +555,7 @@ defmodule RavixWeb.Live.MachineDock do
           aria-label={if @dock_open, do: "Collapse the dock", else: "Expand the dock"}
           data-tip={if @dock_open, do: "Collapse the dock", else: "Expand the dock"}
         >
-          <.icon name="chevron" size={13} open={@dock_open} />
+          <.icon name="chevron" size={12} open={@dock_open} />
         </button>
         <button
           :for={{tab, label} <- tabs()}
@@ -668,7 +668,7 @@ defmodule RavixWeb.Live.MachineDock do
             </div>
           </div>
           <div class="term-input">
-            <span class="ps1">{if @cwd, do: Path.basename(@cwd), else: ""} $</span>
+            <span class="ps1"><span class="term-directory">{if @cwd, do: Path.basename(@cwd), else: ""}</span><span class="term-prompt">$</span></span>
             <fieldset class="term-command" disabled={@exec_busy}>
               <div id="terminal-command" phx-update="ignore">
                 <input data-terminal-input aria-label="Command" />
