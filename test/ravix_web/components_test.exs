@@ -312,17 +312,18 @@ defmodule RavixWeb.ComponentsTest do
   end
 
   describe "wordmark/1" do
-    test "sets the name as text, not a drawn grid" do
+    test "uses the product logo with an accessible name" do
       html = render_component(&CoreComponents.wordmark/1, [])
-      assert html =~ ~s(<span class="wordmark" style="font-size: 44px">Ravix</span>)
+      assert html =~ ~s(aria-label="Ravix")
+      assert html =~ ~s(src="/images/logo.png")
       refute html =~ "<svg"
       refute html =~ "<rect"
     end
 
-    test "takes a size and escapes its text" do
+    test "takes a size and escapes its label" do
       html = render_component(&CoreComponents.wordmark/1, text: "<b>", size: 24)
-      assert html =~ ~s(style="font-size: 24px")
-      assert html =~ "&lt;b&gt;"
+      assert html =~ ~s(--wordmark-size: 24px)
+      assert html =~ ~s(aria-label="&lt;b&gt;")
     end
   end
 
