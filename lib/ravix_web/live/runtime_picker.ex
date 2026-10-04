@@ -50,7 +50,7 @@ defmodule RavixWeb.Live.RuntimePicker do
       label={ModelMenu.agent_model(@runtime, @model || "")}
       haspopup="dialog"
       class={@class}
-      menu_class="model-menu"
+      menu_class="model-menu runtime-picker"
       menu_label="Agent and model"
       disabled={@disabled}
     >
@@ -59,6 +59,7 @@ defmodule RavixWeb.Live.RuntimePicker do
         <ModelMenu.option
           :for={choice <- @options.runtimes}
           model={choice.runtime}
+          icon="terminal"
           label={RavixWeb.AgentName.label(choice.runtime)}
           tag={
             if !choice.connected or !choice.enabled,
@@ -83,7 +84,10 @@ defmodule RavixWeb.Live.RuntimePicker do
           popovertarget={"#{@id}-menu"}
           popovertargetaction="hide"
         >
-          <span class="truncate">Connect {RavixWeb.AgentName.label(choice.runtime)}…</span>
+          <RavixWeb.CoreComponents.icon name="plug" size={14} class="model-option-icon" />
+          <span class="model-option-text"><span class="truncate">Connect {RavixWeb.AgentName.label(
+            choice.runtime
+          )}…</span></span>
         </button>
       </fieldset>
       <fieldset :if={@models != []} class="chip-group">
@@ -93,6 +97,7 @@ defmodule RavixWeb.Live.RuntimePicker do
           :for={model <- @models}
           filter={RavixWeb.ModelName.friendly(model)}
           model={model}
+          icon="code"
           checked={model == @model}
           tag={
             if @runtime == @options.runtime and model == @options.model,

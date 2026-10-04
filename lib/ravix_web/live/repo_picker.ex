@@ -38,19 +38,22 @@ defmodule RavixWeb.Live.RepoPicker do
           {if @picker.mode == :add, do: "Add a repository", else: "Repository"}
           <small :if={@picker.workspace}>in {@picker.workspace.name}</small>
         </label>
-        <input
-          id="repo-picker-query"
-          name="q"
-          type="search"
-          value={@picker.query}
-          placeholder="owner/repo"
-          autocomplete="off"
-          phx-debounce="100"
-          data-jump-query
-          aria-controls={if @picker.mode == :add, do: "repo-picker-add", else: "repo-picker-list"}
-          aria-describedby="repo-picker-selected"
-          disabled={@busy}
-        />
+        <div class="repo-picker-search">
+          <.icon name="search" size={14} />
+          <input
+            id="repo-picker-query"
+            name="q"
+            type="search"
+            value={@picker.query}
+            placeholder="owner/repo"
+            autocomplete="off"
+            phx-debounce="100"
+            data-jump-query
+            aria-controls={if @picker.mode == :add, do: "repo-picker-add", else: "repo-picker-list"}
+            aria-describedby="repo-picker-selected"
+            disabled={@busy}
+          />
+        </div>
       </form>
       <%!-- The chip shows the selection; this line announces it. --%>
       <p id="repo-picker-selected" class="sr-only" aria-live="polite">
@@ -78,11 +81,18 @@ defmodule RavixWeb.Live.RepoPicker do
             phx-value-project={entry.project.id}
             disabled={@busy}
           >
+            <.icon name="folder" size={14} />
             <span class="truncate">{entry.repo}</span>
+            <.icon
+              :if={entry.project.id == @selected.id}
+              name="check"
+              size={14}
+              class="repo-picker-check"
+            />
           </button>
         </li>
         <li :if={@matches == []} class="hint">No repository here matches.</li>
-        <li :if={@picker.can_add}>
+        <li :if={@picker.can_add} class="repo-picker-utility">
           <button
             type="button"
             id="repo-option-add"
@@ -106,8 +116,13 @@ defmodule RavixWeb.Live.RepoPicker do
           adding={@picker.adding}
           empty="Every repository this workspace's GitHub connections reach is already here."
         />
-        <button type="button" id="repo-picker-back" class="ghost" phx-click="picker-add-back">
-          Back to the list
+        <button
+          type="button"
+          id="repo-picker-back"
+          class="repo-option ghost repo-picker-back"
+          phx-click="picker-add-back"
+        >
+          <.icon name="chevron" size={13} /> Back to the list
         </button>
       </div>
 
@@ -120,7 +135,9 @@ defmodule RavixWeb.Live.RepoPicker do
         phx-click="picker-scratch"
         disabled={@busy}
       >
-        No repository (scratch)
+        <.icon name="machine" size={14} />
+        <span class="truncate">No repository (scratch)</span>
+        <.icon :if={@scratch?} name="check" size={14} class="repo-picker-check" />
       </button>
     </div>
     """
@@ -157,9 +174,11 @@ defmodule RavixWeb.Live.RepoPicker do
           phx-target={@target}
           disabled={@busy}
         >
+          <.icon name="folder" size={14} />
           <span class="truncate">{repo.repo}</span>
           <small :if={repo.private}>Private</small>
           <small :if={@adding == repo.repo}>Adding…</small>
+          <.icon :if={@selected == repo.repo} name="check" size={14} class="repo-picker-check" />
         </button>
       </li>
       <li :if={@repos == []} class="hint">{@empty}</li>

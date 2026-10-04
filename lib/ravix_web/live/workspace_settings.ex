@@ -504,7 +504,7 @@ defmodule RavixWeb.Live.WorkspaceSettings do
             A personal workspace is yours alone. Create a team workspace to invite people.
           </p>
 
-          <section aria-labelledby="roles-heading">
+          <section class="settings-list-section" aria-labelledby="roles-heading">
             <h2 id="roles-heading">Roles</h2>
             <dl id="workspace-roles" class="workspace-roles">
               <div :for={role <- [:owner, :admin, :member]} data-role={role}>
@@ -565,7 +565,7 @@ defmodule RavixWeb.Live.WorkspaceSettings do
             </form>
           </section>
 
-          <section aria-labelledby="members-heading">
+          <section class="settings-list-section" aria-labelledby="members-heading">
             <h2 id="members-heading">Members</h2>
             <ul id="workspace-members" class="workspace-people">
               <li :for={member <- @members} id={"member-#{member.user.id}"}>
@@ -614,7 +614,7 @@ defmodule RavixWeb.Live.WorkspaceSettings do
             </ul>
           </section>
 
-          <section :if={@team?} aria-labelledby="invites-heading">
+          <section :if={@team?} class="settings-list-section" aria-labelledby="invites-heading">
             <h2 id="invites-heading">Pending invitations</h2>
             <p :if={@invites == []} class="hint">Nobody is waiting to join.</p>
             <ul id="workspace-invites" class="workspace-people">

@@ -1010,6 +1010,7 @@
               ]
             }
             class={if @panel.tab == tab, do: "selected", else: "ghost"}
+            aria-pressed={to_string(@panel.tab == tab)}
             phx-click="panel"
             phx-value-name={tab}
           >
@@ -1039,7 +1040,7 @@
             <.icon name="refresh" size={14} />
           </button>
         </nav>
-        <div class="workspace-panel">
+        <div class={["workspace-panel inspector-panel", @panel.tab == :files && "inspector-files"]}>
           <%= case inspector_state(@track, @turn.machine, @panel) do %>
             <% {:setup, step} -> %>
               <%!-- The setup banner is the live region for these words. --%>

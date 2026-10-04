@@ -1181,6 +1181,7 @@
       focus_on_mount={false}
     >
       <form id="search-form" phx-change="search" phx-submit="search">
+        <.icon name="search" size={17} />
         <%!-- Every keystroke re-renders the list below it, which is every
           track of every project this person has. A pause is what somebody
           typing a track name actually wants filtered. --%>
@@ -1189,24 +1190,33 @@
           id="search-query"
           value={@query}
           label="Search projects, tracks and plans"
+          placeholder="Search projects, tracks and plans…"
           autocomplete="off"
           phx-debounce="150"
           phx-hook="QuickJumpQuery"
         />
       </form>
-      <p :if={!@rail_loaded && !@rail_error} role="status">Loading projects…</p>
-      <div :if={@rail_error} role="alert">
-        <p>Projects could not be loaded.</p><button type="button" phx-click="refresh">Retry</button>
+      <div class="search-results">
+        <p :if={!@rail_loaded && !@rail_error} role="status">Loading projects…</p>
+        <div :if={@rail_error} role="alert">
+          <p>Projects could not be loaded.</p><button type="button" phx-click="refresh">Retry</button>
+        </div>
+        <.track_search_results
+          :if={@rail_loaded}
+          projects={@projects}
+          tracks={@tracks}
+          plans={@search_plans}
+          query={@query}
+          user={@current_user}
+          within={within(@current_workspace)}
+        />
       </div>
-      <.track_search_results
-        :if={@rail_loaded}
-        projects={@projects}
-        tracks={@tracks}
-        plans={@search_plans}
-        query={@query}
-        user={@current_user}
-        within={within(@current_workspace)}
-      />
+      <:footer>
+        <span><kbd>↑</kbd><kbd>↓</kbd> Navigate</span>
+        <span><kbd>↵</kbd> Open</span>
+        <span class="spacer" />
+        <span><kbd>Esc</kbd> Close</span>
+      </:footer>
     </.dialog>
     <.dialog
       :if={@dialog == :new_project}
